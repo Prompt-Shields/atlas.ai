@@ -1,0 +1,88 @@
+version: "3.9"
+
+# Extends main compose for E2E testing
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: aigrc
+      POSTGRES_PASSWORD: testpassword
+      POSTGRES_DB: aigrc_test
+    ports:
+      - "5433:5432"
+    volumes:
+      - ./backend/scripts/init-db.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aigrc"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8001:8000"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://aigrc:testpassword@postgres:5432/aigrc_test
+      REDIS_URL: redis://redis:6379/0
+      JWT_SECRET_KEY: test_jwt_secret_e2e
+      JWT_ALGORITHM: HS256
+      JWT_ACCESS_TOKEN_EXPIRE_MINUTES: "15"
+      JWT_REFRESH_TOKEN_EXPIRE_DAYS: "7"
+      APP_ENV: testing
+      APP_DEBUG: "true"
+      LOG_LEVEL: DEBUG
+      AZURE_OPENAI_ENDPOINT: https://placeholder.openai.azure.com/
+      AZURE_OPENAI_API_KEY: test-key
+      AZURE_OPENAI_DEPLOYMENT_NAME: gpt-4o
+      AZURE_OPENAI_API_VERSION: "2024-12-01-preview"
+      EMAIL_BACKEND: console
+      SMTP_FROM: noreply@test.local
+      BACKEND_CORS_ORIGINS: "*"
+      OTEL_SERVICE_NAME: aigrc-test
+      RESEARCH_ALL_DATA: "false"
+      SUPER_ADMIN_EMAIL: admin@test.local
+      SUPER_ADMIN_PASSWORD: TestAdmin_P@ss1
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  worker:
+    build:
+      context: .
+      dockerfile: worker/Dockerfile
+    environment:
+      DATABASE_URL: postgresql+asyncpg://aigrc:testpassword@postgres:5432/aigrc_test
+      REDIS_URL: redis://redis:6379/0
+      JWT_SECRET_KEY: test_jwt_secret_e2e
+      APP_ENV: testing
+      LOG_LEVEL: DEBUG
+      AZURE_OPENAI_ENDPOINT: https://placeholder.openai.azure.com/
+      AZURE_OPENAI_API_KEY: test-key
+      AZURE_OPENAI_DEPLOYMENT_NAME: gpt-4o
+      AZURE_OPENAI_API_VERSION: "2024-12-01-preview"
+      WORKER_MODE: dispatcher
+      WORKER_POLL_INTERVAL_SECONDS: "5"
+      RESEARCH_ALL_DATA: "false"
+    depends_on:
+      postgres:
+        condition: service_healthy

@@ -1,0 +1,87 @@
+<!--
+  AI-GRC API Management Global Policy
+  Applied to all API operations through APIM.
+-->
+<policies>
+    <inbound>
+        <!-- ── JWT Validation ─────────────────────────────────────── -->
+        <validate-jwt header-name="Authorization" failed-validation-httpcode="401"
+                      failed-validation-error-message="Unauthorized: Invalid or expired token"
+                      require-expiration-time="true" require-signed-tokens="true">
+            <issuer-signing-keys>
+                <key>{{jwt-signing-key}}</key>
+            </issuer-signing-keys>
+            <required-claims>
+                <claim name="type" match="all">
+                    <value>access</value>
+                </claim>
+            </required-claims>
+        </validate-jwt>
+
+        <!-- ── Rate Limiting (per tenant from JWT claim) ──────────── -->
+        <rate-limit-by-key calls="100" renewal-period="60" counter-key="@(context.Request.Headers.GetValueOrDefault("Authorization","").Split('.').Length > 1 ? System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(context.Request.Headers["Authorization"].Split('.')[1].PadRight(4*((context.Request.Headers["Authorization"].Split('.')[1].Length+3)/4),'='))) : "anonymous")" />
+
+        <!-- ── Request Size Limit (1MB) ───────────────────────────── -->
+        <set-header name="Content-Length" exists-action="skip" />
+
+        <!-- ── Header Normalization ───────────────────────────────── -->
+        <set-header name="X-Forwarded-For" exists-action="override">
+            <value>@(context.Request.IpAddress)</value>
+        </set-header>
+        <set-header name="X-Request-ID" exists-action="skip">
+            <value>@(context.RequestId.ToString())</value>
+        </set-header>
+
+        <!-- ── Remove potentially dangerous headers ───────────────── -->
+        <set-header name="X-Powered-By" exists-action="delete" />
+        <set-header name="Server" exists-action="delete" />
+
+        <!-- ── CORS ───────────────────────────────────────────────── -->
+        <cors allow-credentials="true">
+            <allowed-origins>
+                <origin>https://aigrc-dev-frontend.*.azurecontainerapps.io</origin>
+                <origin>https://aigrc-prod-frontend.*.azurecontainerapps.io</origin>
+                <origin>http://localhost:3000</origin>
+            </allowed-origins>
+            <allowed-methods>
+                <method>GET</method>
+                <method>POST</method>
+                <method>PATCH</method>
+                <method>DELETE</method>
+                <method>OPTIONS</method>
+            </allowed-methods>
+            <allowed-headers>
+                <header>Authorization</header>
+                <header>Content-Type</header>
+                <header>X-API-Key</header>
+                <header>X-Correlation-ID</header>
+            </allowed-headers>
+            <expose-headers>
+                <header>X-Correlation-ID</header>
+            </expose-headers>
+        </cors>
+
+        <base />
+    </inbound>
+    <backend>
+        <base />
+    </backend>
+    <outbound>
+        <!-- ── Security headers ───────────────────────────────────── -->
+        <set-header name="X-Content-Type-Options" exists-action="override">
+            <value>nosniff</value>
+        </set-header>
+        <set-header name="X-Frame-Options" exists-action="override">
+            <value>DENY</value>
+        </set-header>
+        <set-header name="Strict-Transport-Security" exists-action="override">
+            <value>max-age=31536000; includeSubDomains</value>
+        </set-header>
+        <set-header name="X-Powered-By" exists-action="delete" />
+        <set-header name="Server" exists-action="delete" />
+        <base />
+    </outbound>
+    <on-error>
+        <base />
+    </on-error>
+</policies>

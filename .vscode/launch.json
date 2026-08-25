@@ -1,0 +1,106 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    // ── Backend (FastAPI) ──────────────────────────────────────────────
+    {
+      "name": "Backend: FastAPI",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "uvicorn",
+      "args": [
+        "app.main:app",
+        "--host", "0.0.0.0",
+        "--port", "8000",
+        "--reload",
+        "--reload-dir", "app"
+      ],
+      "cwd": "${workspaceFolder}/backend",
+      "envFile": "${workspaceFolder}/.devcontainer/devcontainer.env",
+      "console": "integratedTerminal",
+      "jinja": true
+    },
+
+    // ── Worker — Dispatcher (continuous) ───────────────────────────────
+    {
+      "name": "Worker: Dispatcher",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "worker_app.main",
+      "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.devcontainer/devcontainer.env",
+      "env": {
+        "WORKER_MODE": "dispatcher",
+        "WORKER_POLL_INTERVAL_SECONDS": "10"
+      },
+      "console": "integratedTerminal"
+    },
+
+    // ── Worker — Risk Analyzer (runs once) ─────────────────────────────
+    {
+      "name": "Worker: Risk Extractor",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "worker_app.main",
+      "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.devcontainer/devcontainer.env",
+      "env": { "WORKER_MODE": "risk_extractor" },
+      "console": "integratedTerminal"
+    },
+
+    // ── Worker — Correlation Engine (runs once) ────────────────────────
+    {
+      "name": "Worker: Correlation Engine",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "worker_app.main",
+      "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.devcontainer/devcontainer.env",
+      "env": { "WORKER_MODE": "correlation_engine" },
+      "console": "integratedTerminal"
+    },
+
+    // ── Frontend (Next.js) ─────────────────────────────────────────────
+    {
+      "name": "Frontend: Next.js",
+      "type": "node",
+      "request": "launch",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "cwd": "${workspaceFolder}/frontend",
+      "envFile": "${workspaceFolder}/.devcontainer/devcontainer.env",
+      "console": "integratedTerminal",
+      "serverReadyAction": {
+        "pattern": "- Local:.+(https?://.+)",
+        "uriFormat": "%s",
+        "action": "debugWithChrome"
+      }
+    },
+
+    // ── Attach to running Backend ──────────────────────────────────────
+    {
+      "name": "Attach: Backend (debugpy)",
+      "type": "debugpy",
+      "request": "attach",
+      "connect": { "host": "localhost", "port": 5678 },
+      "pathMappings": [
+        {
+          "localRoot": "${workspaceFolder}/backend",
+          "remoteRoot": "${workspaceFolder}/backend"
+        }
+      ]
+    }
+  ],
+
+  // ── Compound launch — run everything ─────────────────────────────────
+  "compounds": [
+    {
+      "name": "Run All (Backend + Worker + Frontend)",
+      "configurations": [
+        "Backend: FastAPI",
+        "Worker: Dispatcher",
+        "Frontend: Next.js"
+      ],
+      "stopAll": true
+    }
+  ]
+}

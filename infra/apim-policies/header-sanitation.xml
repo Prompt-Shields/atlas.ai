@@ -1,0 +1,50 @@
+<!--
+  Header Sanitation Policy
+  Removes/normalizes headers before forwarding to backend.
+-->
+<policies>
+    <inbound>
+        <!-- Remove headers that should not reach backend -->
+        <set-header name="X-Powered-By" exists-action="delete" />
+        <set-header name="X-AspNet-Version" exists-action="delete" />
+        <set-header name="Server" exists-action="delete" />
+
+        <!-- Normalize forwarding headers -->
+        <set-header name="X-Forwarded-For" exists-action="override">
+            <value>@(context.Request.IpAddress)</value>
+        </set-header>
+        <set-header name="X-Forwarded-Proto" exists-action="override">
+            <value>https</value>
+        </set-header>
+
+        <!-- Add correlation ID if not present -->
+        <set-header name="X-Correlation-ID" exists-action="skip">
+            <value>@(context.RequestId.ToString())</value>
+        </set-header>
+
+        <!-- IP restriction (example — uncomment and configure) -->
+        <!--
+        <ip-filter action="allow">
+            <address-range from="10.0.0.0" to="10.0.0.255" />
+        </ip-filter>
+        -->
+
+        <!-- Request body size limit (1MB) -->
+        <set-body>@{
+            if (context.Request.Body != null &amp;&amp; context.Request.Body.As&lt;string&gt;(preserveContent: true).Length > 1048576)
+            {
+                return new JObject(new JProperty("error", "Request body too large")).ToString();
+            }
+            return context.Request.Body.As&lt;string&gt;(preserveContent: true);
+        }</set-body>
+
+        <base />
+    </inbound>
+    <backend><base /></backend>
+    <outbound>
+        <set-header name="X-Powered-By" exists-action="delete" />
+        <set-header name="Server" exists-action="delete" />
+        <base />
+    </outbound>
+    <on-error><base /></on-error>
+</policies>

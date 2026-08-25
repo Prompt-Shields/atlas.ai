@@ -1,0 +1,25 @@
+<!--
+  Standalone JWT Validation Policy (can be applied to specific operations)
+-->
+<policies>
+    <inbound>
+        <validate-jwt header-name="Authorization"
+                      failed-validation-httpcode="401"
+                      failed-validation-error-message="Unauthorized"
+                      require-expiration-time="true"
+                      require-signed-tokens="true">
+            <issuer-signing-keys>
+                <key>{{jwt-signing-key}}</key>
+            </issuer-signing-keys>
+            <required-claims>
+                <claim name="type" match="all">
+                    <value>access</value>
+                </claim>
+            </required-claims>
+        </validate-jwt>
+        <base />
+    </inbound>
+    <backend><base /></backend>
+    <outbound><base /></outbound>
+    <on-error><base /></on-error>
+</policies>

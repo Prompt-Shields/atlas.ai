@@ -1,0 +1,197 @@
+{
+  "$schema": "Cross-platform PII detector test fixture. Canonical source of truth.",
+  "version": "1.0.0",
+  "description": "Test cases that every Promptly PII detector implementation must agree on. Vendored into prompt-shields-macos-widget (Swift), prompt-shields-chrome-extension (JS), prompt-shields-safari-widget (JS), and atlas.ai/backend (Python). When this file changes, every implementation re-runs against it in CI; drift is a coordinated release.",
+  "categories": [
+    "email", "phone", "creditCard", "ssn", "ipAddress", "apiKey",
+    "jwt", "iban", "bitcoinAddress", "currency", "personName"
+  ],
+  "ruleOrderInvariant": "Earlier rules win on overlapping ranges. Order: email → bitcoinAddress → jwt → apiKey → iban → ipAddress → creditCard (Luhn-validated) → ssn → phone (digit-count validated) → currency → personName (bigram-filtered).",
+  "cases": [
+    {
+      "id": "empty-string",
+      "text": "",
+      "expect": [],
+      "notes": "Empty input must produce no detections without error."
+    },
+    {
+      "id": "clean-text",
+      "text": "How is the weather today in the office",
+      "expect": [],
+      "notes": "Plain English with no PII signals."
+    },
+    {
+      "id": "email-canonical",
+      "text": "Reach me at jane.doe@example.com when you can",
+      "expectIncludes": ["email"],
+      "notes": "Canonical email address."
+    },
+    {
+      "id": "email-plus-tag",
+      "text": "Send invite to user+tag@company.co.uk please",
+      "expectIncludes": ["email"],
+      "notes": "Plus-addressing and country TLDs must match."
+    },
+    {
+      "id": "ssn-dashed",
+      "text": "Customer record: SSN 123-45-6789",
+      "expectIncludes": ["ssn"],
+      "notes": "US SSN canonical 3-2-4 format with dashes."
+    },
+    {
+      "id": "ssn-invalid-format",
+      "text": "Tracking number 1234567890",
+      "expectExcludes": ["ssn"],
+      "notes": "Non-dashed digit string must NOT match the SSN rule (would otherwise overlap with order numbers)."
+    },
+    {
+      "id": "credit-card-visa-valid",
+      "text": "card 4111 1111 1111 1111 expires 12/27",
+      "expectIncludes": ["creditCard"],
+      "notes": "Canonical Visa test number — Luhn-valid. Must trigger creditCard before phone falls through."
+    },
+    {
+      "id": "credit-card-luhn-invalid",
+      "text": "tracking 4532-1488-0343-6468 from carrier",
+      "expectExcludes": ["creditCard"],
+      "expectIncludes": ["phone"],
+      "notes": "Same SHAPE as a credit card but Luhn fails — must fall through to phone (which is permissive enough to match). Documents the iteration-order behaviour."
+    },
+    {
+      "id": "credit-card-amex-valid",
+      "text": "Amex on file: 3782 822463 10005",
+      "expectIncludes": ["creditCard"],
+      "notes": "Amex 15-digit Luhn-valid format."
+    },
+    {
+      "id": "phone-us-format",
+      "text": "Reach me at +1 (415) 555-0100 ext 42",
+      "expectIncludes": ["phone"],
+      "notes": "US phone with country code, area code, ext."
+    },
+    {
+      "id": "phone-too-short",
+      "text": "Order #12345 confirmed",
+      "expectExcludes": ["phone"],
+      "notes": "5-digit numbers must NOT match phone — digit-count validator (7-15) rejects."
+    },
+    {
+      "id": "phone-too-long",
+      "text": "Build hash 123456789012345678901",
+      "expectExcludes": ["phone"],
+      "notes": "21-digit numbers must NOT match phone — digit-count validator rejects."
+    },
+    {
+      "id": "ip-address",
+      "text": "Connect to 192.168.1.50 then verify",
+      "expectIncludes": ["ipAddress"],
+      "notes": "IPv4 with octet bounds enforced (0-255)."
+    },
+    {
+      "id": "ip-out-of-range",
+      "text": "Version number 999.999.999.999 is fake",
+      "expectExcludes": ["ipAddress"],
+      "notes": "Octets >255 must NOT match — bounded regex."
+    },
+    {
+      "id": "api-key-aws",
+      "text": "creds: AKIAIOSFODNN7EXAMPLE rotate now",
+      "expectIncludes": ["apiKey"],
+      "notes": "AWS access key prefix."
+    },
+    {
+      "id": "api-key-openai",
+      "text": "config: sk-abcdefghijklmnopqrstuvwxyz123456",
+      "expectIncludes": ["apiKey"],
+      "notes": "OpenAI sk- prefix."
+    },
+    {
+      "id": "jwt-token",
+      "text": "Auth header: Bearer eyJhbGciOiJIUzI1NiIs.eyJzdWIiOiJ1c2VyMTIzNDU2Nzg5MCJ9.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c next",
+      "expectIncludes": ["jwt"],
+      "notes": "Three base64 groups separated by dots."
+    },
+    {
+      "id": "iban-uk",
+      "text": "Account IBAN GB29NWBK60161331926819 belongs to grantee",
+      "expectIncludes": ["iban"],
+      "notes": "UK IBAN — 2 country letters + 2 check digits + alphanumeric."
+    },
+    {
+      "id": "bitcoin-bech32",
+      "text": "Send funds to bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh thanks",
+      "expectIncludes": ["bitcoinAddress"],
+      "notes": "Bech32-encoded BTC address starting with bc1."
+    },
+    {
+      "id": "bitcoin-p2pkh",
+      "text": "Old wallet 1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa is empty",
+      "expectIncludes": ["bitcoinAddress"],
+      "notes": "Legacy P2PKH BTC address starting with 1."
+    },
+    {
+      "id": "currency-eur-millions",
+      "text": "The grant budget is €2.4M for Q3",
+      "expectIncludes": ["currency"],
+      "notes": "EUR with M shorthand."
+    },
+    {
+      "id": "currency-usd-thousands",
+      "text": "Pay $45,000 to vendor by Friday",
+      "expectIncludes": ["currency"],
+      "notes": "USD with comma separator."
+    },
+    {
+      "id": "currency-iso-code",
+      "text": "Total NOK 12M committed for housing",
+      "expectIncludes": ["currency"],
+      "notes": "NOK ISO code with M shorthand."
+    },
+    {
+      "id": "person-name-canonical",
+      "text": "I spoke with Sarah Mitchell yesterday",
+      "expectIncludes": ["personName"],
+      "notes": "First + Last capitalised, mid-sentence."
+    },
+    {
+      "id": "person-name-sentence-start",
+      "text": "Sarah Mitchell called yesterday.",
+      "expectExcludes": ["personName"],
+      "notes": "Names at sentence start are ambiguous (could be a regular capitalised noun pair) — heuristic suppresses them. Documents the sentence-boundary lookbehind."
+    },
+    {
+      "id": "bigram-united-states",
+      "text": "Travelling to United States next week",
+      "expectExcludes": ["personName"],
+      "notes": "Common bigram filter — 'United States' is not a person name."
+    },
+    {
+      "id": "bigram-machine-learning",
+      "text": "Working on Machine Learning for the project",
+      "expectExcludes": ["personName"],
+      "notes": "Common bigram filter — technical phrases are not person names."
+    },
+    {
+      "id": "multi-detection",
+      "text": "Email jane@example.com about SSN 123-45-6789 and IP 10.0.0.1",
+      "expectIncludes": ["email", "ssn", "ipAddress"],
+      "notes": "Multiple categories in one prompt — detector must catch all, sorted by start position."
+    },
+    {
+      "id": "overlap-claimed-range",
+      "text": "Contact: jane@example.com (preferred channel)",
+      "expectIncludes": ["email"],
+      "expectExcludes": ["personName"],
+      "notes": "Email match claims 'jane' — personName must NOT also fire on it. Tests claimed-range deduplication."
+    },
+    {
+      "id": "scan-length-cap",
+      "textRepeat": {
+        "pattern": "abc ",
+        "count": 13000
+      },
+      "expect": [],
+      "notes": "Inputs over MAX_SCAN_LENGTH (50_000 chars) must return [] without scanning. 13000 × 4 = 52000 chars, just over the cap."
+    }
+  ]
+}

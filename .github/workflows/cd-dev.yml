@@ -1,0 +1,86 @@
+name: CD - Deploy to Dev
+
+on:
+  push:
+    branches: [develop]
+  workflow_dispatch:
+
+permissions:
+  id-token: write   # OIDC auth to Azure
+  contents: read
+
+env:
+  AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP_DEV }}
+  ACR_NAME: ${{ vars.ACR_NAME_DEV }}
+  ACR_LOGIN_SERVER: ${{ vars.ACR_LOGIN_SERVER_DEV }}
+
+jobs:
+  build-push:
+    name: Build & Push Images
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.tag.outputs.tag }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate image tag
+        id: tag
+        run: echo "tag=dev-$(git rev-parse --short HEAD)-$(date +%Y%m%d%H%M%S)" >> "$GITHUB_OUTPUT"
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID_DEV }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID_DEV }}
+
+      - name: ACR Login
+        run: az acr login --name ${{ env.ACR_NAME }}
+
+      - name: Build & Push Backend
+        run: |
+          docker build -t ${{ env.ACR_LOGIN_SERVER }}/aigrc-backend:${{ steps.tag.outputs.tag }} ./backend
+          docker push ${{ env.ACR_LOGIN_SERVER }}/aigrc-backend:${{ steps.tag.outputs.tag }}
+          docker tag ${{ env.ACR_LOGIN_SERVER }}/aigrc-backend:${{ steps.tag.outputs.tag }} ${{ env.ACR_LOGIN_SERVER }}/aigrc-backend:dev-latest
+          docker push ${{ env.ACR_LOGIN_SERVER }}/aigrc-backend:dev-latest
+
+      - name: Build & Push Worker
+        run: |
+          docker build -t ${{ env.ACR_LOGIN_SERVER }}/aigrc-worker:${{ steps.tag.outputs.tag }} ./worker
+          docker push ${{ env.ACR_LOGIN_SERVER }}/aigrc-worker:${{ steps.tag.outputs.tag }}
+          docker tag ${{ env.ACR_LOGIN_SERVER }}/aigrc-worker:${{ steps.tag.outputs.tag }} ${{ env.ACR_LOGIN_SERVER }}/aigrc-worker:dev-latest
+          docker push ${{ env.ACR_LOGIN_SERVER }}/aigrc-worker:dev-latest
+
+      - name: Build & Push Frontend
+        run: |
+          docker build \
+            --build-arg NEXT_PUBLIC_API_URL=${{ vars.NEXT_PUBLIC_API_URL_DEV }} \
+            -t ${{ env.ACR_LOGIN_SERVER }}/aigrc-frontend:${{ steps.tag.outputs.tag }} ./frontend
+          docker push ${{ env.ACR_LOGIN_SERVER }}/aigrc-frontend:${{ steps.tag.outputs.tag }}
+          docker tag ${{ env.ACR_LOGIN_SERVER }}/aigrc-frontend:${{ steps.tag.outputs.tag }} ${{ env.ACR_LOGIN_SERVER }}/aigrc-frontend:dev-latest
+          docker push ${{ env.ACR_LOGIN_SERVER }}/aigrc-frontend:dev-latest
+
+  deploy:
+    name: Deploy to Dev
+    runs-on: ubuntu-latest
+    needs: build-push
+    environment: dev
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID_DEV }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID_DEV }}
+
+      - name: Deploy Bicep
+        uses: azure/arm-deploy@v2
+        with:
+          resourceGroupName: ${{ env.AZURE_RESOURCE_GROUP }}
+          template: infra/main.bicep
+          parameters: infra/environments/dev.bicepparam
+          failOnStdErr: false

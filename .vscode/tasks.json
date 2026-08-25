@@ -1,0 +1,103 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    // ── Dependency installation ────────────────────────────────────────
+    {
+      "label": "install-backend",
+      "type": "shell",
+      "command": "pip install -e './backend[dev]'",
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": [],
+      "group": "build"
+    },
+    {
+      "label": "install-frontend",
+      "type": "shell",
+      "command": "npm ci",
+      "options": { "cwd": "${workspaceFolder}/frontend" },
+      "problemMatcher": [],
+      "group": "build"
+    },
+    {
+      "label": "install-all",
+      "dependsOn": ["install-backend", "install-frontend"],
+      "dependsOrder": "parallel",
+      "problemMatcher": [],
+      "group": "build"
+    },
+
+    // ── Database ───────────────────────────────────────────────────────
+    {
+      "label": "db-migrate",
+      "type": "shell",
+      "command": "python -m alembic upgrade head",
+      "options": {
+        "cwd": "${workspaceFolder}/backend",
+        "env": {
+          "DATABASE_URL": "postgresql+asyncpg://aigrc:localdevpassword@postgres:5432/aigrc"
+        }
+      },
+      "problemMatcher": [],
+      "group": "build"
+    },
+    {
+      "label": "db-make-migration",
+      "type": "shell",
+      "command": "python -m alembic revision --autogenerate -m \"${input:migrationMessage}\"",
+      "options": {
+        "cwd": "${workspaceFolder}/backend",
+        "env": {
+          "DATABASE_URL": "postgresql+asyncpg://aigrc:localdevpassword@postgres:5432/aigrc"
+        }
+      },
+      "problemMatcher": []
+    },
+
+    // ── Linting & Testing ──────────────────────────────────────────────
+    {
+      "label": "lint-backend",
+      "type": "shell",
+      "command": "ruff check app/ --fix && ruff format app/",
+      "options": { "cwd": "${workspaceFolder}/backend" },
+      "problemMatcher": [],
+      "group": "test"
+    },
+    {
+      "label": "lint-frontend",
+      "type": "shell",
+      "command": "npm run lint",
+      "options": { "cwd": "${workspaceFolder}/frontend" },
+      "problemMatcher": ["$eslint-stylish"],
+      "group": "test"
+    },
+    {
+      "label": "test-backend",
+      "type": "shell",
+      "command": "python -m pytest tests/ -v --tb=short",
+      "options": { "cwd": "${workspaceFolder}/backend" },
+      "problemMatcher": [],
+      "group": "test"
+    },
+
+    // ── Azure CLI helpers ──────────────────────────────────────────────
+    {
+      "label": "az-login",
+      "type": "shell",
+      "command": "az login",
+      "problemMatcher": []
+    },
+    {
+      "label": "az-deploy-infra",
+      "type": "shell",
+      "command": "az deployment group create --resource-group ${AZURE_RESOURCE_GROUP} --template-file infra/main.bicep --parameters infra/environments/dev.bicepparam",
+      "problemMatcher": []
+    }
+  ],
+  "inputs": [
+    {
+      "id": "migrationMessage",
+      "type": "promptString",
+      "description": "Alembic migration message"
+    }
+  ]
+}

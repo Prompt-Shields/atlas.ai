@@ -1,0 +1,164 @@
+version: "3.9"
+
+x-common-env: &common-env
+  DATABASE_URL: postgresql+asyncpg://aigrc:localdevpassword@postgres:5432/aigrc
+  REDIS_URL: redis://:localdevredispass@redis:6379/0
+  JWT_SECRET_KEY: local_dev_jwt_secret_not_for_production
+  JWT_ALGORITHM: HS256
+  JWT_ACCESS_TOKEN_EXPIRE_MINUTES: "15"
+  JWT_REFRESH_TOKEN_EXPIRE_DAYS: "7"
+  APP_ENV: development
+  APP_DEBUG: "true"
+  LOG_LEVEL: DEBUG
+  AZURE_OPENAI_ENDPOINT: ${AZURE_OPENAI_ENDPOINT:-https://placeholder.openai.azure.com/}
+  AZURE_OPENAI_API_KEY: ${AZURE_OPENAI_API_KEY:-placeholder}
+  AZURE_OPENAI_DEPLOYMENT_NAME: ${AZURE_OPENAI_DEPLOYMENT_NAME:-gpt-4o}
+  AZURE_OPENAI_API_VERSION: "2024-12-01-preview"
+  SMTP_HOST: mailhog
+  SMTP_PORT: "1025"
+  SMTP_FROM: noreply@ps-ai-atlas.com
+  EMAIL_BACKEND: smtp
+  BACKEND_CORS_ORIGINS: "http://localhost:3000"
+  OTEL_SERVICE_NAME: aigrc-backend
+  RESEARCH_ALL_DATA: "false"
+  SUPER_ADMIN_EMAIL: atlas@promptshields.com
+  SUPER_ADMIN_PASSWORD: LocalDev_Admin_P@ss1
+
+services:
+  # ── Database ────────────────────────────────────────────────────────
+  # WARNING: This compose file is for LOCAL DEVELOPMENT only.
+  # Do NOT use in staging or production.
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: aigrc
+      POSTGRES_PASSWORD: localdevpassword
+      POSTGRES_DB: aigrc
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./backend/scripts/init-db.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aigrc"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ── Redis ───────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    command: redis-server --requirepass localdevredispass
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "localdevredispass", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ── Mail (local dev) ───────────────────────────────────────────────
+  mailhog:
+    image: mailhog/mailhog:latest
+    ports:
+      - "127.0.0.1:1025:1025"
+      - "127.0.0.1:8025:8025"
+
+  # ── Backend API ─────────────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      <<: *common-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend/app:/app/app:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Worker (dispatcher + outbox) ────────────────────────────────────
+  worker:
+    build:
+      context: .
+      dockerfile: worker/Dockerfile
+    environment:
+      <<: *common-env
+      WORKER_MODE: dispatcher
+      WORKER_POLL_INTERVAL_SECONDS: "10"
+    depends_on:
+      backend:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # ── Risk Extractor Job (simulated cron) ──────────────────────────
+  risk-extractor-job:
+    build:
+      context: .
+      dockerfile: worker/Dockerfile
+    environment:
+      <<: *common-env
+      WORKER_MODE: risk_extractor
+    depends_on:
+      postgres:
+        condition: service_healthy
+    profiles:
+      - jobs
+
+  # ── Correlation Job (simulated cron) ────────────────────────────────
+  correlation-job:
+    build:
+      context: .
+      dockerfile: worker/Dockerfile
+    environment:
+      <<: *common-env
+      WORKER_MODE: correlation_engine
+    depends_on:
+      postgres:
+        condition: service_healthy
+    profiles:
+      - jobs
+
+  # ── Device Risk Engine Job (simulated cron) ─────────────────────────
+  device-risk-job:
+    build:
+      context: .
+      dockerfile: worker/Dockerfile
+    environment:
+      <<: *common-env
+      WORKER_MODE: device_risk_engine
+    depends_on:
+      postgres:
+        condition: service_healthy
+    profiles:
+      - jobs
+
+  # ── Frontend ────────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:8000/api/v1
+        NEXT_PUBLIC_APP_NAME: AI Governance Security Platform
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000/api/v1
+      NEXT_PUBLIC_APP_NAME: AI Governance Security Platform
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  pgdata:

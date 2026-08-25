@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI spend &amp; ROI — AISPM demo</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3/dist/tabler-icons.min.css">
+<style>
+:root{
+  --color-background-primary:#ffffff;
+  --color-background-secondary:#f4f3ee;
+  --color-background-info:#e6f1fb;
+  --color-background-success:#e1f5ee;
+  --color-text-primary:#1b1b19;
+  --color-text-secondary:#5f5e5a;
+  --color-text-tertiary:#8a8980;
+  --color-text-info:#185fa5;
+  --color-text-success:#0f6e56;
+  --color-success:#1d9e75;
+  --color-border-tertiary:rgba(0,0,0,.12);
+  --color-border-info:#378add;
+  --color-border-success:#5dcaa5;
+  --border-radius-md:8px;
+  --border-radius-lg:12px;
+  --page-bg:#faf9f5;
+}
+@media (prefers-color-scheme:dark){
+  :root{
+    --color-background-primary:#211f1d;
+    --color-background-secondary:#2b2a26;
+    --color-background-info:#0c2740;
+    --color-background-success:#0c2b22;
+    --color-text-primary:#f1efe9;
+    --color-text-secondary:#b4b2a9;
+    --color-text-tertiary:#888780;
+    --color-text-info:#85b7eb;
+    --color-text-success:#5dcaa5;
+    --color-success:#1d9e75;
+    --color-border-tertiary:rgba(255,255,255,.14);
+    --color-border-info:#378add;
+    --color-border-success:#0f6e56;
+    --page-bg:#161513;
+  }
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--page-bg);color:var(--color-text-primary);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;line-height:1.6;}
+.wrap{max-width:760px;margin:0 auto;padding:32px 20px 56px;}
+.page-h{font-size:22px;font-weight:500;margin:0 0 2px;}
+.page-sub{font-size:13px;color:var(--color-text-secondary);margin:0 0 4px;}
+button{font:inherit;font-size:13px;padding:6px 12px;border-radius:var(--border-radius-md);border:.5px solid var(--color-border-tertiary);background:transparent;color:var(--color-text-primary);cursor:pointer;}
+button:hover{background:var(--color-background-secondary)}
+button:active{transform:scale(.98)}
+button:disabled{opacity:.5;cursor:default}
+.vtile{transition:border-color .35s, background .35s}
+.vtile .vdot{width:8px;height:8px;border-radius:50%;background:var(--color-text-tertiary);transition:background .35s}
+.vtile.on{border-color:var(--color-border-success)}
+.vtile.on .vdot{background:var(--color-success)}
+.pulse{animation:pl 1s ease-in-out infinite}
+@keyframes pl{0%,100%{opacity:1}50%{opacity:.5}}
+.pill{font-size:12px;padding:4px 10px;border-radius:var(--border-radius-md);border:.5px solid var(--color-border-tertiary);color:var(--color-text-tertiary);display:inline-flex;align-items:center;gap:6px;transition:all .3s}
+.pill.active{background:var(--color-background-info);border-color:var(--color-border-info);color:var(--color-text-info)}
+.bar{height:26px;border-radius:var(--border-radius-md);transition:width 1s ease-out}
+.vtile{background:var(--color-background-primary);border:.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-lg);padding:12px;}
+.vtop{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;}
+.vav{width:28px;height:28px;border-radius:8px;background:var(--color-background-secondary);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:500;color:var(--color-text-secondary);}
+.vname{font-size:13px;font-weight:500;color:var(--color-text-primary);}
+.vsub{font-size:11px;color:var(--color-text-tertiary);margin-bottom:8px;}
+.vstatus{font-size:11px;color:var(--color-text-tertiary);}
+.vamt{font-size:15px;font-weight:500;color:var(--color-text-tertiary);margin-top:2px;}
+.metric{background:var(--color-background-secondary);border-radius:var(--border-radius-md);padding:1rem;}
+.metric .ml{font-size:13px;color:var(--color-text-secondary);}
+.metric .mv{font-size:24px;font-weight:500;margin-top:4px;}
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1 class="page-h">AI spend &amp; ROI</h1>
+<p class="page-sub">AISPM — vendor integrations flow into the cost ledger, then resolve into human-vs-token adoption ROI. Illustrative demo data.</p>
+<h2 class="sr-only">Animated demo: five AI vendor integrations connect, stream cost data into the AISPM ledger, and produce human-versus-token ROI KPIs for AI adoption.</h2>
+<div style="padding:1rem 0;">
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:10px;">
+    <div style="display:flex;align-items:center;gap:8px;">
+      <span style="font-size:18px;font-weight:500;color:var(--color-text-primary);">AI spend &amp; ROI</span>
+      <span style="font-size:12px;color:var(--color-text-tertiary);">· AISPM dashboard</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;">
+      <span style="font-size:11px;padding:3px 8px;border-radius:var(--border-radius-md);background:var(--color-background-secondary);color:var(--color-text-tertiary);">illustrative data</span>
+      <button id="playBtn" style="display:inline-flex;align-items:center;gap:6px;"><i class="ti ti-player-play" aria-hidden="true"></i>Replay</button>
+    </div>
+  </div>
+
+  <div style="display:flex;align-items:center;gap:8px;background:var(--color-background-secondary);border-radius:var(--border-radius-md);padding:8px 12px;margin-bottom:14px;">
+    <i class="ti ti-movie" aria-hidden="true" style="color:var(--color-text-secondary);font-size:16px;"></i>
+    <span id="narr" style="font-size:13px;color:var(--color-text-secondary);">Ready — press play.</span>
+  </div>
+
+  <div style="display:flex;gap:8px;margin-bottom:16px;">
+    <span class="pill" id="step-connect"><i class="ti ti-plug-connected" aria-hidden="true"></i>Connect</span>
+    <i class="ti ti-arrow-right" aria-hidden="true" style="color:var(--color-text-tertiary);align-self:center;"></i>
+    <span class="pill" id="step-pull"><i class="ti ti-download" aria-hidden="true"></i>Pull data</span>
+    <i class="ti ti-arrow-right" aria-hidden="true" style="color:var(--color-text-tertiary);align-self:center;"></i>
+    <span class="pill" id="step-kpi"><i class="ti ti-chart-bar" aria-hidden="true"></i>KPIs</span>
+  </div>
+
+  <div style="font-size:13px;color:var(--color-text-secondary);margin-bottom:8px;">Vendor integrations</div>
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(118px,1fr));gap:10px;margin-bottom:18px;">
+    <div class="vtile" id="vt0">
+      <div class="vtop"><div class="vav">C</div><span class="vdot"></span></div>
+      <div class="vname">Claude</div><div class="vsub">Anthropic · tokens</div>
+      <div class="vstatus" id="vs0">Not connected</div>
+      <div class="vamt" data-a="4820">$0</div>
+    </div>
+    <div class="vtile" id="vt1">
+      <div class="vtop"><div class="vav">O</div><span class="vdot"></span></div>
+      <div class="vname">OpenAI</div><div class="vsub">API · tokens</div>
+      <div class="vstatus" id="vs1">Not connected</div>
+      <div class="vamt" data-a="3160">$0</div>
+    </div>
+    <div class="vtile" id="vt2">
+      <div class="vtop"><div class="vav">Cu</div><span class="vdot"></span></div>
+      <div class="vname">Cursor</div><div class="vsub">Teams · usage</div>
+      <div class="vstatus" id="vs2">Not connected</div>
+      <div class="vamt" data-a="2400">$0</div>
+    </div>
+    <div class="vtile" id="vt3">
+      <div class="vtop"><div class="vav">Co</div><span class="vdot"></span></div>
+      <div class="vname">Copilot</div><div class="vsub">100 seats × $19</div>
+      <div class="vstatus" id="vs3">Not connected</div>
+      <div class="vamt" data-a="1900">$0</div>
+    </div>
+    <div class="vtile" id="vt4">
+      <div class="vtop"><div class="vav">V</div><span class="vdot"></span></div>
+      <div class="vname">Vercel</div><div class="vsub">infra + gateway</div>
+      <div class="vstatus" id="vs4">Not connected</div>
+      <div class="vamt" data-a="1260">$0</div>
+    </div>
+  </div>
+
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+    <span style="font-size:13px;color:var(--color-text-secondary);">AISPM cost ledger</span>
+    <span id="ledgerTag" style="font-size:11px;color:var(--color-text-tertiary);"></span>
+  </div>
+  <div style="background:var(--color-background-primary);border:.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-lg);padding:14px 16px;margin-bottom:20px;">
+    <div style="display:flex;align-items:baseline;justify-content:space-between;">
+      <span style="font-size:13px;color:var(--color-text-secondary);">Total AI spend · monthly</span>
+      <span id="ledgerTotal" style="font-size:26px;font-weight:500;color:var(--color-text-primary);">$0</span>
+    </div>
+    <div style="height:8px;border-radius:99px;background:var(--color-background-secondary);margin-top:10px;overflow:hidden;">
+      <div id="ledgerBar" style="height:100%;width:0;background:var(--color-text-info);transition:width 1.1s ease-out;"></div>
+    </div>
+  </div>
+
+  <div style="font-size:13px;color:var(--color-text-secondary);margin-bottom:8px;">Human vs token — AI adoption ROI</div>
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:14px;">
+    <div class="metric"><div class="ml">AI spend / mo</div><div class="mv kpi" data-to="13540" data-fmt="usd">$0</div></div>
+    <div class="metric"><div class="ml">Eng. hours saved / mo</div><div class="mv kpi" data-to="1240" data-fmt="num">0</div></div>
+    <div class="metric"><div class="ml">Human-equiv. value / mo</div><div class="mv kpi" data-to="117800" data-fmt="usd" style="color:var(--color-text-success);">$0</div></div>
+    <div class="metric"><div class="ml">Adoption · 116 eng</div><div class="mv kpi" data-to="87" data-fmt="pct">0%</div></div>
+  </div>
+
+  <div style="display:grid;grid-template-columns:1fr 1.4fr;gap:12px;align-items:stretch;">
+    <div style="background:var(--color-background-primary);border:2px solid var(--color-border-info);border-radius:var(--border-radius-lg);padding:1rem 1.25rem;display:flex;flex-direction:column;justify-content:center;">
+      <div style="font-size:13px;color:var(--color-text-secondary);">Return on AI</div>
+      <div class="kpi" data-to="8.7" data-fmt="x" style="font-size:34px;font-weight:500;color:var(--color-text-info);line-height:1.1;margin:2px 0;">0×</div>
+      <div style="font-size:12px;color:var(--color-text-tertiary);">per $1 spent on AI tooling</div>
+    </div>
+    <div style="background:var(--color-background-primary);border:.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-lg);padding:1rem 1.25rem;">
+      <div style="font-size:12px;color:var(--color-text-secondary);margin-bottom:4px;">Human-equivalent output</div>
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
+        <div class="bar" id="barHuman" style="width:0;background:var(--color-success);"></div>
+        <span style="font-size:13px;font-weight:500;color:var(--color-text-success);white-space:nowrap;">$117,800</span>
+      </div>
+      <div style="font-size:12px;color:var(--color-text-secondary);margin-bottom:4px;">AI spend</div>
+      <div style="display:flex;align-items:center;gap:10px;">
+        <div class="bar" id="barAI" style="width:0;background:var(--color-text-info);"></div>
+        <span style="font-size:13px;font-weight:500;color:var(--color-text-info);white-space:nowrap;">$13,540</span>
+      </div>
+      <div style="font-size:13px;color:var(--color-text-primary);margin-top:12px;border-top:.5px solid var(--color-border-tertiary);padding-top:10px;">Net value created <span style="font-weight:500;color:var(--color-text-success);">+$104,260 / mo</span></div>
+    </div>
+  </div>
+</div>
+</div>
+<script>
+(function(){
+  var usd=function(n){return new Intl.NumberFormat('en-US',{style:'currency',currency:'USD',maximumFractionDigits:0}).format(Math.round(n));};
+  var fmt={usd:usd,num:function(n){return Math.round(n).toLocaleString('en-US');},pct:function(n){return Math.round(n)+'%';},x:function(n){return n.toFixed(1)+'×';}};
+  var tiles=[].slice.call(document.querySelectorAll('.vtile'));
+  var byId=function(id){return document.getElementById(id);};
+  var T=[];
+  function clearT(){T.forEach(clearTimeout);T=[];}
+  function at(ms,fn){T.push(setTimeout(fn,ms));}
+  function animateNum(el,to,dur,f){var st=null,from=0;function step(ts){if(!st)st=ts;var p=Math.min((ts-st)/dur,1);el.textContent=f(from+(to-from)*p);if(p<1)requestAnimationFrame(step);}requestAnimationFrame(step);}
+
+  function reset(){
+    clearT();
+    byId('narr').textContent='Ready — press play.';
+    byId('narr').style.color='var(--color-text-secondary)';
+    ['step-connect','step-pull','step-kpi'].forEach(function(id){byId(id).classList.remove('active');});
+    tiles.forEach(function(t,k){
+      t.classList.remove('on');t.classList.remove('pulse');
+      var s=byId('vs'+k);s.textContent='Not connected';s.style.color='var(--color-text-tertiary)';
+      var am=t.querySelector('.vamt');am.textContent='$0';am.style.color='var(--color-text-tertiary)';
+    });
+    byId('ledgerTotal').textContent='$0';
+    byId('ledgerBar').style.width='0';
+    byId('ledgerTag').textContent='';
+    document.querySelectorAll('.kpi').forEach(function(el){el.textContent=el.dataset.fmt==='usd'?'$0':(el.dataset.fmt==='pct'?'0%':(el.dataset.fmt==='x'?'0×':'0'));});
+    byId('barHuman').style.width='0';
+    byId('barAI').style.width='0';
+  }
+
+  function play(){
+    reset();
+    var btn=byId('playBtn');btn.disabled=true;
+    byId('step-connect').classList.add('active');
+    byId('narr').textContent='Connecting vendor integrations…';
+    tiles.forEach(function(t,k){
+      at(300+k*420,function(){
+        t.classList.add('on');
+        var s=byId('vs'+k);s.textContent='✓ Connected';s.style.color='var(--color-text-success)';
+      });
+    });
+    var afterConnect=300+tiles.length*420+250;
+
+    at(afterConnect,function(){
+      byId('step-pull').classList.add('active');
+      byId('narr').textContent='Pulling daily cost data into the AISPM ledger…';
+      byId('ledgerTag').textContent='syncing…';
+      var total=0;
+      tiles.forEach(function(t){
+        t.classList.add('pulse');
+        var am=t.querySelector('.vamt');var amt=parseFloat(am.dataset.a);
+        am.style.color='var(--color-text-primary)';
+        animateNum(am,amt,1000,usd);total+=amt;
+      });
+      animateNum(byId('ledgerTotal'),total,1100,usd);
+      byId('ledgerBar').style.width='100%';
+      at(1200,function(){tiles.forEach(function(t){t.classList.remove('pulse');});byId('ledgerTag').textContent='up to date';});
+    });
+
+    var afterPull=afterConnect+1500;
+    at(afterPull,function(){
+      byId('step-kpi').classList.add('active');
+      byId('narr').textContent='Computing human vs token KPIs…';
+      document.querySelectorAll('.kpi').forEach(function(el){animateNum(el,parseFloat(el.dataset.to),1100,fmt[el.dataset.fmt]);});
+      byId('barHuman').style.width='100%';
+      byId('barAI').style.width='11.5%';
+    });
+
+    at(afterPull+1300,function(){
+      byId('narr').textContent='AI adoption ROI — every $1 on AI returns ~$8.70 of engineering output.';
+      byId('narr').style.color='var(--color-text-success)';
+      btn.disabled=false;
+    });
+  }
+  byId('playBtn').addEventListener('click',play);
+  at(400,play);
+})();
+</script>
+</body>
+</html>

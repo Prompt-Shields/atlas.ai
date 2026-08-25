@@ -1,0 +1,355 @@
+"""
+Regression test: Postgres RLS tenant GUC is actually enforced.
+
+This test is intentionally Postgres-only. The default unit-test DB in this repo
+is sqlite, which cannot validate Postgres RLS behavior.
+"""
+
+from __future__ import annotations
+
+import uuid
+
+import pytest
+from sqlalchemy import text
+
+from app.database import set_tenant_guc
+
+pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
+
+
+async def test_postgres_rls_enforced_via_app_current_tenant_id() -> None:
+    """RLS on a throwaway probe table isolates rows by tenant GUC.
+
+    The connecting test role owns grc.rls_probe, and Postgres table owners
+    bypass RLS unless FORCE ROW LEVEL SECURITY is set.  Superusers bypass RLS
+    even with FORCE, so the SELECT assertions drop to a minimal NOLOGIN
+    NOSUPERUSER helper role (rls_check_role) via SET LOCAL ROLE.  This mirrors
+    test_postgres_rls_enforced_on_prompt_events below; see its docstring for
+    the full rationale, including why INSERTs set the GUC to each row's own
+    tenant_id (FOR ALL with only USING doubles as WITH CHECK under FORCE RLS)
+    and why the nil UUID stands in for "unset" in the fail-closed assertion.
+    """
+    from tests.conftest import TestSessionLocal
+
+    tenant_a = uuid.UUID("00000000-0000-0000-0000-0000000000a1")
+    tenant_b = uuid.UUID("00000000-0000-0000-0000-0000000000b1")
+
+    async with TestSessionLocal() as session:
+        if session.get_bind().dialect.name != "postgresql":
+            pytest.skip("RLS enforcement requires Postgres")
+
+        # Create a tiny probe table protected by the same pattern used in migrations.
+        await session.execute(text("CREATE SCHEMA IF NOT EXISTS grc"))
+        await session.execute(text("DROP TABLE IF EXISTS grc.rls_probe"))
+        await session.execute(
+            text(
+                """
+                CREATE TABLE grc.rls_probe (
+                  id uuid PRIMARY KEY,
+                  tenant_id uuid NOT NULL,
+                  payload text NOT NULL
+                )
+                """
+            )
+        )
+        # FORCE is required: the test role owns the table, and owners bypass
+        # RLS under plain ENABLE.
+        await session.execute(text("ALTER TABLE grc.rls_probe ENABLE ROW LEVEL SECURITY"))
+        await session.execute(text("ALTER TABLE grc.rls_probe FORCE ROW LEVEL SECURITY"))
+        await session.execute(
+            text("DROP POLICY IF EXISTS tenant_isolation_rls_probe ON grc.rls_probe")
+        )
+        await session.execute(
+            text(
+                """
+                CREATE POLICY tenant_isolation_rls_probe ON grc.rls_probe
+                USING (tenant_id = current_setting('app.current_tenant_id', TRUE)::uuid)
+                """
+            )
+        )
+
+        # Non-superuser role for the SELECT-phase assertions: superusers
+        # bypass RLS even with FORCE ROW LEVEL SECURITY.
+        await session.execute(
+            text(
+                """
+                DO $$ BEGIN
+                  IF NOT EXISTS (
+                    SELECT 1 FROM pg_roles WHERE rolname = 'rls_check_role'
+                  ) THEN
+                    CREATE ROLE rls_check_role NOLOGIN NOSUPERUSER;
+                  END IF;
+                END $$
+                """
+            )
+        )
+        await session.execute(text("GRANT USAGE ON SCHEMA grc TO rls_check_role"))
+        await session.execute(text("GRANT SELECT ON grc.rls_probe TO rls_check_role"))
+        # SET ROLE requires membership (superusers excepted).  The creating
+        # role holds ADMIN on rls_check_role, so it can grant itself
+        # membership; this makes the test work for non-superuser CREATEROLE
+        # connections too.
+        await session.execute(text("GRANT rls_check_role TO CURRENT_USER"))
+
+        # Insert rows for two tenants, setting the GUC to each row's own
+        # tenant_id first: FOR ALL with only a USING clause doubles as WITH
+        # CHECK, so under FORCE RLS a mismatched GUC rejects the INSERT.
+        await set_tenant_guc(session, tenant_a)
+        await session.execute(
+            text(
+                """
+                INSERT INTO grc.rls_probe (id, tenant_id, payload)
+                VALUES (:id, :tenant_id, :payload)
+                """
+            ),
+            {"id": str(uuid.uuid4()), "tenant_id": str(tenant_a), "payload": "A"},
+        )
+        await set_tenant_guc(session, tenant_b)
+        await session.execute(
+            text(
+                """
+                INSERT INTO grc.rls_probe (id, tenant_id, payload)
+                VALUES (:id, :tenant_id, :payload)
+                """
+            ),
+            {"id": str(uuid.uuid4()), "tenant_id": str(tenant_b), "payload": "B"},
+        )
+
+        # set_config cannot truly unset a GUC mid-transaction; the nil UUID is
+        # a sentinel that matches no real tenant_id, so the policy evaluates
+        # false for every row.
+        await session.execute(
+            text(
+                "SELECT set_config('app.current_tenant_id',"
+                " '00000000-0000-0000-0000-000000000000', true)"
+            )
+        )
+
+        # Drop to the non-superuser role for the visibility checks.
+        await session.execute(text("SET LOCAL ROLE rls_check_role"))
+
+        # Fail closed when the GUC matches no tenant.
+        res_unset = await session.execute(text("SELECT count(*) FROM grc.rls_probe"))
+        assert (res_unset.scalar() or 0) == 0
+
+        # Tenant A sees only its row.  SET statements do not accept bind
+        # parameters; the value is a validated uuid.UUID so interpolation is safe.
+        await session.execute(text(f"SET LOCAL app.current_tenant_id = '{tenant_a}'"))
+        res_a = await session.execute(
+            text("SELECT array_agg(payload ORDER BY payload) FROM grc.rls_probe")
+        )
+        assert (res_a.scalar() or []) == ["A"]
+
+        # Tenant B sees only its row
+        await session.execute(text(f"SET LOCAL app.current_tenant_id = '{tenant_b}'"))
+        res_b = await session.execute(
+            text("SELECT array_agg(payload ORDER BY payload) FROM grc.rls_probe")
+        )
+        assert (res_b.scalar() or []) == ["B"]
+
+
+async def test_postgres_rls_enforced_on_prompt_events() -> None:
+    """RLS policy on the real grc.prompt_events table isolates rows by tenant.
+
+    When conftest's setup_database fixture runs Base.metadata.create_all, it
+    builds the real grc.prompt_events table from the ORM model definition.
+    The CREATE TABLE IF NOT EXISTS DDL below therefore no-ops in that case; it
+    only takes effect on a standalone invocation where create_all did not run.
+
+    Three important notes about testing RLS on this table:
+
+    1. pii_categories and occurrences have Python-side defaults only in the ORM
+       model; create_all does NOT emit server defaults for them.  Raw INSERTs
+       must supply both columns explicitly.
+
+    2. The test role owns the table and Postgres owners bypass RLS by default.
+       FORCE ROW LEVEL SECURITY is therefore required so the policy fires for
+       the owning role.  However, Postgres superusers bypass RLS even with
+       FORCE ROW LEVEL SECURITY.  To handle both superuser and non-superuser
+       test environments, we create a minimal non-superuser helper role
+       (rls_check_role) and use SET LOCAL ROLE to drop privileges for the
+       SELECT assertions.  INSERTs run with the GUC set to each row's own
+       tenant_id so they satisfy the policy's implicit WITH CHECK even under
+       FORCE RLS with a non-superuser owner; see note 4 below.
+
+    3. The policy installed here (tenant_isolation_test) uses a USING clause
+       that is byte-identical to migration 019's tenant_isolation policy.
+
+    4. Because FOR ALL with only a USING clause doubles as WITH CHECK, a
+       non-superuser table owner running under FORCE ROW LEVEL SECURITY will
+       receive "new row violates row-level security policy" on any INSERT where
+       the GUC does not match the row's tenant_id.  Inserts therefore set the
+       GUC to the row's own tenant_id first so they satisfy the implicit WITH
+       CHECK even under FORCE RLS with a non-superuser owner.  After the
+       inserts the GUC is set to the nil UUID (a sentinel that matches no
+       real tenant_id) to verify fail-closed behaviour, then SELECT
+       assertions run under the NOLOGIN rls_check_role.  Note: set_config
+       cannot truly unset a GUC mid-transaction; the nil UUID is the
+       closest equivalent to "unset" within one transaction.
+    """
+    from tests.conftest import TestSessionLocal
+
+    tenant_a = uuid.UUID("00000000-0000-0000-0000-0000000000a2")
+    tenant_b = uuid.UUID("00000000-0000-0000-0000-0000000000b2")
+
+    async with TestSessionLocal() as session:
+        if session.get_bind().dialect.name != "postgresql":
+            pytest.skip("RLS enforcement requires Postgres")
+
+        # Ensure the schema exists (conftest create_all may have already done
+        # this, but be defensive).
+        await session.execute(text("CREATE SCHEMA IF NOT EXISTS grc"))
+
+        # Ensure the grc.prompt_events table exists.  conftest's setup_database
+        # fixture calls Base.metadata.create_all which covers the ORM model, so
+        # this DDL no-ops in the normal case.  It only takes effect on a
+        # standalone invocation where create_all did not run.  Note: source and
+        # event_kind are declared as text here to avoid enum pre-requisites in
+        # the standalone path; create_all uses the real enum types instead.
+        await session.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS grc.prompt_events (
+                    id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+                    tenant_id      uuid NOT NULL,
+                    source         text NOT NULL,
+                    event_kind     text NOT NULL,
+                    pii_categories jsonb NOT NULL DEFAULT '{}'::jsonb,
+                    occurrences    integer NOT NULL DEFAULT 1,
+                    occurred_at    timestamptz NOT NULL DEFAULT now(),
+                    created_at     timestamptz NOT NULL DEFAULT now(),
+                    updated_at     timestamptz NOT NULL DEFAULT now()
+                )
+                """
+            )
+        )
+
+        # Enable RLS, and force it even for the table owner (otherwise the
+        # owning role bypasses RLS entirely).
+        await session.execute(text("ALTER TABLE grc.prompt_events ENABLE ROW LEVEL SECURITY"))
+        await session.execute(text("ALTER TABLE grc.prompt_events FORCE ROW LEVEL SECURITY"))
+        await session.execute(
+            text("DROP POLICY IF EXISTS tenant_isolation_test ON grc.prompt_events")
+        )
+        await session.execute(
+            text(
+                """
+                CREATE POLICY tenant_isolation_test ON grc.prompt_events
+                USING (tenant_id = current_setting('app.current_tenant_id', TRUE)::uuid)
+                """
+            )
+        )
+
+        # Create a minimal non-superuser role for the SELECT-phase assertions.
+        # Superusers bypass RLS even with FORCE ROW LEVEL SECURITY, so we drop
+        # to this role before running the visibility checks.  The role is
+        # idempotent: DO ... IF NOT EXISTS guards the CREATE.
+        await session.execute(
+            text(
+                """
+                DO $$ BEGIN
+                  IF NOT EXISTS (
+                    SELECT 1 FROM pg_roles WHERE rolname = 'rls_check_role'
+                  ) THEN
+                    CREATE ROLE rls_check_role NOLOGIN NOSUPERUSER;
+                  END IF;
+                END $$
+                """
+            )
+        )
+        await session.execute(text("GRANT USAGE ON SCHEMA grc TO rls_check_role"))
+        await session.execute(text("GRANT SELECT ON grc.prompt_events TO rls_check_role"))
+        # SET ROLE requires membership (superusers excepted).  The creating
+        # role holds ADMIN on rls_check_role, so it can grant itself
+        # membership; this makes the test work for non-superuser CREATEROLE
+        # connections too.
+        await session.execute(text("GRANT rls_check_role TO CURRENT_USER"))
+
+        # Insert one row per tenant.  pii_categories and occurrences must be
+        # supplied explicitly: the ORM model defines only Python-side defaults
+        # for both, so create_all does not emit server defaults and raw INSERTs
+        # would otherwise hit a NOT NULL violation.
+        #
+        # The GUC must be set to each row's own tenant_id before its INSERT.
+        # FOR ALL with only a USING clause doubles as WITH CHECK, so under
+        # FORCE RLS a non-superuser table owner gets "new row violates
+        # row-level security policy" when the GUC does not match tenant_id.
+        # Setting the GUC first both satisfies the implicit WITH CHECK and
+        # dogfoods the set_tenant_guc helper.  SELECT assertions then run
+        # under the NOLOGIN rls_check_role (see below).
+        row_a_id = str(uuid.uuid4())
+        row_b_id = str(uuid.uuid4())
+        await set_tenant_guc(session, tenant_a)
+        await session.execute(
+            text(
+                """
+                INSERT INTO grc.prompt_events
+                    (id, tenant_id, source, event_kind, pii_categories, occurrences)
+                VALUES (:id, :tenant_id, 'safari_extension', 'activity', '{}'::jsonb, 1)
+                """
+            ),
+            {"id": row_a_id, "tenant_id": str(tenant_a)},
+        )
+        await set_tenant_guc(session, tenant_b)
+        await session.execute(
+            text(
+                """
+                INSERT INTO grc.prompt_events
+                    (id, tenant_id, source, event_kind, pii_categories, occurrences)
+                VALUES (:id, :tenant_id, 'sdk', 'violation', '{}'::jsonb, 1)
+                """
+            ),
+            {"id": row_b_id, "tenant_id": str(tenant_b)},
+        )
+
+        # Point the GUC at the nil UUID (a sentinel that matches no tenant_id
+        # stored in the table) so the "fail closed" assertion below sees zero
+        # rows.  After the last INSERT the GUC still holds tenant_b's value;
+        # we cannot truly unset a GUC mid-transaction via set_config, so the
+        # nil UUID is the closest approximation: the policy evaluates to
+        # 'some-uuid = nil-uuid' which is false for every row.
+        await session.execute(
+            text(
+                "SELECT set_config('app.current_tenant_id',"
+                " '00000000-0000-0000-0000-000000000000', true)"
+            )
+        )
+
+        # Drop to the non-superuser role for visibility checks.  SET LOCAL
+        # scopes the role to the current transaction so it rolls back cleanly.
+        # Superusers bypass FORCE ROW LEVEL SECURITY, so this step is required
+        # for the RLS assertions to fire correctly on superuser connections.
+        await session.execute(text("SET LOCAL ROLE rls_check_role"))
+
+        # Fail closed when GUC holds a nil/unmatched UUID (policy evaluates
+        # tenant_id = nil-uuid, which is false for every row -> 0 rows).
+        res_unset = await session.execute(
+            text("SELECT count(*) FROM grc.prompt_events WHERE id IN (:a, :b)"),
+            {"a": row_a_id, "b": row_b_id},
+        )
+        assert (res_unset.scalar() or 0) == 0
+
+        # Tenant A sees only its row.
+        # Note: Postgres SET statements do not accept positional parameters
+        # ($1), so we format the UUID value directly into the SQL string.
+        # UUIDs are safe to interpolate: they are validated by uuid.UUID().
+        await session.execute(text(f"SET LOCAL app.current_tenant_id = '{tenant_a}'"))
+        res_a = await session.execute(
+            text(
+                "SELECT array_agg(source ORDER BY source) "
+                "FROM grc.prompt_events WHERE id IN (:a, :b)"
+            ),
+            {"a": row_a_id, "b": row_b_id},
+        )
+        assert (res_a.scalar() or []) == ["safari_extension"]
+
+        # Tenant B sees only its row.
+        await session.execute(text(f"SET LOCAL app.current_tenant_id = '{tenant_b}'"))
+        res_b = await session.execute(
+            text(
+                "SELECT array_agg(source ORDER BY source) "
+                "FROM grc.prompt_events WHERE id IN (:a, :b)"
+            ),
+            {"a": row_a_id, "b": row_b_id},
+        )
+        assert (res_b.scalar() or []) == ["sdk"]

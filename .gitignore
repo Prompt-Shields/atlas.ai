@@ -1,0 +1,119 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+.venv/
+venv/
+env/
+
+# Node
+node_modules/
+.next/
+out/
+.turbo/
+*.tsbuildinfo
+
+# Test artifacts
+backend/test.db
+test*.db
+test*.db-journal
+
+# Cloud-sync collision copies (e.g. "service 2.py", "test 3.db")
+* [0-9].py
+* [0-9].ts
+* [0-9].tsx
+* [0-9].db
+
+# Environment
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# IDE
+.idea/
+*.swp
+*.swo
+*~
+
+# Git worktrees (local only)
+.worktrees/
+worktrees/
+
+# VS Code — track shared config, ignore personal settings
+.vscode/*
+!.vscode/launch.json
+!.vscode/tasks.json
+!.vscode/extensions.json
+
+# Devcontainer — track config, ignore env secrets
+.devcontainer/devcontainer.env
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+docker-compose.override.yml
+
+# Devcontainer symlink (created by post-create.sh)
+/worker_app
+
+# Coverage
+htmlcov/
+.coverage
+coverage.xml
+*.cover
+
+# mypy
+.mypy_cache/
+
+# ruff
+.ruff_cache/
+
+# pytest
+.pytest_cache/
+
+# Terraform/Bicep state (should not be committed)
+*.tfstate
+*.tfstate.backup
+
+# Secrets
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/
+system-architecture.html
+RUNBOOK.md
+
+# --- BEGIN open-source hygiene (do not remove) ---
+.env
+.env.*
+!.env.example
+!.env.*.example
+secrets.json
+secrets.*.json
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa*
+credentials.json
+service-account*.json
+.DS_Store
+Thumbs.db
+.idea/
+*.swp
+
+# Finder / sync duplicates ("file 2.ext")
+*\ [0-9].*
+
+# Local strategy/working documents kept outside version control
+docs/*.docx
+# --- END open-source hygiene ---
