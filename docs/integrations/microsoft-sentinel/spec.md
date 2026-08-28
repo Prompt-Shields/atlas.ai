@@ -6,8 +6,15 @@
 > template is at [`infra/sentinel-customer-setup.bicep`](../../../infra/sentinel-customer-setup.bicep),
 > and the replay CLI is `backend/scripts/replay_sentinel_dead_letters.py`.
 > Onboarding checklist: [runbooks/customer-onboarding.md](runbooks/customer-onboarding.md).
-> Still v1.1 and not built: the Graph Security alerts channel, workbook,
-> analytic rules, ASIM parser, and the codeless connector.
+>
+> **v1.1 analyst queue has shipped too**, as scheduled analytics rules —
+> [`infra/sentinel-analytic-rules.bicep`](../../../infra/sentinel-analytic-rules.bicep)
+> over [`sentinel-analytic-rules.json`](../../../infra/sentinel-analytic-rules.json).
+> This **supersedes the Graph Security alerts channel** proposed in §2; see the
+> correction there for why that path is not available.
+>
+> Still not built: the workbook, the ASIM parser (deferred to v2 by §8 q6), and
+> the codeless connector.
 
 > **Naming.** "Sentinel" in this document means **Microsoft Sentinel** (Microsoft's SIEM, unified into the Defender portal — see [Microsoft Sentinel overview](https://learn.microsoft.com/en-us/azure/sentinel/overview?tabs=defender-portal)). The dashboard's stack badges currently mention **SentinelOne** (an unrelated EDR vendor); many customers run both. This document covers Microsoft Sentinel only.
 
@@ -33,14 +40,55 @@ Five options Microsoft documents; only two are appropriate here.
 | Log Analytics HTTP Data Collector API | Deprecated, sunset | No |
 | Codeless Connector Platform (CCP) | GA, declarative JSON | Maybe — for "Connect Prompt Shields" UX inside Sentinel itself, v1.1 |
 | Common Event Format / Syslog forwarder | Network gear, on-prem | No |
-| Microsoft Graph Security API (alerts) | GA | **Yes — for high-severity events specifically** |
+| Microsoft Graph Security API (alerts) | GA for *reading*; third-party writes deprecated | **No — see the correction below** |
+| Sentinel **scheduled analytics rules** over the custom table | GA | **Yes — this is the alerts path** |
 
-**Two-channel design**:
+**Two-channel design** (as originally proposed):
 
 - **Telemetry** (every event) → Logs Ingestion API → custom table `PromptShieldsActivity_CL`
 - **Actionable alerts** (high-severity events / repeated bias-flagged / repeated blocked) → Graph Security API → Sentinel incidents queue
 
 Why two channels: alerts in Sentinel are first-class (analyst queue, automation, SLA tracking). Burying high-sev events as plain log rows means the SOC has to write a detection rule before they see anything. The separate alert path gives them an inbox out of the box.
+
+> ### ⚠️ Correction (2026-08-28): the alerts channel is not buildable as specified
+>
+> The table above marks "Microsoft Graph Security API (alerts)" as GA and
+> usable. That is right for *reading* alerts and wrong for *writing* them, which
+> is what this design needs. Third-party alert **creation** is not a supported
+> operation: the legacy `/security/alerts` API is deprecated with a retirement
+> date announced, and its replacement (`alerts_v2`, `microsoft.graph.security`)
+> is read-oriented — a partner consumes alerts through it, it does not accept
+> partner-authored ones.
+>
+> **The supported mechanism is a scheduled analytics rule** over the custom
+> table. Sentinel runs the rule's KQL on a schedule and raises a first-class
+> **incident** from the results, which is exactly the outcome the second channel
+> was for — the analyst queue, automation, and SLA tracking all apply to
+> incidents raised this way. Rules also ship as ARM/Bicep, so they deploy with
+> the rest of the customer's setup instead of needing a running service.
+>
+> So the goal stands and the mechanism changes. The revised design is
+> **one delivery channel, two consumption paths**:
+>
+> - **Telemetry** (every event) → Logs Ingestion API → `PromptShieldsActivity_CL`
+> - **Actionable alerts** → *scheduled analytics rules over that table* →
+>   Sentinel incidents queue
+>
+> This is strictly less machinery than the original: no second outbound
+> integration, no second set of per-tenant credentials, no alert-promotion state
+> to keep consistent with the stream, and nothing to replay when the alert path
+> fails independently of the log path. The cost is latency — a rule fires on its
+> schedule (hourly for the high-severity rule) rather than at send time. For a
+> queue a human works, that is an acceptable trade; if sub-minute alerting is
+> ever required, NRT (near-real-time) rules are the escalation, not a return to
+> the Graph API.
+>
+> Shipped in [`infra/sentinel-analytic-rules.bicep`](../../../infra/sentinel-analytic-rules.bicep);
+> rule definitions and their thresholds live in
+> [`sentinel-analytic-rules.json`](../../../infra/sentinel-analytic-rules.json).
+> Item 5 of the forwarder's responsibilities in §3 ("alert promotion rule") is
+> therefore **not implemented in the forwarder** and should not be — it belongs
+> in the rules.
 
 ## 3. Architecture (target state)
 
@@ -58,33 +106,38 @@ Prompt Shields Backend  ────────┤
                     │  - Batching + retry       │
                     │  - Schema mapping         │
                     │  - Dead-letter queue      │
-                    └─────┬───────────────┬─────┘
-                          │               │
-              high-sev    │               │   all events
-              alerts      │               │
-                          ▼               ▼
-              ┌────────────────┐  ┌──────────────────────┐
-              │ MS Graph       │  │ Azure Monitor Logs   │
-              │ Security       │  │ Ingestion API        │
-              │ Alerts API     │  │  + Data Collection   │
-              └──────┬─────────┘  │    Rule (DCR)        │
-                     │            │  + Data Collection   │
-                     │            │    Endpoint (DCE)    │
-                     │            └──────────┬───────────┘
-                     │                       │
-                     ▼                       ▼
-              ┌──────────────────────────────────┐
-              │  Microsoft Sentinel              │
-              │  (Defender portal)               │
-              │  ┌────────────────────────────┐  │
-              │  │ PromptShieldsActivity_CL   │  │ ← log table
-              │  │ Alerts / Incidents queue   │  │ ← high-sev path
-              │  │ Workbook            (v1.1) │  │
-              │  │ Analytic rules      (v1.1) │  │
-              │  │ ASIM Parser         (v1.1) │  │
-              │  └────────────────────────────┘  │
-              └──────────────────────────────────┘
+                    └───────────────┬───────────┘
+                                    │  all events
+                                    ▼
+                     ┌──────────────────────────┐
+                     │ Azure Monitor Logs       │
+                     │ Ingestion API            │
+                     │  + Data Collection Rule  │
+                     │  + Data Collection Endpt │
+                     └────────────┬─────────────┘
+                                  │
+                                  ▼
+              ┌──────────────────────────────────────┐
+              │  Microsoft Sentinel                  │
+              │  (Defender portal)                   │
+              │  ┌────────────────────────────────┐  │
+              │  │ PromptShieldsActivity_CL       │  │ ← log table
+              │  │            │                   │  │
+              │  │            ▼                   │  │
+              │  │ Scheduled analytic rules  ✔    │  │ ← the alerts path
+              │  │            │                   │  │
+              │  │            ▼                   │  │
+              │  │ Incidents queue                │  │ ← what the SOC works
+              │  │                                │  │
+              │  │ Workbook              (open)   │  │
+              │  │ ASIM Parser              (v2)  │  │
+              │  └────────────────────────────────┘  │
+              └──────────────────────────────────────┘
 ```
+
+> The alert path runs **inside** Sentinel rather than as a second outbound
+> channel from the forwarder — see the §2 correction. The forwarder delivers one
+> stream; the rules decide what becomes an incident.
 
 The **Sentinel Forwarder** is the new component. Everything upstream already exists. Forwarder responsibilities:
 
@@ -92,7 +145,7 @@ The **Sentinel Forwarder** is the new component. Everything upstream already exi
 2. **Schema mapping**: Prompt Shields' internal event → flat Sentinel column shape (see [data-schema.md](data-schema.md)).
 3. **Batching + backoff**: Logs Ingestion API accepts up to 1 MB / 32 k items per request. Batch by 5 s window or 500 events, whichever first. Exponential backoff on 429 / 503.
 4. **Dead-letter queue**: failed batches go to durable storage with the full payload + error so we can replay without losing audit data.
-5. **Alert promotion rule**: any event with `Severity = High`, plus configured triggers (e.g. ≥3 blocked Compensation prompts in 1 h from same user), is *additionally* emitted via Graph Security alerts.
+5. ~~**Alert promotion rule**: any event with `Severity = High`, plus configured triggers (e.g. ≥3 blocked Compensation prompts in 1 h from same user), is *additionally* emitted via Graph Security alerts.~~ **Superseded** — see the §2 correction. Promotion happens in Sentinel, as scheduled analytics rules over the table; the forwarder has one job, which is delivering the stream.
 
 ## 4. Data schema
 
@@ -142,13 +195,15 @@ To minimize scope while staying demoable:
 
 Workbook, analytic rules, parser, alerts channel, and codeless connector all land in v1.1.
 
+**Update:** analytic rules have shipped (they *are* the alerts channel — see the §2 correction). The ASIM parser is deferred to v2 by open question 6 below. Workbook and codeless connector remain open.
+
 ## 8. Open questions / decisions
 
 1. **Scope confirmation**: B alone, or B + v1.1 packaging (workbook + rules)? *Default: B for v1, queue C for v1.1.*
 2. **Where the forwarder runs**: in the Prompt Shields control plane (multi-tenant SaaS), or a per-customer relay inside their tenant? *Default: SaaS unless a customer asks otherwise.*
 3. **Prompt-content policy**: confirmed *we never ship the prompt body* — only structured fields + hash. **Get explicit product sign-off** because it's an irreversible product stance.
 4. **Per-tenant settings UI**: where does the customer paste the DCR config? New page on the dashboard (*Integrations → Microsoft Sentinel*), or via API/CLI?
-5. **Alert thresholds**: what triggers a Sentinel incident? *Proposed defaults: any High severity, plus ≥N blocked of same `SensitiveType` from same user within T window. Confirm thresholds with security PM.*
+5. **Alert thresholds**: what triggers a Sentinel incident? *Proposed defaults: any High severity, plus ≥N blocked of same `SensitiveType` from same user within T window.* **Shipped with those defaults** (N=3, T=1h) as `let` statements at the top of each rule query, so a customer can tune them in the portal without rewriting the logic. **Still needs security-PM sign-off** — the defaults are a starting point, not a validated threshold.
 6. **ASIM parser**: ship in v1.1 or v2? *Defer to v2 — the customers who care about ASIM are large enterprises; foundation-segment buyers won't ask in v1.*
 7. **Sentinel cost transparency**: customers pay Microsoft per GB ingested. Estimate a 80-user foundation: ~150 events/day × ~500 bytes = ~22 MB/year, trivial. *Document this in customer-facing setup notes so they don't worry.*
 
@@ -164,7 +219,9 @@ docs/integrations/microsoft-sentinel/
 └── runbooks/
     └── customer-onboarding.md  ← human checklist for the setup wizard
 infra/
-└── sentinel-customer-setup.bicep       ← customer Azure resources (DCE/DCR/table/role)
+├── sentinel-customer-setup.bicep       ← customer Azure resources (DCE/DCR/table/role)
+├── sentinel-analytic-rules.bicep       ← deploys the scheduled rules
+└── sentinel-analytic-rules.json        ← rule definitions (single source of truth)
 backend/app/services/
 ├── sentinel_schema.py          ← canonical column list + wire validation
 ├── sentinel_mapping.py         ← PromptEvent → PromptShieldsActivity_CL (pure)
@@ -173,6 +230,7 @@ backend/app/services/
 backend/app/models/sentinel_forward.py  ← delivery cursor + dead-letter queue
 backend/app/routers/sentinel_connect.py ← connect wizard, status, dead letters
 backend/scripts/replay_sentinel_dead_letters.py  ← replay CLI
+backend/tests/unit/test_sentinel_analytic_rules.py  ← validates rule KQL against the schema
 worker/app/main.py                       ← WORKER_MODE=sentinel_forwarder
 frontend/src/components/spm/sentinel/    ← customer-facing setup wizard
 ```
