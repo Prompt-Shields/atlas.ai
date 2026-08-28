@@ -78,6 +78,22 @@ async def _get_integration(db: AsyncSession, tenant_id: uuid.UUID) -> Integratio
     ).scalar_one_or_none()
 
 
+def _stored_event_types(raw: dict) -> list[sentinel_service.SentinelEventType]:
+    """Parse the stored event-type mapping, skipping values we no longer know.
+
+    A value written by an older build must not 500 the page that would tell an
+    admin their config needs attention. `sentinel_forwarder.load_config`
+    tolerates the same case for the same reason.
+    """
+    types: list[sentinel_service.SentinelEventType] = []
+    for value in raw.get("enabled_event_types", []):
+        try:
+            types.append(sentinel_service.SentinelEventType(value))
+        except ValueError:
+            logger.warning("sentinel_unknown_event_type", value=value)
+    return types
+
+
 def _to_card(integration: Integration) -> IntegrationCard:
     meta = get_provider(integration.provider)
     try:
@@ -208,9 +224,7 @@ async def sentinel_events(
     except json.JSONDecodeError:
         config = {}
 
-    enabled_types = [
-        sentinel_service.SentinelEventType(t) for t in config.get("enabled_event_types", [])
-    ]
+    enabled_types = _stored_event_types(config)
     raw_events = sentinel_service.generate_events(enabled_event_types=enabled_types)
     return SentinelEventStreamResponse(
         connected=True,
@@ -255,9 +269,7 @@ async def sentinel_forwarder_status(
         raw = json.loads(record.config_json) if record.config_json else {}
     except json.JSONDecodeError:
         raw = {}
-    enabled_types = [
-        sentinel_service.SentinelEventType(t) for t in raw.get("enabled_event_types", [])
-    ]
+    enabled_types = _stored_event_types(raw)
 
     cursor = (
         await db.execute(
