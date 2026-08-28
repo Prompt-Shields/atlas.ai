@@ -1,5 +1,14 @@
 # Microsoft Sentinel integration — scoping & architecture
 
+> **Status.** The §7 MVP slice has shipped: the setup wizard takes the Azure
+> Monitor coordinates, the forwarder streams prompt telemetry through the Logs
+> Ingestion API with batching, retry, and a dead-letter queue, the Bicep
+> template is at [`infra/sentinel-customer-setup.bicep`](../../../infra/sentinel-customer-setup.bicep),
+> and the replay CLI is `backend/scripts/replay_sentinel_dead_letters.py`.
+> Onboarding checklist: [runbooks/customer-onboarding.md](runbooks/customer-onboarding.md).
+> Still v1.1 and not built: the Graph Security alerts channel, workbook,
+> analytic rules, ASIM parser, and the codeless connector.
+
 > **Naming.** "Sentinel" in this document means **Microsoft Sentinel** (Microsoft's SIEM, unified into the Defender portal — see [Microsoft Sentinel overview](https://learn.microsoft.com/en-us/azure/sentinel/overview?tabs=defender-portal)). The dashboard's stack badges currently mention **SentinelOne** (an unrelated EDR vendor); many customers run both. This document covers Microsoft Sentinel only.
 
 ## 1. What "export reports to Sentinel" can mean
@@ -96,7 +105,7 @@ The custom log table column-level schema lives in [data-schema.md](data-schema.m
 
 ## 5. Authentication & tenancy
 
-- **Per-customer Azure AD app registration** in *their* tenant. They give it the minimum scope: `Monitoring Metrics Publisher` on the specific DCR (not tenant-wide). They create DCR + DCE in their workspace via the Bicep template at [iac/sentinel-customer-setup.bicep](../../../iac/sentinel-customer-setup.bicep).
+- **Per-customer Azure AD app registration** in *their* tenant. They give it the minimum scope: `Monitoring Metrics Publisher` on the specific DCR (not tenant-wide). They create DCR + DCE in their workspace via the Bicep template at [infra/sentinel-customer-setup.bicep](../../../infra/sentinel-customer-setup.bicep).
 - Prompt Shields stores `clientId` and either an encrypted `clientSecret` **or — preferred — a Federated Identity Credential (FIC)** against Prompt Shields' Azure AD app. FIC eliminates secret rotation and the blast radius of a leaked secret.
 - **Multi-tenant Prompt Shields side**: the forwarder reads tenant config from a per-customer settings table, fetches an Azure AD token for the customer tenant via FIC, signs the Logs Ingestion request.
 
@@ -122,7 +131,7 @@ To minimize scope while staying demoable:
 
 1. **Customer setup wizard** in Prompt Shields admin — one form capturing `Tenant ID`, `DCE URL`, `DCR Immutable ID`, `Stream Name`, `Table Name`, plus an Azure AD app registration step that walks the customer through `Monitoring Metrics Publisher` on the DCR.
 2. **Forwarder service** with batching, retry, and dead-letter — **stream channel only** (no Graph Security API alerts yet).
-3. **Bicep template** (skeleton at [iac/sentinel-customer-setup.bicep](../../../iac/sentinel-customer-setup.bicep)) the customer runs in Azure Cloud Shell; creates DCE, DCR, custom table, role assignment.
+3. **Bicep template** ([infra/sentinel-customer-setup.bicep](../../../infra/sentinel-customer-setup.bicep)) the customer runs in Azure Cloud Shell; creates DCE, DCR, custom table, role assignment.
 4. **Sample KQL** in this folder that proves it works:
    ```kql
    PromptShieldsActivity_CL
@@ -145,20 +154,30 @@ Workbook, analytic rules, parser, alerts channel, and codeless connector all lan
 
 ## 9. Repository layout
 
-If absorbed into the AI SPM repo:
+Where this landed in the atlas.ai repo:
 
 ```
 docs/integrations/microsoft-sentinel/
-├── spec.md                   ← this doc
-├── data-schema.md            ← column-level schema, machine-readable
-├── kql-samples.md            ← starter queries for customer SOCs (v1.1)
+├── spec.md                     ← this doc
+├── data-schema.md              ← column-level schema, machine-readable
+├── kql-samples.md              ← starter queries for customer SOCs
 └── runbooks/
     └── customer-onboarding.md  ← human checklist for the setup wizard
-iac/
-└── sentinel-customer-setup.bicep   ← customer Azure resources
-services/
-└── sentinel-forwarder/       ← new backend service (out of scope for this PR)
-app/integrations/sentinel/    ← customer-facing setup wizard (out of scope for this PR)
+infra/
+└── sentinel-customer-setup.bicep       ← customer Azure resources (DCE/DCR/table/role)
+backend/app/services/
+├── sentinel_schema.py          ← canonical column list + wire validation
+├── sentinel_mapping.py         ← PromptEvent → PromptShieldsActivity_CL (pure)
+├── sentinel_forwarder.py       ← token, batching, retry, dead-letter, cursor
+└── sentinel_service.py         ← seeded preview stream (pre-forwarder mode)
+backend/app/models/sentinel_forward.py  ← delivery cursor + dead-letter queue
+backend/app/routers/sentinel_connect.py ← connect wizard, status, dead letters
+backend/scripts/replay_sentinel_dead_letters.py  ← replay CLI
+worker/app/main.py                       ← WORKER_MODE=sentinel_forwarder
+frontend/src/components/spm/sentinel/    ← customer-facing setup wizard
 ```
 
-This PR ships only the spec, schema, and Bicep skeleton. Forwarder service and dashboard wizard land in follow-up PRs against the AI SPM repo.
+The forwarder runs inside the existing backend/worker rather than as a separate
+`services/sentinel-forwarder/` deployment: it needs the same models, RLS
+session helpers, and Fernet key as everything else, and a separate service
+would have to re-import all of it for no isolation gain at this scale.

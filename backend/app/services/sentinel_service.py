@@ -1,17 +1,19 @@
-"""Seeded Microsoft Sentinel event generator (issue #247).
+"""Seeded Microsoft Sentinel event generator — the connect-time preview.
 
-v1 registers Sentinel in the integrations catalog and stores connect
-config (workspace name, target table, mapped event types) but makes no
-live call to Azure Monitor's Logs Ingestion API — see
-docs/feedbacks/integrations/microsoft-sentinel/spec.md for the real
-ingestion design (forwarder + DCR/DCE), which is out of scope here.
+This is the *preview* half of the Sentinel integration: a deterministic set of
+synthetic events shaped like the `PromptShieldsActivity_CL` custom table (see
+docs/integrations/microsoft-sentinel/data-schema.md), filtered to whichever
+event types the tenant mapped during connect. Nothing here is persisted and
+nothing is sent to Azure.
 
-This module produces a deterministic set of synthetic events shaped
-like the `PromptShieldsActivity_CL` custom table (see
-docs/feedbacks/integrations/microsoft-sentinel/data-schema.md),
-filtered to whichever event types the tenant mapped during connect.
-Nothing here is persisted; the "seeded event generator" wording in the
-issue matches the AISPM prototype's pure front-end mock.
+It exists so an admin can see what will flow before their Sentinel admin has
+run the Bicep template. Once the Azure Monitor coordinates are stored, real
+delivery is `app.services.sentinel_forwarder` — which shares this module's
+`SentinelEventType` / `SentinelSeverity` enums so both halves speak the same
+wire vocabulary.
+
+The enums are the wire contract with data-schema.md; changing a value changes
+what lands in customers' KQL.
 """
 
 from __future__ import annotations

@@ -1,7 +1,7 @@
 // ─────────────────────────────────────────────────────────────────────
 // SidePanel — full detail view for a selected Sentinel event, shaped
 // like the PromptShieldsActivity_CL custom table columns (see
-// docs/feedbacks/integrations/microsoft-sentinel/data-schema.md).
+// docs/integrations/microsoft-sentinel/data-schema.md).
 // Never shows a prompt body — only the structured Detail description
 // and the PromptHash.
 // ─────────────────────────────────────────────────────────────────────

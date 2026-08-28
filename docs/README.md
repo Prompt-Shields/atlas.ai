@@ -24,6 +24,8 @@ Start with the [repository README](../README.md) for setup and the tenancy rules
 |---|---|
 | [`integrations/microsoft-sentinel/spec.md`](./integrations/microsoft-sentinel/spec.md) | Microsoft Sentinel integration scope and architecture |
 | [`integrations/microsoft-sentinel/data-schema.md`](./integrations/microsoft-sentinel/data-schema.md) | `PromptShieldsActivity_CL` column schema |
+| [`integrations/microsoft-sentinel/kql-samples.md`](./integrations/microsoft-sentinel/kql-samples.md) | Starter KQL queries for customer SOCs |
+| [`integrations/microsoft-sentinel/runbooks/customer-onboarding.md`](./integrations/microsoft-sentinel/runbooks/customer-onboarding.md) | Checklist for onboarding a customer onto the forwarder |
 
 ## Platform specification
 
