@@ -145,16 +145,65 @@ python -m scripts.replay_sentinel_dead_letters replay --tenant-slug <slug>
 Replayed payloads carry their original `EventId` values, so a batch that was
 partly ingested before failing does not duplicate.
 
-## 7. Hand over
+## 7. Deploy the analytics rules
+
+Only once step 5 shows events arriving — rules over an empty table are harmless
+but prove nothing, and you want to be able to tell "the rule works" from "there
+was nothing to alert on".
+
+From the `infra/` directory (the template loads its rule definitions from a
+sibling JSON file, so the relative path must resolve):
+
+```bash
+az deployment group create \
+  --resource-group <rg-with-the-sentinel-workspace> \
+  --template-file sentinel-analytic-rules.bicep \
+  --parameters workspaceName=<workspace>
+```
+
+This creates four scheduled rules that raise **incidents** into their analyst
+queue:
+
+| Rule | Fires when | Severity |
+|---|---|---|
+| High-severity AI activity | any event at `Severity == "High"` | High |
+| Repeated blocked prompts of the same sensitive type | one user blocked ≥3× in 1 h on the same `SensitiveType` | High |
+| New shadow AI tool in use | an unsanctioned tool not seen in the prior 14 days | Medium |
+| Bias-flagged prompt | `EventType == "BiasFlagged"` | Medium |
+
+Nervous customer, or a busy production workspace? Deploy with
+`--parameters rulesEnabled=false` first, review the rules in the portal, then
+redeploy without the flag. Rule names are derived from stable ids, so a
+redeploy updates in place rather than creating duplicates.
+
+**Thresholds** (≥3 in 1 h; the 14-day shadow-AI baseline) are the spec's
+proposed defaults and are **pending security-PM sign-off**. They are `let`
+statements at the top of each query, so the customer can tune them in the
+portal without rewriting the logic — tell them that explicitly, because the
+first week is when they will want to.
+
+**Bias-flagged is not a SOC alert in most orgs.** It asserts no MITRE tactic and
+usually belongs with whoever owns responsible-AI policy. Ask where they want it
+routed rather than assuming the SOC queue.
+
+## 8. Hand over
 
 - [ ] Point their SOC at [kql-samples.md](../kql-samples.md).
 - [ ] Set expectations on cost: ~150 events/day at ~500 bytes is ~22 MB/year for
       an 80-person deployment. Trivial, but it *is* on their Microsoft bill, not
       ours. The last query in kql-samples.md shows them the real number.
-- [ ] Tell them what is not there yet: the workbook, analytic rules, the ASIM
-      parser, and the Graph Security alerts channel are v1.1. Until then,
-      high-severity events reach the analyst queue only via a scheduled
-      analytics rule they create — the query is in kql-samples.md.
+- [ ] Confirm the four rules from step 7 show as **Enabled** in
+      Sentinel → Analytics, and that they know how to tune the thresholds.
+- [ ] Tell them what is not there yet: the **workbook** and the **ASIM parser**.
+      There is no dashboard view of this data inside Sentinel yet — they get the
+      incidents queue and KQL. The ASIM parser is deferred to v2, so existing
+      ASIM-based queries will not pick this table up; large enterprises are the
+      ones who ask.
+- [ ] If they ask about a real-time alert channel: alerting runs on the rule
+      schedule (hourly for high severity), not at send time. That is a
+      deliberate design change — third-party alert creation through the Graph
+      Security API is not a supported path. NRT rules are the escalation if they
+      genuinely need sub-minute.
 - [ ] Diarise the client-secret expiry from step 1.
 
 ---

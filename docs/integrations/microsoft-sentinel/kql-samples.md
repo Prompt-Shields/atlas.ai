@@ -73,8 +73,14 @@ PromptShieldsActivity_CL
 
 ## High-severity activity
 
-Until the Graph Security alerts channel ships (v1.1), this is how high-severity
-events reach the analyst queue — as a scheduled analytics rule.
+> **You may not need to write this one.** These patterns ship as deployable
+> scheduled analytics rules in
+> [`infra/sentinel-analytic-rules.bicep`](../../../infra/sentinel-analytic-rules.bicep),
+> which raise real Sentinel **incidents** rather than leaving you to notice a
+> log row. The queries below are the same logic, for ad-hoc hunting or as a
+> starting point if you want to fork a rule. See
+> [the onboarding runbook](runbooks/customer-onboarding.md) for how to deploy
+> them.
 
 ```kql
 PromptShieldsActivity_CL
@@ -84,8 +90,9 @@ PromptShieldsActivity_CL
 | order by TimeGenerated desc
 ```
 
-Repeated blocks of the same sensitive type by one person — the pattern the spec
-proposes as a default alert trigger (§8, open question 5):
+Repeated blocks of the same sensitive type by one person — shipped as the
+`repeated-blocked-same-sensitive-type` rule, with the spec's proposed defaults
+(≥3 in 1 h, §8 open question 5):
 
 ```kql
 PromptShieldsActivity_CL
