@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from app.models.ai_cost_record import SelfHostedCostProvider
 
 
 class SyncResponse(BaseModel):
@@ -70,3 +72,69 @@ class BreakdownRow(BaseModel):
     key: str
     cost_usd: Decimal
     cost_source: str
+
+
+# ── Self-hosted usage push (slice 2) ─────────────────────────────────
+
+
+class SelfHostedUsageRecord(BaseModel):
+    """One model call reported by a customer's own instrumented app.
+
+    Deliberately narrow: tokens and a model name, not dollars. The customer's
+    spend for these calls sits on their own cloud bill, so we derive cost from
+    a price book and tag it `derived_tokens` — see
+    `app.services.cost.price_book`.
+
+    `extra="forbid"` mirrors the prompt-telemetry contract: an unrecognised
+    field is a client bug worth surfacing, not something to silently drop, and
+    it forecloses a future where prompt text arrives here by accident.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    model: str = Field(..., min_length=1, max_length=200)
+    tokens_in: int = Field(0, ge=0)
+    tokens_out: int = Field(0, ge=0)
+    # When the call happened. Naive timestamps are read as UTC; the ledger's
+    # grain is a UTC day.
+    occurred_at: datetime | None = None
+    # Optional free-form app/deployment label, kept in raw_metadata for the
+    # customer's own attribution. Never used as a ledger key.
+    app_id: str | None = Field(None, max_length=120)
+
+    @field_validator("model")
+    @classmethod
+    def _strip_model(cls, v: str) -> str:
+        stripped = v.strip()
+        if not stripped:
+            raise ValueError("model must not be blank")
+        return stripped
+
+
+class SelfHostedUsageBatch(BaseModel):
+    """A push of usage records, idempotent on `batch_id`."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    # Client-supplied idempotency key. Required, because accumulation is not
+    # idempotent: without it a retried batch double-counts silently.
+    batch_id: str = Field(..., min_length=1, max_length=200)
+    provider: SelfHostedCostProvider
+    records: list[SelfHostedUsageRecord] = Field(..., min_length=1, max_length=1000)
+
+
+class SelfHostedUsageIngestResponse(BaseModel):
+    """What the push did.
+
+    `unpriced_models` is the field worth watching: those calls were counted and
+    their tokens recorded, but contributed no cost because the price book has
+    no entry. Silence there would understate the customer's spend.
+    """
+
+    batch_id: str
+    accepted_calls: int
+    skipped_calls: int
+    rows_touched: int
+    cost_usd: Decimal
+    unpriced_models: list[str] = Field(default_factory=list)
+    duplicate: bool = False

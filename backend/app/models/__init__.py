@@ -18,6 +18,7 @@ from app.models.ai_cost_record import (  # noqa: F401
     CostSource,
     CostSubjectKind,
 )
+from app.models.ai_cost_usage_batch import AICostUsageBatch  # noqa: F401
 from app.models.ai_risk import AIRisk  # noqa: F401
 from app.models.ai_use_case import AIUseCase  # noqa: F401
 from app.models.audit_log import AuditLog  # noqa: F401

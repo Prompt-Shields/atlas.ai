@@ -43,10 +43,11 @@ class TestRegistry:
         assert meta.onboarding_recommended is True
 
     def test_aws_and_gcp_placeholders(self) -> None:
+        # AWS_BEDROCK is deliberately absent: cost slice 2 turned it into a
+        # working push target, so it is no longer a placeholder.
         for p in (
             IntegrationProvider.AWS,
             IntegrationProvider.AWS_IAM_IDENTITY_CENTER,
-            IntegrationProvider.AWS_BEDROCK,
             IntegrationProvider.GCP,
             IntegrationProvider.GCP_WORKSPACE,
             IntegrationProvider.GCP_VERTEX,
@@ -59,10 +60,11 @@ class TestRegistry:
     def test_available_only_filter(self) -> None:
         available = list_providers(available_only=True)
         # Microsoft 4 + Slack 1 + Jamf Pro + Kandji + JumpCloud = 8
-        # + 5 cost connectors (Anthropic, OpenAI, Cursor, GitHub Copilot, Vercel) = 13
-        # + Sentinel = 14.
+        # + 5 pull cost connectors (Anthropic, OpenAI, Cursor, GitHub Copilot, Vercel) = 13
+        # + Sentinel = 14
+        # + 3 push cost providers (Azure AI Foundry, Bedrock, self-hosted) = 17.
         # AWS / GCP excluded (Coming Soon).
-        assert len(available) == 14
+        assert len(available) == 17
         for m in available:
             assert m.available is True
 
@@ -182,3 +184,128 @@ class TestCostProviders:
             assert meta.onboarding_recommended is False, (
                 f"{p.value}: should not be onboarding_recommended"
             )
+
+
+class TestPushCostProviders:
+    """Cost slice 2 — the three providers that report spend by pushing.
+
+    They are the odd shape in this registry: category "cost" like the pull
+    connectors, but with no connect flow of any kind. The customer instruments
+    their own app and it POSTs to /api/v1/cost/usage; the Integration row is
+    auto-provisioned on first push.
+    """
+
+    PUSH_PROVIDERS = (
+        IntegrationProvider.AZURE_AI_FOUNDRY,
+        IntegrationProvider.AWS_BEDROCK,
+        IntegrationProvider.SELF_HOSTED_AI,
+    )
+
+    def test_registered_as_cost_providers(self) -> None:
+        for p in self.PUSH_PROVIDERS:
+            meta = get_provider(p)
+            assert meta.category == "cost", (
+                f"{p.value}: expected category='cost', got {meta.category!r}"
+            )
+
+    def test_available_so_they_do_not_render_as_coming_soon(self) -> None:
+        """The regression this class exists for.
+
+        `_to_card` maps `available=False` to status COMING_SOON, which the grid
+        renders as a locked tile with a "Notify me" button. These providers are
+        not coming — they work today, and an admin told to wait for one would
+        never instrument their app.
+        """
+        for p in self.PUSH_PROVIDERS:
+            assert get_provider(p).available is True, f"{p.value}: expected available=True"
+
+    def test_no_oauth_endpoints(self) -> None:
+        for p in self.PUSH_PROVIDERS:
+            meta = get_provider(p)
+            assert meta.authorize_url is None, f"{p.value}: push providers have no OAuth"
+            assert meta.token_url is None, f"{p.value}: push providers have no OAuth"
+            assert meta.scopes == []
+
+    def test_capabilities_say_there_is_nothing_to_connect(self) -> None:
+        """An admin looking at the tile must learn that from the tile.
+
+        Otherwise the only signal is a Connect button that does not lead to a
+        credential form, which reads as a broken integration rather than a
+        different integration model.
+        """
+        for p in self.PUSH_PROVIDERS:
+            meta = get_provider(p)
+            assert meta.capabilities
+            assert any("/api/v1/cost/usage" in c for c in meta.capabilities), (
+                f"{p.value}: capabilities should name the push endpoint"
+            )
+
+    def test_every_push_cost_provider_has_an_integration_target(self) -> None:
+        """Each pushable CostProvider maps to a registered IntegrationProvider.
+
+        `resolve_integration` auto-provisions a row using this mapping, and
+        `GET /api/v1/integrations/{id}` then calls `get_provider` on whatever it
+        finds. A mapping to an unregistered provider is a KeyError -> HTTP 500
+        on a row the customer's own push created.
+        """
+        from app.models.ai_cost_record import SelfHostedCostProvider
+        from app.services.cost.self_hosted_ingest import _INTEGRATION_FOR_PROVIDER
+
+        registered = {m.provider for m in list_providers()}
+        for cost_provider in SelfHostedCostProvider:
+            target = _INTEGRATION_FOR_PROVIDER[cost_provider]
+            assert target in registered, (
+                f"{cost_provider.value} maps to unregistered {target.value}"
+            )
+
+    def test_self_hosted_is_not_filed_under_a_cloud_vendor(self) -> None:
+        """Generic self-hosted spend must not be attributed to Google.
+
+        An earlier draft mapped it to GCP_VERTEX to avoid adding a constant,
+        which would have put a vendor the customer may not use on their spend
+        breakdown. Misattributing vendors is the one thing a cost tool cannot do.
+        """
+        from app.models.ai_cost_record import SelfHostedCostProvider
+        from app.services.cost.self_hosted_ingest import _INTEGRATION_FOR_PROVIDER
+
+        target = _INTEGRATION_FOR_PROVIDER[SelfHostedCostProvider.self_hosted]
+        assert target is IntegrationProvider.SELF_HOSTED_AI
+        assert get_provider(target).vendor == "other"
+
+
+class TestProviderMetaSerialises:
+    """Every registered provider must survive ProviderMetaPayload validation.
+
+    This is not a theoretical invariant. `ProviderMetaPayload` used to restate
+    the category / vendor vocabularies as its own Literals, and when the cost
+    connectors were registered with category "cost" the schema was not updated
+    — so `_meta_payload` raised ValidationError for all five, and
+    `GET /api/v1/integrations` returned 500 for every tenant. The grid was down
+    for anything, not just the cost tiles, because one bad card fails the whole
+    response.
+
+    The schema now imports the aliases from the registry, so a new category or
+    vendor cannot drift. This test is the alarm if that coupling is ever undone.
+    """
+
+    def test_every_registered_provider_serialises(self) -> None:
+        from app.routers.integrations import _meta_payload
+
+        for meta in list_providers():
+            payload = _meta_payload(meta)
+            assert payload.provider == meta.provider
+            assert payload.category == meta.category
+            assert payload.vendor == meta.vendor
+
+    def test_schema_and_registry_share_the_vocabularies(self) -> None:
+        """Not just equal today — the same object.
+
+        Equality would pass again the moment someone re-copies the literals and
+        they happen to match; identity fails the instant the copy is made.
+        """
+        from app.schemas.integration import ProviderMetaPayload
+        from app.services.integration_registry import ProviderCategory, ProviderVendor
+
+        fields = ProviderMetaPayload.model_fields
+        assert fields["category"].annotation is ProviderCategory
+        assert fields["vendor"].annotation is ProviderVendor
