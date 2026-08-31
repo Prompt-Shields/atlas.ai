@@ -1,7 +1,7 @@
 # AI Cost Ledger + Vendor Connectors — Design Spec
 
 **Date:** 2026-06-17
-**Status:** Approved design, pre-implementation
+**Status:** Slice 1 shipped; slice 2 shipped (see below); slice 3 not started
 **Scope:** atlas.ai backend + dashboard. First slice of a larger "AI Spend & ROI" product surface.
 
 ## Problem
@@ -193,9 +193,58 @@ Connecting a cost vendor reuses the existing `/dashboard/integrations` connect f
 - **RLS test** — tenant A cannot read tenant B's `ai_cost_records`; cron write loop sets `app.current_tenant_id` correctly per tenant.
 - **Endpoint tests** — aggregate math (summary/timeseries/breakdown) and `provisional` handling; cron-secret auth on `POST /api/v1/cost/sync`.
 
+## Slice 2 — self-hosted AI spend (shipped 2026-08-31)
+
+Built on this ledger without re-cutting it, which was the point of naming the slice up front.
+
+**The design changed in one significant way.** This spec assumed slice 2 would be another
+pull connector. It cannot be. A customer running their own app on Azure AI Foundry or AWS
+Bedrock pays for those tokens on *their* Azure/AWS bill, where the spend is aggregated by
+subscription and undifferentiated by application — there is no per-tenant, per-app cost API
+to pull. So the direction inverts: **the customer's app pushes** its own per-call token
+usage to `POST /api/v1/cost/usage` (X-API-Key authed, same key as the rest of the ingest
+surface), and we derive cost from a price book.
+
+**Decision 4 holds.** Per-call records are accepted but not stored per call; they are bucketed
+onto the existing daily grain — `subject_kind=model`, `subject_ref=<normalised model>`,
+`cost_source=derived_tokens`. No new ledger shape, no per-call table. Storing every call would
+be a different product (an observability tool), and the ROI model in slice 3 reads days.
+
+**The one hard part is the write mode**, and it is the opposite of every other cost path here.
+A pull connector re-fetches a whole day and *overwrites* the row, so re-running it is harmless
+— that is what the "idempotent-upsert test" above pins. A pushed batch carries only the calls
+since the last push, so it must **accumulate**, and accumulation is not idempotent. A client
+that times out and retries would silently double its own reported spend, and the doubled figure
+still looks plausible, so nobody notices. Hence `grc.ai_cost_usage_batches` (migration 043): a
+client-supplied `batch_id`, unique **per tenant**, recorded for every accepted push. A replay
+short-circuits to the original result. The per-tenant scope matters twice over — two customers
+picking the same id must not collide, and a cross-tenant read of that table would drop a real
+batch as a duplicate, so its RLS policy is a data-loss guard, not only a confidentiality one.
+
+**Unpriced models are never costed at zero.** Zero on a spend dashboard reads as "this model is
+free", not "we do not know", and it under-reports the bill — the precise failure a cost tool
+exists to prevent. The record is accepted and its tokens recorded, and the model is returned in
+`unpriced_models` so the caller can fix the price book. Prices live in `DEFAULT_PRICE_BOOK`
+overlaid by a per-integration `config_json.price_book` override, per the "no dedicated
+price-book table" line above.
+
+**Providers.** `cost_provider` gains `azure_ai_foundry`, `aws_bedrock`, and a generic
+`self_hosted` so a customer on GCP Vertex or an on-prem vLLM box is never blocked on us adding
+a constant. These are **push-only**: they are subtracted from the daily pull sweep, because a
+provider with no connector would fail its sync every cycle and sit in `status=ERROR`. The
+integration row is auto-provisioned on first push — there is no connect wizard to run.
+
+**Still outstanding:** the open-source telemetry library itself. The endpoint is the contract;
+today a customer integrates against it directly.
+
+Customer-facing contract: [`integrations/self-hosted-ai-spend/reporting-usage.md`](../integrations/self-hosted-ai-spend/reporting-usage.md).
+
 ## Out of scope (explicit — future slices)
 
-- Self-hosted app instrumentation via open-source telemetry lib (Azure AI Foundry / AWS Bedrock) → **slice 2**.
+- ~~Self-hosted app instrumentation via open-source telemetry lib (Azure AI Foundry / AWS
+  Bedrock) → **slice 2**.~~ **Shipped** — see "Slice 2" below. The direction inverted from
+  the pull assumed here: there is no per-tenant billing API to pull, so the customer's app
+  pushes. The published telemetry library is still outstanding.
 - Human-cost model and human-vs-AI **ROI** computation and dashboard → **slice 3**.
 - ChatGPT consumer/Team/Enterprise seat connector (weak/limited cost API).
 - Multi-currency normalization; budgets/alerts; cost anomaly detection; chargeback/showback allocation.

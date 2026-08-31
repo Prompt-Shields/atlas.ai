@@ -6,21 +6,23 @@ import hmac
 import uuid
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
+from typing import Annotated
 
 import structlog
 from fastapi import APIRouter, Depends, Header, Query
 from sqlalchemy import Integer, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.dependencies import AuthUser, get_tenant_db_session
+from app.auth.dependencies import AuthUser, get_tenant_db_session, require_api_key
 from app.config import get_settings
-from app.database import get_standalone_session, set_tenant_guc
+from app.database import get_db_session, get_standalone_session, set_tenant_guc
 from app.errors import AppException, NotFoundError
 from app.models.ai_cost_record import (
     AICostRecord,
     CostProvider,
     CostSource,
     CostSubjectKind,
+    SelfHostedCostProvider,
 )
 from app.models.integration import (
     Integration,
@@ -28,14 +30,18 @@ from app.models.integration import (
     IntegrationStatus,
 )
 from app.models.tenant import Tenant
+from app.models.user import APIKey
 from app.schemas.cost import (
     BreakdownRow,
     CronSyncItem,
     CronSyncResponse,
+    SelfHostedUsageBatch,
+    SelfHostedUsageIngestResponse,
     SummaryResponse,
     SyncResponse,
     TimeseriesPoint,
 )
+from app.services.cost.self_hosted_ingest import ingest_usage
 from app.services.cost.sync_service import _cost_provider_for, sync_integration
 
 logger = structlog.get_logger()
@@ -46,11 +52,20 @@ router = APIRouter(prefix="/cost", tags=["Cost"])
 # re-pull a small trailing window each time and rely on idempotent upsert.
 _SYNC_LOOKBACK_DAYS = 2
 
-# The IntegrationProviders that map onto a CostProvider — i.e. the providers
-# the cost ledger knows how to sync. Derived from the enums so the two never
-# drift apart.
+# The IntegrationProviders the cost ledger knows how to *pull* from. Derived
+# from the enums so the two never drift apart, minus the push-mode providers.
+#
+# That subtraction matters: a self-hosted integration row is auto-provisioned
+# by the first pushed batch (see services/cost/self_hosted_ingest.py), and it
+# has no connector to fetch from. Left in this list the cron sweep would try to
+# sync it every run, fail, and flip the status to ERROR — undoing the CONNECTED
+# the push had just set, on a loop, for an integration that is working fine.
+_PUSH_ONLY_COST_PROVIDERS: frozenset[str] = frozenset(p.value for p in SelfHostedCostProvider)
 _COST_PROVIDERS: list[IntegrationProvider] = [
-    p for p in IntegrationProvider if p.value.lower() in CostProvider._value2member_map_
+    p
+    for p in IntegrationProvider
+    if p.value.lower() in CostProvider._value2member_map_
+    and p.value.lower() not in _PUSH_ONLY_COST_PROVIDERS
 ]
 
 
@@ -365,3 +380,57 @@ async def cost_breakdown(
             )
         )
     return result
+
+
+@router.post("/usage", response_model=SelfHostedUsageIngestResponse)
+async def ingest_self_hosted_usage(
+    payload: SelfHostedUsageBatch,
+    api_key_record: Annotated[APIKey, Depends(require_api_key)],
+    db: AsyncSession = Depends(get_db_session),
+) -> SelfHostedUsageIngestResponse:
+    """Report token usage from a self-hosted AI app (cost-ledger slice 2).
+
+    X-API-Key authenticated, like the prompt-telemetry ingest: the caller is a
+    customer's own service, not a browser session, so there is no JWT to carry.
+    The key's tenant decides which ledger the usage lands in — the payload
+    cannot name a tenant.
+
+    Cost is **derived** from tokens via the price book and tagged
+    `derived_tokens`; the dollars themselves are on the customer's cloud bill.
+    Models with no price still have their tokens recorded and come back in
+    `unpriced_models` rather than being costed at zero, which would understate
+    spend while looking authoritative.
+
+    Idempotent on `batch_id`. Unlike the pull connectors this **accumulates**
+    into the day's row, so a retried batch would otherwise double-count; a
+    replay returns the original result with `duplicate=true`.
+    """
+    if api_key_record.tenant_id is None:
+        raise AppException(
+            code="API_KEY_NOT_TENANT_SCOPED",
+            message="API key must be tenant-scoped to report usage",
+            status_code=403,
+        )
+
+    # The ledger and batch tables are tenant-scoped under RLS, and this request
+    # arrives with no JWT to drive get_tenant_db_session, so set the GUC from
+    # the key's tenant explicitly.
+    await set_tenant_guc(db, api_key_record.tenant_id)
+
+    result = await ingest_usage(
+        db,
+        tenant_id=api_key_record.tenant_id,
+        provider=payload.provider,
+        batch_id=payload.batch_id,
+        records=payload.records,
+    )
+
+    return SelfHostedUsageIngestResponse(
+        batch_id=payload.batch_id,
+        accepted_calls=result.accepted_calls,
+        skipped_calls=result.skipped_calls,
+        rows_touched=result.rows_touched,
+        cost_usd=result.cost_usd,
+        unpriced_models=result.unpriced_models,
+        duplicate=result.duplicate,
+    )
