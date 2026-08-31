@@ -13,8 +13,12 @@
 > This **supersedes the Graph Security alerts channel** proposed in §2; see the
 > correction there for why that path is not available.
 >
-> Still not built: the workbook, the ASIM parser (deferred to v2 by §8 q6), and
-> the codeless connector.
+> **The v1.1 workbook has shipped** —
+> [`infra/sentinel-workbook.bicep`](../../../infra/sentinel-workbook.bicep) over
+> [`sentinel-workbook.json`](../../../infra/sentinel-workbook.json).
+>
+> Still not built: the ASIM parser (deferred to v2 by §8 q6) and the codeless
+> connector.
 
 > **Naming.** "Sentinel" in this document means **Microsoft Sentinel** (Microsoft's SIEM, unified into the Defender portal — see [Microsoft Sentinel overview](https://learn.microsoft.com/en-us/azure/sentinel/overview?tabs=defender-portal)). The dashboard's stack badges currently mention **SentinelOne** (an unrelated EDR vendor); many customers run both. This document covers Microsoft Sentinel only.
 
@@ -129,7 +133,7 @@ Prompt Shields Backend  ────────┤
               │  │            ▼                   │  │
               │  │ Incidents queue                │  │ ← what the SOC works
               │  │                                │  │
-              │  │ Workbook              (open)   │  │
+              │  │ Workbook                  ✔    │  │
               │  │ ASIM Parser              (v2)  │  │
               │  └────────────────────────────────┘  │
               └──────────────────────────────────────┘
@@ -195,7 +199,7 @@ To minimize scope while staying demoable:
 
 Workbook, analytic rules, parser, alerts channel, and codeless connector all land in v1.1.
 
-**Update:** analytic rules have shipped (they *are* the alerts channel — see the §2 correction). The ASIM parser is deferred to v2 by open question 6 below. Workbook and codeless connector remain open.
+**Update:** analytic rules have shipped (they *are* the alerts channel — see the §2 correction), and so has the workbook. The ASIM parser is deferred to v2 by open question 6 below. Only the codeless connector remains open.
 
 ## 8. Open questions / decisions
 
@@ -221,7 +225,9 @@ docs/integrations/microsoft-sentinel/
 infra/
 ├── sentinel-customer-setup.bicep       ← customer Azure resources (DCE/DCR/table/role)
 ├── sentinel-analytic-rules.bicep       ← deploys the scheduled rules
-└── sentinel-analytic-rules.json        ← rule definitions (single source of truth)
+├── sentinel-analytic-rules.json        ← rule definitions (single source of truth)
+├── sentinel-workbook.bicep             ← deploys the workbook
+└── sentinel-workbook.json              ← workbook body (single source of truth)
 backend/app/services/
 ├── sentinel_schema.py          ← canonical column list + wire validation
 ├── sentinel_mapping.py         ← PromptEvent → PromptShieldsActivity_CL (pure)
@@ -230,7 +236,9 @@ backend/app/services/
 backend/app/models/sentinel_forward.py  ← delivery cursor + dead-letter queue
 backend/app/routers/sentinel_connect.py ← connect wizard, status, dead letters
 backend/scripts/replay_sentinel_dead_letters.py  ← replay CLI
+backend/tests/sentinel_kql.py            ← shared KQL validation helpers
 backend/tests/unit/test_sentinel_analytic_rules.py  ← validates rule KQL against the schema
+backend/tests/unit/test_sentinel_workbook.py        ← validates workbook KQL against the schema
 worker/app/main.py                       ← WORKER_MODE=sentinel_forwarder
 frontend/src/components/spm/sentinel/    ← customer-facing setup wizard
 ```

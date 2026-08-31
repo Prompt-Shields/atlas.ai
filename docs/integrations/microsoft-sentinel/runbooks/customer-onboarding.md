@@ -6,7 +6,7 @@ implements) and [data-schema.md](../data-schema.md).
 
 Roughly 30 minutes, most of it waiting on the customer's Azure admin. Two
 people are needed: **their** Azure/Sentinel admin (steps 1–3) and **their**
-Prompt Shields org admin (step 4). Steps 5–7 are ours.
+Prompt Shields org admin (step 4). Steps 5–9 are ours.
 
 ---
 
@@ -186,7 +186,26 @@ first week is when they will want to.
 usually belongs with whoever owns responsible-AI policy. Ask where they want it
 routed rather than assuming the SOC queue.
 
-## 8. Hand over
+## 8. Deploy the workbook
+
+Gives them the in-Sentinel dashboard over the same table. Also from `infra/`:
+
+```bash
+az deployment group create \
+  --resource-group <rg-with-the-sentinel-workspace> \
+  --template-file sentinel-workbook.bicep \
+  --parameters workspaceName=<workspace>
+```
+
+Then: Sentinel → **Workbooks** → *Prompt Shields — AI activity*. It has a time
+range and an AI-tool filter at the top, then at-a-glance counts, activity over
+time, sanctioned-vs-shadow tool usage, what sensitive data is being caught,
+which departments and people, and a `PromptHash` correlation view.
+
+Like the rules, deploying against an empty table is harmless — every tile just
+renders empty until events arrive.
+
+## 9. Hand over
 
 - [ ] Point their SOC at [kql-samples.md](../kql-samples.md).
 - [ ] Set expectations on cost: ~150 events/day at ~500 bytes is ~22 MB/year for
@@ -194,11 +213,12 @@ routed rather than assuming the SOC queue.
       ours. The last query in kql-samples.md shows them the real number.
 - [ ] Confirm the four rules from step 7 show as **Enabled** in
       Sentinel → Analytics, and that they know how to tune the thresholds.
-- [ ] Tell them what is not there yet: the **workbook** and the **ASIM parser**.
-      There is no dashboard view of this data inside Sentinel yet — they get the
-      incidents queue and KQL. The ASIM parser is deferred to v2, so existing
-      ASIM-based queries will not pick this table up; large enterprises are the
-      ones who ask.
+- [ ] Confirm the workbook from step 8 opens and renders. If every tile is
+      empty but `/status` shows events forwarded, the table name in the workbook
+      and the DCR disagree — escalate rather than editing the workbook by hand.
+- [ ] Tell them what is not there yet: the **ASIM parser**, deferred to v2. Their
+      existing ASIM-based queries will not pick this table up; large enterprises
+      are the ones who ask.
 - [ ] If they ask about a real-time alert channel: alerting runs on the rule
       schedule (hourly for high severity), not at send time. That is a
       deliberate design change — third-party alert creation through the Graph
