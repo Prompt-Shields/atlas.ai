@@ -8,6 +8,7 @@ is sqlite, which cannot validate Postgres RLS behavior.
 from __future__ import annotations
 
 import uuid
+from decimal import Decimal
 
 import pytest
 from sqlalchemy import text
@@ -728,3 +729,134 @@ async def test_postgres_rls_enforced_on_ai_cost_usage_batches() -> None:
             {"batch_id": shared_batch_id},
         )
         assert (res_b.scalar() or []) == [22]
+
+
+async def test_postgres_rls_enforced_on_roi_assumptions() -> None:
+    """RLS on grc.roi_assumptions isolates rows by tenant.
+
+    This table holds the blended hourly rate and hours-saved figure behind an
+    exec-facing ROI headline. A cross-tenant read would do more than leak one
+    organisation's cost assumptions to another: `get_or_default_assumptions`
+    takes the first row it finds, so another tenant's rate would silently
+    become the multiplier in *this* tenant's reported ROI. A wrong headline
+    nobody can trace is worse than a missing one.
+
+    Mechanics follow test_postgres_rls_enforced_on_sentinel_dead_letters
+    exactly: FORCE ROW LEVEL SECURITY because the test role owns the table,
+    the NOLOGIN rls_check_role for the SELECT assertions because superusers
+    bypass FORCE, the GUC set to each row's own tenant_id before its INSERT
+    (FOR ALL with only USING doubles as WITH CHECK), and the nil UUID standing
+    in for "unset". See test_postgres_rls_enforced_on_prompt_events for the
+    full rationale.
+    """
+    from tests.conftest import TestSessionLocal
+
+    tenant_a = uuid.UUID("00000000-0000-0000-0000-0000000000a5")
+    tenant_b = uuid.UUID("00000000-0000-0000-0000-0000000000b5")
+
+    async with TestSessionLocal() as session:
+        if session.get_bind().dialect.name != "postgresql":
+            pytest.skip("RLS enforcement requires Postgres")
+
+        await session.execute(text("CREATE SCHEMA IF NOT EXISTS grc"))
+
+        # conftest's create_all builds this from the ORM model, so the DDL
+        # no-ops in the normal case. `hours_saved_source` is declared as text
+        # here to avoid an enum prerequisite on the standalone path.
+        await session.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS grc.roi_assumptions (
+                    id                           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+                    tenant_id                    uuid NOT NULL,
+                    blended_hourly_rate_usd      numeric(10, 2) NOT NULL DEFAULT 75.00,
+                    hours_saved_source           text NOT NULL DEFAULT 'adoption_pipeline',
+                    manual_hours_saved_per_month numeric(12, 2),
+                    updated_by_user_id           uuid,
+                    created_at                   timestamptz NOT NULL DEFAULT now(),
+                    updated_at                   timestamptz NOT NULL DEFAULT now()
+                )
+                """
+            )
+        )
+
+        await session.execute(text("ALTER TABLE grc.roi_assumptions ENABLE ROW LEVEL SECURITY"))
+        await session.execute(text("ALTER TABLE grc.roi_assumptions FORCE ROW LEVEL SECURITY"))
+        await session.execute(
+            text("DROP POLICY IF EXISTS tenant_isolation_test ON grc.roi_assumptions")
+        )
+        # Byte-identical to migration 044's tenant_isolation policy.
+        await session.execute(
+            text(
+                """
+                CREATE POLICY tenant_isolation_test ON grc.roi_assumptions
+                USING (tenant_id = current_setting('app.current_tenant_id', TRUE)::uuid)
+                """
+            )
+        )
+
+        await session.execute(
+            text(
+                """
+                DO $$ BEGIN
+                  IF NOT EXISTS (
+                    SELECT 1 FROM pg_roles WHERE rolname = 'rls_check_role'
+                  ) THEN
+                    CREATE ROLE rls_check_role NOLOGIN NOSUPERUSER;
+                  END IF;
+                END $$
+                """
+            )
+        )
+        await session.execute(text("GRANT USAGE ON SCHEMA grc TO rls_check_role"))
+        await session.execute(text("GRANT SELECT ON grc.roi_assumptions TO rls_check_role"))
+        await session.execute(text("GRANT rls_check_role TO CURRENT_USER"))
+
+        row_a_id = str(uuid.uuid4())
+        row_b_id = str(uuid.uuid4())
+
+        async def _seed(row_id: str, tenant_id: uuid.UUID, rate: str) -> None:
+            await set_tenant_guc(session, tenant_id)
+            await session.execute(
+                text(
+                    """
+                    INSERT INTO grc.roi_assumptions
+                        (id, tenant_id, blended_hourly_rate_usd, hours_saved_source)
+                    VALUES (:id, :tenant_id, :rate, 'adoption_pipeline')
+                    """
+                ),
+                {"id": row_id, "tenant_id": str(tenant_id), "rate": rate},
+            )
+
+        await _seed(row_a_id, tenant_a, "75.00")
+        await _seed(row_b_id, tenant_b, "250.00")
+
+        await session.execute(
+            text(
+                "SELECT set_config('app.current_tenant_id',"
+                " '00000000-0000-0000-0000-000000000000', true)"
+            )
+        )
+        await session.execute(text("SET LOCAL ROLE rls_check_role"))
+
+        # Fail closed on an unmatched GUC.
+        res_unset = await session.execute(
+            text("SELECT count(*) FROM grc.roi_assumptions WHERE id IN (:a, :b)"),
+            {"a": row_a_id, "b": row_b_id},
+        )
+        assert (res_unset.scalar() or 0) == 0
+
+        # An unfiltered read — the shape `get_or_default_assumptions` performs
+        # once RLS is the only thing scoping it — must return only this
+        # tenant's rate, never the other's.
+        await session.execute(text(f"SET LOCAL app.current_tenant_id = '{tenant_a}'"))
+        res_a = await session.execute(
+            text("SELECT array_agg(blended_hourly_rate_usd) FROM grc.roi_assumptions")
+        )
+        assert (res_a.scalar() or []) == [Decimal("75.00")]
+
+        await session.execute(text(f"SET LOCAL app.current_tenant_id = '{tenant_b}'"))
+        res_b = await session.execute(
+            text("SELECT array_agg(blended_hourly_rate_usd) FROM grc.roi_assumptions")
+        )
+        assert (res_b.scalar() or []) == [Decimal("250.00")]

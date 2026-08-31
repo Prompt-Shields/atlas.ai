@@ -88,6 +88,11 @@ from app.models.prompt_event import (  # noqa: F401
     PromptEvent,
 )
 from app.models.risk import RiskMitigation  # noqa: F401
+from app.models.roi_assumptions import (  # noqa: F401
+    DEFAULT_BLENDED_HOURLY_RATE_USD,
+    HoursSavedSource,
+    RoiAssumptions,
+)
 from app.models.saas_vendor import (  # noqa: F401
     AssessmentImportSource,
     AssessmentStatus,
