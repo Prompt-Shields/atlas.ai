@@ -13,7 +13,12 @@ from fastapi import APIRouter, Depends, Header, Query
 from sqlalchemy import Integer, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.dependencies import AuthUser, get_tenant_db_session, require_api_key
+from app.auth.dependencies import (
+    AuthUser,
+    OrgAdmin,
+    get_tenant_db_session,
+    require_api_key,
+)
 from app.config import get_settings
 from app.database import get_db_session, get_standalone_session, set_tenant_guc
 from app.errors import AppException, NotFoundError
@@ -29,18 +34,24 @@ from app.models.integration import (
     IntegrationProvider,
     IntegrationStatus,
 )
+from app.models.roi_assumptions import HoursSavedSource, RoiAssumptions
 from app.models.tenant import Tenant
 from app.models.user import APIKey
 from app.schemas.cost import (
     BreakdownRow,
     CronSyncItem,
     CronSyncResponse,
+    RoiAssumptionsPayload,
+    RoiAssumptionsUpdate,
+    RoiResponse,
     SelfHostedUsageBatch,
     SelfHostedUsageIngestResponse,
     SummaryResponse,
     SyncResponse,
     TimeseriesPoint,
 )
+from app.services.audit import log_audit_event
+from app.services.cost.roi import build_roi, get_or_default_assumptions
 from app.services.cost.self_hosted_ingest import ingest_usage
 from app.services.cost.sync_service import _cost_provider_for, sync_integration
 
@@ -434,3 +445,168 @@ async def ingest_self_hosted_usage(
         unpriced_models=result.unpriced_models,
         duplicate=result.duplicate,
     )
+
+
+# ─── ROI (cost-ledger slice 3) ───────────────────────────────────────
+
+
+def _assumptions_payload(assumptions: RoiAssumptions, *, is_default: bool) -> RoiAssumptionsPayload:
+    return RoiAssumptionsPayload(
+        blended_hourly_rate_usd=Decimal(str(assumptions.blended_hourly_rate_usd)),
+        hours_saved_source=assumptions.hours_saved_source,
+        manual_hours_saved_per_month=(
+            Decimal(str(assumptions.manual_hours_saved_per_month))
+            if assumptions.manual_hours_saved_per_month is not None
+            else None
+        ),
+        updated_at=assumptions.updated_at if not is_default else None,
+        updated_by_user_id=(
+            str(assumptions.updated_by_user_id)
+            if assumptions.updated_by_user_id is not None
+            else None
+        ),
+        is_default=is_default,
+    )
+
+
+@router.get("/roi", response_model=RoiResponse)
+async def cost_roi(
+    user: AuthUser,
+    since: date = Query(...),
+    until: date = Query(...),
+    db: AsyncSession = Depends(get_tenant_db_session),
+) -> RoiResponse:
+    """AI ROI for the caller's tenant over a window.
+
+    Combines the measured ledger total with an estimated human-equivalent
+    value. The estimate's provenance travels with the answer: `basis` says what
+    the hours-saved figure rests on, and `is_illustrative` is set whenever that
+    is anything other than this tenant's own measured usage.
+
+    `roi_multiplier` is null when there was no spend in the window — the ratio
+    is undefined, and any stand-in for it would be a flattering fiction.
+    """
+    if until < since:
+        raise AppException(
+            code="INVALID_WINDOW",
+            message="until must not precede since",
+            status_code=422,
+        )
+
+    result = await build_roi(db, tenant_id=user.tenant_id, since=since, until=until)
+    return RoiResponse(
+        window_start=result.window_start,
+        window_end=result.window_end,
+        window_days=result.window_days,
+        ai_spend_usd=result.ai_spend_usd,
+        hours_saved_per_month=result.hours_saved_per_month,
+        hours_saved_in_window=result.hours_saved_in_window,
+        blended_hourly_rate_usd=result.blended_hourly_rate_usd,
+        human_value_usd=result.human_value_usd,
+        net_value_usd=result.net_value_usd,
+        roi_multiplier=result.roi_multiplier,
+        basis=result.basis,
+        basis_detail=result.basis_detail,
+        is_illustrative=result.is_illustrative,
+    )
+
+
+@router.get("/roi/assumptions", response_model=RoiAssumptionsPayload)
+async def get_roi_assumptions(
+    user: AuthUser,
+    db: AsyncSession = Depends(get_tenant_db_session),
+) -> RoiAssumptionsPayload:
+    """The tenant's human-cost model, or the defaults if it has never set one.
+
+    Readable by any authenticated user: the assumptions are the footnote to a
+    number the whole organisation sees, and hiding them from the people reading
+    the headline would defeat the point of storing them.
+    """
+    stored = (
+        await db.execute(select(RoiAssumptions).where(RoiAssumptions.tenant_id == user.tenant_id))
+    ).scalar_one_or_none()
+    if stored is not None:
+        return _assumptions_payload(stored, is_default=False)
+
+    return _assumptions_payload(
+        await get_or_default_assumptions(db, user.tenant_id), is_default=True
+    )
+
+
+@router.put("/roi/assumptions", response_model=RoiAssumptionsPayload)
+async def put_roi_assumptions(
+    payload: RoiAssumptionsUpdate,
+    user: OrgAdmin,
+    db: AsyncSession = Depends(get_tenant_db_session),
+) -> RoiAssumptionsPayload:
+    """Set the human-cost model. Admin-only, and audited.
+
+    Editing these numbers changes the ROI the whole organisation reads, so the
+    change is written to the audit log with both the old and new values. An
+    unexplained jump in the headline should be answerable from the record
+    rather than from memory.
+    """
+    if (
+        payload.hours_saved_source is HoursSavedSource.manual
+        and payload.manual_hours_saved_per_month is None
+    ):
+        raise AppException(
+            code="MANUAL_HOURS_REQUIRED",
+            message=(
+                "manual_hours_saved_per_month is required when hours_saved_source is 'manual'"
+            ),
+            status_code=422,
+        )
+
+    stored = (
+        await db.execute(select(RoiAssumptions).where(RoiAssumptions.tenant_id == user.tenant_id))
+    ).scalar_one_or_none()
+
+    previous = (
+        {
+            "blended_hourly_rate_usd": str(stored.blended_hourly_rate_usd),
+            "hours_saved_source": stored.hours_saved_source.value,
+            "manual_hours_saved_per_month": (
+                str(stored.manual_hours_saved_per_month)
+                if stored.manual_hours_saved_per_month is not None
+                else None
+            ),
+        }
+        if stored is not None
+        else None
+    )
+
+    if stored is None:
+        stored = RoiAssumptions(tenant_id=user.tenant_id)
+        db.add(stored)
+
+    stored.blended_hourly_rate_usd = payload.blended_hourly_rate_usd
+    stored.hours_saved_source = payload.hours_saved_source
+    stored.manual_hours_saved_per_month = payload.manual_hours_saved_per_month
+    stored.updated_by_user_id = user.user_id
+
+    await log_audit_event(
+        db,
+        event_type="cost.roi_assumptions.updated",
+        action="update",
+        actor_id=user.user_id,
+        actor_email=user.email,
+        tenant_id=user.tenant_id,
+        resource_type="roi_assumptions",
+        details={
+            "previous": previous,
+            "current": {
+                "blended_hourly_rate_usd": str(payload.blended_hourly_rate_usd),
+                "hours_saved_source": payload.hours_saved_source.value,
+                "manual_hours_saved_per_month": (
+                    str(payload.manual_hours_saved_per_month)
+                    if payload.manual_hours_saved_per_month is not None
+                    else None
+                ),
+            },
+        },
+    )
+
+    await db.commit()
+    await db.refresh(stored)
+    return _assumptions_payload(stored, is_default=False)
