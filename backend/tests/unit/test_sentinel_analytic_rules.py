@@ -26,6 +26,13 @@ import pytest
 
 from app.services import sentinel_schema
 from app.services.sentinel_service import SentinelEventType, SentinelSeverity
+from tests.sentinel_kql import (
+    aliases_in,
+    event_type_literals,
+    parse_duration,
+    severity_literals,
+    unknown_identifiers,
+)
 
 pytestmark = [pytest.mark.unit]
 
@@ -42,21 +49,6 @@ SENTINEL_RULE_SEVERITIES = {"Informational", "Low", "Medium", "High"}
 
 # Sentinel caps a scheduled rule's queryPeriod at 14 days.
 MAX_QUERY_PERIOD = timedelta(days=14)
-
-# PascalCase tokens that are legal in a query without being table columns.
-# Deliberately tiny: anything else must be a column or a query-local alias, so
-# a typo'd column name surfaces as a failure rather than passing silently.
-_KQL_ALLOWED_TOKENS: set[str] = set()
-
-_STRING_LITERAL_RE = re.compile(r'"[^"]*"')
-_IDENTIFIER_RE = re.compile(r"\b[A-Z][A-Za-z0-9_]*\b")
-# `let X =` and `summarize X = ...` both bind a name. `==`, `>=`, `!=` are
-# excluded: the negative lookahead rejects `==`, and the other operators put a
-# non-word character immediately before the `=`.
-_ALIAS_RE = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*=(?!=)")
-_EVENT_TYPE_RE = re.compile(r'EventType\s*==\s*"([^"]*)"')
-_SEVERITY_RE = re.compile(r'\bSeverity\s*==\s*"([^"]*)"')
-_DURATION_RE = re.compile(r"^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?)?$")
 
 
 def load_rules() -> list[dict[str, Any]]:
@@ -77,24 +69,6 @@ def bicep_rule_fields() -> set[str]:
 def rule(request: pytest.FixtureRequest) -> dict[str, Any]:
     """Each rule as its own parametrised case, named by its id."""
     return next(r for r in load_rules() if r["id"] == request.param)
-
-
-def parse_duration(value: str) -> timedelta:
-    match = _DURATION_RE.match(value)
-    if not match:
-        raise ValueError(f"not an ISO-8601 duration this parser handles: {value!r}")
-    days, hours, minutes = (int(g) if g else 0 for g in match.groups())
-    return timedelta(days=days, hours=hours, minutes=minutes)
-
-
-def strip_strings(query: str) -> str:
-    """Blank out string literals so their contents are not read as identifiers."""
-    return _STRING_LITERAL_RE.sub('""', query)
-
-
-def aliases_in(query: str) -> set[str]:
-    """Names the query binds itself — `let` variables and summarize outputs."""
-    return set(_ALIAS_RE.findall(strip_strings(query)))
 
 
 class TestFileShape:
@@ -188,13 +162,7 @@ class TestQueryReferencesRealColumns:
 
     def test_every_identifier_is_a_column_or_a_local_alias(self, rule) -> None:
         """The core check: no rule may reference a column we do not emit."""
-        known = {c.name for c in sentinel_schema.COLUMNS}
-        known.add(sentinel_schema.TABLE_NAME)
-        known |= aliases_in(rule["query"])
-        known |= _KQL_ALLOWED_TOKENS
-
-        found = set(_IDENTIFIER_RE.findall(strip_strings(rule["query"])))
-        unknown = sorted(found - known)
+        unknown = unknown_identifiers(rule["query"])
         assert not unknown, (
             f"{rule['id']} references {unknown}, which are neither columns of "
             f"{sentinel_schema.TABLE_NAME} nor bound by the query. A rule like "
@@ -226,7 +194,7 @@ class TestQueryUsesRealEnumValues:
     def test_event_type_comparisons_use_real_wire_values(self, rule) -> None:
         # `EventType == "Blocked "` or `"blocked"` matches nothing, forever.
         valid = {e.value for e in SentinelEventType}
-        for value in _EVENT_TYPE_RE.findall(rule["query"]):
+        for value in event_type_literals(rule["query"]):
             assert value in valid, (
                 f"{rule['id']} compares EventType to {value!r}; the forwarder "
                 f"only ever emits {sorted(valid)}"
@@ -234,7 +202,7 @@ class TestQueryUsesRealEnumValues:
 
     def test_severity_comparisons_use_real_wire_values(self, rule) -> None:
         valid = {s.value for s in SentinelSeverity}
-        for value in _SEVERITY_RE.findall(rule["query"]):
+        for value in severity_literals(rule["query"]):
             assert value in valid, (
                 f"{rule['id']} compares Severity to {value!r}; the forwarder "
                 f"only ever emits {sorted(valid)}"
@@ -254,7 +222,7 @@ class TestQueryUsesRealEnumValues:
             SentinelEventType.bias_flagged.value,
         }
         for rule in load_rules():
-            for value in _EVENT_TYPE_RE.findall(rule["query"]):
+            for value in event_type_literals(rule["query"]):
                 assert value in emittable, (
                     f"{rule['id']} keys on EventType {value!r}, which the "
                     "mapper never emits — the rule could never fire"
