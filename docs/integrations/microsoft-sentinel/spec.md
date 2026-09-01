@@ -17,8 +17,9 @@
 > [`infra/sentinel-workbook.bicep`](../../../infra/sentinel-workbook.bicep) over
 > [`sentinel-workbook.json`](../../../infra/sentinel-workbook.json).
 >
-> Still not built: the ASIM parser (deferred to v2 by §8 q6) and the codeless
-> connector.
+> The ASIM parser has since shipped too —
+> [`sentinel-asim-parser.json`](../../../infra/sentinel-asim-parser.json). Still
+> not built: the codeless connector.
 
 > **Naming.** "Sentinel" in this document means **Microsoft Sentinel** (Microsoft's SIEM, unified into the Defender portal — see [Microsoft Sentinel overview](https://learn.microsoft.com/en-us/azure/sentinel/overview?tabs=defender-portal)). The dashboard's stack badges currently mention **SentinelOne** (an unrelated EDR vendor); many customers run both. This document covers Microsoft Sentinel only.
 
@@ -134,7 +135,7 @@ Prompt Shields Backend  ────────┤
               │  │ Incidents queue                │  │ ← what the SOC works
               │  │                                │  │
               │  │ Workbook                  ✔    │  │
-              │  │ ASIM Parser              (v2)  │  │
+              │  │ ASIM Parser               ✔    │  │
               │  └────────────────────────────────┘  │
               └──────────────────────────────────────┘
 ```
@@ -158,7 +159,7 @@ The custom log table column-level schema lives in [data-schema.md](data-schema.m
 - `TimeGenerated` is the only column Sentinel requires; equals event timestamp.
 - We **never ship the original prompt body**. The product's whole premise is that prompts contain PII; relaying that PII to Sentinel re-creates the leak. We send a `Detail` description plus `PromptHash` (SHA-256) so the customer can correlate without storing content.
 - `UserAadObjectId` is denormalized so KQL joins with `SigninLogs` work without a lookup table.
-- A future ASIM parser will map this to `imAuditEvent` so customers' existing ASIM-based queries work without changes (v1.1).
+- The ASIM parser maps this onto `imAuditEvent` so customers' existing ASIM-based queries reach our events without changes. Shipped as the source-specific filtering parser `vimAuditEventPromptShields` — see §7. (This line previously said v1.1 while §8 q6 said v2; the two disagreed until it shipped.)
 
 ## 5. Authentication & tenancy
 
@@ -199,7 +200,40 @@ To minimize scope while staying demoable:
 
 Workbook, analytic rules, parser, alerts channel, and codeless connector all land in v1.1.
 
-**Update:** analytic rules have shipped (they *are* the alerts channel — see the §2 correction), and so has the workbook. The ASIM parser is deferred to v2 by open question 6 below. Only the codeless connector remains open.
+**Update:** analytic rules have shipped (they *are* the alerts channel — see the §2 correction), and so have the workbook and the ASIM parser. Only the codeless connector remains open.
+
+### ASIM parser (shipped)
+
+`vimAuditEventPromptShields`, a source-specific ASIM **AuditEvent** filtering parser
+(schema version 0.1.2), deployed as a workspace `savedSearch` in the `ASIM` category by
+[`infra/sentinel-asim-parser.bicep`](../../../infra/sentinel-asim-parser.bicep).
+
+The point is not that a customer can query *us* more conveniently — they already could.
+It is that an ASIM query which never mentions Prompt Shields, "every audit event for this
+actor", starts returning AI policy decisions alongside their Exchange and Azure Activity
+events. Without a parser our table is a silo their existing detections cannot see, which
+is exactly what large enterprises object to.
+
+Two mapping decisions are worth knowing, because both are judgement calls:
+
+- **`EventType` is `Other` for every event.** ASIM's `EventType` is a closed set
+  (Set / Read / Create / Delete / Execute / …) describing operations on an object. Our
+  events are policy decisions about an AI interaction and belong to none of them. Forcing
+  `Blocked` into `Delete`, or `Coached` into `Set`, would file our rows under a meaning
+  they do not have. The specific decision lives in `Operation`, which is the mandatory
+  free-text field intended for it — so `Operation == "Blocked"` is how an analyst finds
+  blocked prompts.
+- **`EventResult` reflects the *user's* outcome, not the control's.** Blocked maps to
+  `Failure` (the prompt did not go through), Redacted and Anonymised to `Partial`, Coached
+  and BiasFlagged to `Success`. Mapping everything to `Success` on the grounds that
+  enforcement worked would be defensible and useless: an analyst filtering
+  `EventResult == "Failure"` wants denied actions.
+
+Two filter parameters this source cannot honour, `srcipaddr_has_any_prefix` and
+`newvalue_has_any`, return **no rows** rather than being ignored. We record neither a
+source IP nor a changed value, so a caller filtering on them is asking for rows we cannot
+produce; silently dropping the filter would hand back unrelated rows as though they
+matched.
 
 ## 8. Open questions / decisions
 
@@ -208,7 +242,7 @@ Workbook, analytic rules, parser, alerts channel, and codeless connector all lan
 3. **Prompt-content policy**: confirmed *we never ship the prompt body* — only structured fields + hash. **Get explicit product sign-off** because it's an irreversible product stance.
 4. **Per-tenant settings UI**: where does the customer paste the DCR config? New page on the dashboard (*Integrations → Microsoft Sentinel*), or via API/CLI?
 5. **Alert thresholds**: what triggers a Sentinel incident? *Proposed defaults: any High severity, plus ≥N blocked of same `SensitiveType` from same user within T window.* **Shipped with those defaults** (N=3, T=1h) as `let` statements at the top of each rule query, so a customer can tune them in the portal without rewriting the logic. **Still needs security-PM sign-off** — the defaults are a starting point, not a validated threshold.
-6. **ASIM parser**: ship in v1.1 or v2? *Defer to v2 — the customers who care about ASIM are large enterprises; foundation-segment buyers won't ask in v1.*
+6. **ASIM parser**: ship in v1.1 or v2? *Deferred to v2 — the customers who care about ASIM are large enterprises; foundation-segment buyers won't ask in v1.* **Resolved: shipped.** The deferral was a market-timing call rather than a technical one, and it came due once v1.1 was complete.
 7. **Sentinel cost transparency**: customers pay Microsoft per GB ingested. Estimate a 80-user foundation: ~150 events/day × ~500 bytes = ~22 MB/year, trivial. *Document this in customer-facing setup notes so they don't worry.*
 
 ## 9. Repository layout
