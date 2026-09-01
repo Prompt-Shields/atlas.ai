@@ -1,0 +1,153 @@
+{
+  "connectorId": "PromptShieldsAiActivity",
+  "kind": "Static",
+  "title": "Prompt Shields — AI activity",
+  "publisher": "Prompt Shields",
+  "descriptionMarkdown": "Stream AI policy activity from Prompt Shields into Microsoft Sentinel: prompts that were blocked, redacted, coached, or flagged for bias, with the tool, the person, the department, and the sensitive-data type involved.\n\nPrompt Shields **pushes** these events to your workspace through the Azure Monitor Logs Ingestion API — Sentinel does not poll us, and this connector holds no credentials. Connecting is therefore two steps on your side (create the ingestion target, grant our app registration access to it) and one in the Prompt Shields dashboard.\n\n**Prompt bodies are never sent.** Events carry structured fields plus a SHA-256 `PromptHash`, so you can correlate the same prompt across tools and people without the prompt text ever leaving your users' devices.",
+  "graphQueriesTableName": "PromptShieldsActivity_CL",
+  "connectivityCriteria": {
+    "type": "isConnectedQuery",
+    "value": [
+      "PromptShieldsActivity_CL | summarize LastLogReceived = max(TimeGenerated) | project IsConnected = LastLogReceived > ago(3d)"
+    ]
+  },
+  "dataTypes": [
+    {
+      "name": "PromptShieldsActivity_CL",
+      "lastDataReceivedQuery": "PromptShieldsActivity_CL | summarize Time = max(TimeGenerated) | where isnotempty(Time)"
+    }
+  ],
+  "graphQueries": [
+    {
+      "metricName": "Total AI activity events received",
+      "legend": "Prompt Shields",
+      "baseQuery": "PromptShieldsActivity_CL"
+    },
+    {
+      "metricName": "Shadow AI events received",
+      "legend": "Prompt Shields — unsanctioned tools",
+      "baseQuery": "PromptShieldsActivity_CL | where IsShadowAi == true"
+    }
+  ],
+  "sampleQueries": [
+    {
+      "description": "Is the pipe flowing? Events by type over the last day",
+      "query": "PromptShieldsActivity_CL\n| where TimeGenerated > ago(24h)\n| summarize count() by EventType, Severity"
+    },
+    {
+      "description": "Unsanctioned (shadow) AI tools in use",
+      "query": "PromptShieldsActivity_CL\n| where IsShadowAi == true\n| summarize Events = count(), People = dcount(User) by AiTool\n| order by Events desc"
+    },
+    {
+      "description": "High-severity activity, most recent first",
+      "query": "PromptShieldsActivity_CL\n| where Severity == \"High\"\n| project TimeGenerated, User, Department, AiTool, EventType, SensitiveType, Detail\n| order by TimeGenerated desc"
+    },
+    {
+      "description": "The same prompt reaching several tools or people",
+      "query": "PromptShieldsActivity_CL\n| where isnotempty(PromptHash)\n| summarize Tools = dcount(AiTool), People = dcount(User), Events = count() by PromptHash\n| where Tools > 1 or People > 1\n| order by Events desc"
+    },
+    {
+      "description": "Normalised through ASIM — audit events from Prompt Shields",
+      "query": "vimAuditEventPromptShields\n| where TimeGenerated > ago(24h)\n| summarize count() by Operation, EventResult"
+    }
+  ],
+  "permissions": {
+    "customs": [
+      {
+        "name": "Prompt Shields tenant",
+        "description": "An org admin in your Prompt Shields dashboard, to enter the Azure coordinates under Integrations → Microsoft Sentinel."
+      },
+      {
+        "name": "Azure AD app registration",
+        "description": "Permission to create an app registration in your Azure AD tenant, which is the identity Prompt Shields authenticates as when writing to your workspace."
+      }
+    ],
+    "resourceProvider": [
+      {
+        "provider": "Microsoft.OperationalInsights/workspaces",
+        "providerDisplayName": "Workspace",
+        "permissionsDisplayText": "read and write permissions are required.",
+        "requiredPermissions": {
+          "read": true,
+          "write": true,
+          "delete": true
+        }
+      },
+      {
+        "provider": "Microsoft.Insights/dataCollectionRules",
+        "providerDisplayName": "Data Collection Rule",
+        "permissionsDisplayText": "create a Data Collection Rule and Endpoint, and assign Monitoring Metrics Publisher on the rule.",
+        "requiredPermissions": {
+          "read": true,
+          "write": true,
+          "delete": true,
+          "action": true
+        }
+      }
+    ]
+  },
+  "instructionSteps": [
+    {
+      "title": "1. Create an app registration in your Azure AD tenant",
+      "description": "This is the identity Prompt Shields authenticates as. Record the **tenant id**, **client id**, **client secret**, and the service principal's **object id**.",
+      "instructions": [
+        {
+          "type": "CopyableLabel",
+          "parameters": {
+            "label": "Create the app registration and service principal",
+            "fillWith": [],
+            "value": "az ad app create --display-name \"Prompt Shields Sentinel Forwarder\"\naz ad sp create --id <appId>\naz ad sp show --id <appId> --query id -o tsv\naz ad app credential reset --id <appId> --years 1"
+          }
+        },
+        {
+          "type": "InfoMessage",
+          "parameters": {
+            "text": "The client secret is the one part of this that expires. Diarise its expiry — a lapsed secret shows up as dead-lettered batches, not as an outage anyone notices.",
+            "visible": true,
+            "inline": true
+          }
+        }
+      ]
+    },
+    {
+      "title": "2. Create the ingestion target",
+      "description": "Run the Prompt Shields setup template against the resource group holding this workspace. It creates the `PromptShieldsActivity_CL` table, a Data Collection Endpoint, a Data Collection Rule, and a **Monitoring Metrics Publisher** role assignment scoped to that rule alone — not the subscription, so a leaked credential can write one stream and nothing else.",
+      "instructions": [
+        {
+          "type": "CopyableLabel",
+          "parameters": {
+            "label": "Deploy sentinel-customer-setup.bicep",
+            "fillWith": [],
+            "value": "az deployment group create --resource-group <rg-with-this-workspace> --template-file sentinel-customer-setup.bicep --parameters workspaceName=<workspace> forwarderPrincipalId=<object-id-from-step-1>"
+          }
+        },
+        {
+          "type": "InfoMessage",
+          "parameters": {
+            "text": "Record the deployment outputs — dceUrl, dcrImmutableId, streamNameOut and tableNameOut. You paste these into Prompt Shields in step 3. Role assignments propagate asynchronously, so wait for Monitoring Metrics Publisher to appear before forwarding.",
+            "visible": true,
+            "inline": true
+          }
+        }
+      ]
+    },
+    {
+      "title": "3. Connect Sentinel in the Prompt Shields dashboard",
+      "description": "In Prompt Shields, go to **Integrations → Microsoft Sentinel → Connect** and enter the tenant id, client id and client secret from step 1, and the endpoint, rule id, stream and table names from step 2. Choose which of the five event types to stream — the default is all of them. Then hit **Forward now**.\n\nThe secret is stored encrypted and is never returned by our API.",
+      "instructions": [
+        {
+          "type": "InfoMessage",
+          "parameters": {
+            "text": "First ingestion into a brand-new custom table can take 10-15 minutes to become queryable, so this tile may keep showing as not connected for a little while after a successful forward. A batches_sent of 1 with no dead letters on the Prompt Shields status page means Azure Monitor accepted the data.",
+            "visible": true,
+            "inline": true
+          }
+        }
+      ]
+    }
+  ],
+  "availability": {
+    "status": 1,
+    "isPreview": false
+  }
+}

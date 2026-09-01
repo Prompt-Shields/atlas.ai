@@ -247,7 +247,33 @@ that `srcipaddr_has_any_prefix` and `newvalue_has_any` return nothing rather tha
 ignored — we record neither field, so a query filtering on them is asking for rows this
 source cannot produce.
 
-## 10. Hand over
+## 10. Deploy the data connector tile
+
+Do this one **early** in a real engagement — it is the customer's own status light, and
+it costs nothing to have it in place before events flow.
+
+```bash
+az deployment group create \
+  --resource-group <rg-with-the-sentinel-workspace> \
+  --template-file sentinel-data-connector.bicep \
+  --parameters workspaceName=<workspace>
+```
+
+Then: Sentinel → **Data connectors** → *Prompt Shields — AI activity*. It carries the
+three setup steps from this runbook, the ingestion graph, and sample queries.
+
+The tile reads **Connected** when the table has received anything in the last 3 days, so
+expect it to lag your first successful forward — a brand-new custom table can take 10–15
+minutes to become queryable. `batches_sent` of 1 with no dead letters on our `/status`
+endpoint is the authoritative "it worked"; the tile is the customer's ongoing one.
+
+**It is deliberately not a Codeless Connector Platform connector.** CCP polls a vendor
+API on a schedule; we push. If their Sentinel admin asks why there is no "Connect"
+button on the tile, that is the answer — there is nothing for Sentinel to connect *to*,
+because the data flows the other way. The connect action lives in the Prompt Shields
+dashboard (step 4).
+
+## 11. Hand over
 
 - [ ] Point their SOC at [kql-samples.md](../kql-samples.md).
 - [ ] Set expectations on cost: ~150 events/day at ~500 bytes is ~22 MB/year for
@@ -261,6 +287,10 @@ source cannot produce.
 - [ ] If you skipped step 9, tell them the **ASIM parser** exists and what it is for —
       their existing ASIM-based queries will not pick this table up until it is
       installed. Large enterprises are the ones who ask.
+- [ ] Confirm the connector tile from step 10 shows **Connected**. If it is grey while
+      `/status` shows events forwarded, check the freshness window before escalating:
+      the tile looks back 3 days, so a quiet weekend on a low-volume tenant can grey it
+      out legitimately.
 - [ ] If they ask about a real-time alert channel: alerting runs on the rule
       schedule (hourly for high severity), not at send time. That is a
       deliberate design change — third-party alert creation through the Graph
