@@ -1,6 +1,6 @@
 # ManagedDevice unification (v0.5 plan)
 
-**Status:** design  
+**Status:** shipped — all three sequenced steps landed; see "Sequencing" below  
 **Owner:** atlas backend  
 **Replaces:** `IntuneDevice` table (which already holds cross-MDM rows)  
 **Depends on:** —
@@ -88,9 +88,13 @@ The 7-day window matches `EXTENSION_FRESH_WINDOW` in `extension.py`. Devices who
 
 ## Sequencing
 
-1. **This PR (E):** ship the design doc + add a re-export alias in `app/models/managed_device.py` that re-exports `IntuneDevice` as `ManagedDevice`. Forward-references in new code can target `ManagedDevice` so the eventual cutover lands more cleanly.
-2. **PR `feat/managed-device-rename` (v0.5 milestone):** the rename migration + Python model split + sync-service import swap + test fixture sweep.
-3. **PR `feat/extension-heartbeat-compliance-join` (also v0.5):** swap `extension_installed_count` to use the join. Separate PR so the semantic shift in dashboard numbers is bisectable.
+All three steps have shipped. Kept here as the record of how it was staged.
+
+1. ~~**This PR (E):** ship the design doc + add a re-export alias in `app/models/managed_device.py`.~~ **Done.**
+2. ~~**PR `feat/managed-device-rename` (v0.5 milestone):** the rename migration + Python model split + sync-service import swap + test fixture sweep.~~ **Done** — migration `018_managed_device_rename.py`, `app/models/managed_device.py`, with `IntuneDevice` left as a backwards-compat alias in `microsoft_sync_outputs.py`.
+3. ~~**PR `feat/extension-heartbeat-compliance-join` (also v0.5):** swap `extension_installed_count` to use the join.~~ **Done** — `_is_extension_installed` in `app/routers/endpoints.py` joins `ExtensionDeviceHeartbeat` over `EXTENSION_FRESH_WINDOW`; the 3-day-fresh heuristic is gone.
+
+The one piece of step 2 still outstanding is **removing the `IntuneDevice` alias**, which the doc scopes to "after one release".
 
 ## Open questions
 
