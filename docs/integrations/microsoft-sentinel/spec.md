@@ -18,8 +18,9 @@
 > [`sentinel-workbook.json`](../../../infra/sentinel-workbook.json).
 >
 > The ASIM parser has since shipped too —
-> [`sentinel-asim-parser.json`](../../../infra/sentinel-asim-parser.json). Still
-> not built: the codeless connector.
+> [`sentinel-asim-parser.json`](../../../infra/sentinel-asim-parser.json), and so
+> has the data connector tile, though **not** via the Codeless Connector
+> Platform — see the §5 correction. Nothing in the spec remains unbuilt.
 
 > **Naming.** "Sentinel" in this document means **Microsoft Sentinel** (Microsoft's SIEM, unified into the Defender portal — see [Microsoft Sentinel overview](https://learn.microsoft.com/en-us/azure/sentinel/overview?tabs=defender-portal)). The dashboard's stack badges currently mention **SentinelOne** (an unrelated EDR vendor); many customers run both. This document covers Microsoft Sentinel only.
 
@@ -43,7 +44,7 @@ Five options Microsoft documents; only two are appropriate here.
 |---|---|---|
 | **Logs Ingestion API** (Azure Monitor) → custom DCR → custom table | Current recommended | **Yes — primary** |
 | Log Analytics HTTP Data Collector API | Deprecated, sunset | No |
-| Codeless Connector Platform (CCP) | GA, declarative JSON | Maybe — for "Connect Prompt Shields" UX inside Sentinel itself, v1.1 |
+| Codeless Connector Platform (CCP) | GA, declarative JSON | **No — it polls; we push. See the §5 correction.** The UX goal is met by a `Static` data connector instead |
 | Common Event Format / Syslog forwarder | Network gear, on-prem | No |
 | Microsoft Graph Security API (alerts) | GA for *reading*; third-party writes deprecated | **No — see the correction below** |
 | Sentinel **scheduled analytics rules** over the custom table | GA | **Yes — this is the alerts path** |
@@ -169,6 +170,29 @@ The custom log table column-level schema lives in [data-schema.md](data-schema.m
 
 **Decision point** (deferred to v1.1): also offer the Sentinel **Codeless Connector Platform** path, so the customer's Sentinel admin can install Prompt Shields from Content Hub and have the connection wired automatically. Cleaner UX, but requires us to publish or have the customer import a custom connector.
 
+**Correction — CCP is the wrong mechanism, and the goal is met another way.** The
+Codeless Connector Framework has one connector kind, `RestApiPoller`: it exists so
+Sentinel can *periodically fetch* from a vendor's API. Prompt Shields pushes through the
+Logs Ingestion API. Adopting CCP would mean inverting the delivery model — standing up a
+customer-authenticated polling API, re-solving batching, retry and backpressure on
+Microsoft's schedule instead of ours, and running two ingestion paths at once — to
+deliver a tile.
+
+What the decision point actually wanted was the *UX*: a Prompt Shields entry in the Data
+connectors gallery with setup instructions and a live connected indicator. That is a
+**`Static` data connector definition**
+([`infra/sentinel-data-connector.json`](../../../infra/sentinel-data-connector.json)),
+which is what Microsoft's own reference prescribes: `kind: Customizable` is for API
+polling connectors, `Static` for everything else, with `connectivityCriteria` of type
+`isConnectedQuery` — a KQL query over the custom table — rather than `HasDataConnectors`,
+which reports on poller connections we deliberately do not have.
+
+The tile carries the three setup steps, the ingestion graph, sample queries (including
+one through the ASIM parser), and the prompt-content stance, so a security reviewer
+deciding whether to let a third party write into their SIEM reads it on the tile rather
+than only in a runbook. Without a tile, "is Prompt Shields actually delivering?" is a
+question the SOC can answer only by knowing our table name and writing a query.
+
 ## 6. Failure modes & guarantees
 
 | Failure | Behavior |
@@ -200,7 +224,7 @@ To minimize scope while staying demoable:
 
 Workbook, analytic rules, parser, alerts channel, and codeless connector all land in v1.1.
 
-**Update:** analytic rules have shipped (they *are* the alerts channel — see the §2 correction), and so have the workbook and the ASIM parser. Only the codeless connector remains open.
+**Update:** analytic rules have shipped (they *are* the alerts channel — see the §2 correction), and so have the workbook, the ASIM parser, and the data connector tile — the last as a `Static` connector rather than CCP, per the §5 correction. **Nothing in this section remains unbuilt.**
 
 ### ASIM parser (shipped)
 
