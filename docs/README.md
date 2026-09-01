@@ -25,6 +25,7 @@ Start with the [repository README](../README.md) for setup and the tenancy rules
 | [`integrations/microsoft-sentinel/spec.md`](./integrations/microsoft-sentinel/spec.md) | Microsoft Sentinel integration scope and architecture |
 | [`integrations/microsoft-sentinel/data-schema.md`](./integrations/microsoft-sentinel/data-schema.md) | `PromptShieldsActivity_CL` column schema |
 | [`integrations/microsoft-sentinel/kql-samples.md`](./integrations/microsoft-sentinel/kql-samples.md) | Starter KQL queries for customer SOCs |
+| [`integrations/microsoft-sentinel/spec.md#asim-parser-shipped`](./integrations/microsoft-sentinel/spec.md) | ASIM AuditEvent parser — mapping decisions and rationale |
 | [`integrations/microsoft-sentinel/runbooks/customer-onboarding.md`](./integrations/microsoft-sentinel/runbooks/customer-onboarding.md) | Checklist for onboarding a customer onto the forwarder |
 | [`integrations/self-hosted-ai-spend/reporting-usage.md`](./integrations/self-hosted-ai-spend/reporting-usage.md) | Reporting spend from customer-hosted AI apps (Foundry / Bedrock / self-hosted) |
 

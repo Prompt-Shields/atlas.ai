@@ -205,7 +205,49 @@ which departments and people, and a `PromptHash` correlation view.
 Like the rules, deploying against an empty table is harmless — every tile just
 renders empty until events arrive.
 
-## 9. Hand over
+## 9. Deploy the ASIM parser
+
+Only if they use ASIM — ask. Large enterprises with an existing Sentinel practice will;
+a foundation-segment customer will not know what it is, and installing it costs them
+nothing but explains nothing either.
+
+```bash
+az deployment group create \
+  --resource-group <rg-with-the-sentinel-workspace> \
+  --template-file sentinel-asim-parser.bicep \
+  --parameters workspaceName=<workspace>
+```
+
+Verify in their workspace — this should return rows once events have arrived:
+
+```kql
+vimAuditEventPromptShields
+| where TimeGenerated > ago(24h)
+| summarize count() by Operation, EventResult
+```
+
+**What it buys them.** Not a nicer way to query our table; they already had that. It is
+that an ASIM query which never mentions Prompt Shields — "every audit event for this
+actor" — starts returning AI policy decisions next to their Exchange and Azure Activity
+events. Without it our table is a silo their existing detections cannot see.
+
+Two answers worth having ready, because a competent ASIM user will ask:
+
+- **"Why is `EventType` always `Other`?"** ASIM's `EventType` is a closed set describing
+  operations on an object. Our events are policy decisions about an AI interaction and
+  fit none of them, so the specific decision lives in `Operation` — that is the field to
+  filter on, e.g. `Operation == "Blocked"`.
+- **"Why does `EventResult` say `Failure` for a blocked prompt when the control worked?"**
+  It reflects the user's outcome, not the control's. `EventResult == "Failure"` means the
+  prompt did not go through, which is what an analyst hunting denied actions wants.
+
+To add it to a custom unifying parser, it takes the standard AuditEvent filtering
+signature, so it drops into a `union` alongside the built-ins without adaptation. Note
+that `srcipaddr_has_any_prefix` and `newvalue_has_any` return nothing rather than being
+ignored — we record neither field, so a query filtering on them is asking for rows this
+source cannot produce.
+
+## 10. Hand over
 
 - [ ] Point their SOC at [kql-samples.md](../kql-samples.md).
 - [ ] Set expectations on cost: ~150 events/day at ~500 bytes is ~22 MB/year for
@@ -216,9 +258,9 @@ renders empty until events arrive.
 - [ ] Confirm the workbook from step 8 opens and renders. If every tile is
       empty but `/status` shows events forwarded, the table name in the workbook
       and the DCR disagree — escalate rather than editing the workbook by hand.
-- [ ] Tell them what is not there yet: the **ASIM parser**, deferred to v2. Their
-      existing ASIM-based queries will not pick this table up; large enterprises
-      are the ones who ask.
+- [ ] If you skipped step 9, tell them the **ASIM parser** exists and what it is for —
+      their existing ASIM-based queries will not pick this table up until it is
+      installed. Large enterprises are the ones who ask.
 - [ ] If they ask about a real-time alert channel: alerting runs on the rule
       schedule (hourly for high severity), not at send time. That is a
       deliberate design change — third-party alert creation through the Graph

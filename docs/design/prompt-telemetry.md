@@ -1,7 +1,8 @@
 # Unified Prompt Telemetry — Design Spec
 
 **Date:** 2026-06-11
-**Status:** Approved design, pre-implementation
+**Status:** Backend and dashboard shipped (steps 1–2 of Sequencing below); the client
+changes in step 3 live in their own repositories and are tracked there
 **Scope:** atlas.ai backend + dashboard, plus client changes in prompt-shields-safari-widget, prompt-shields-macos-widget, and prompt-shields-sdk
 
 ## Problem
