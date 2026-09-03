@@ -1,7 +1,7 @@
 # AI Cost Ledger + Vendor Connectors — Design Spec
 
 **Date:** 2026-06-17
-**Status:** Approved design, pre-implementation
+**Status:** Slices 1, 2 and 3 all shipped — see the per-slice sections below
 **Scope:** atlas.ai backend + dashboard. First slice of a larger "AI Spend & ROI" product surface.
 
 ## Problem
@@ -193,10 +193,122 @@ Connecting a cost vendor reuses the existing `/dashboard/integrations` connect f
 - **RLS test** — tenant A cannot read tenant B's `ai_cost_records`; cron write loop sets `app.current_tenant_id` correctly per tenant.
 - **Endpoint tests** — aggregate math (summary/timeseries/breakdown) and `provisional` handling; cron-secret auth on `POST /api/v1/cost/sync`.
 
+## Slice 2 — self-hosted AI spend (shipped 2026-08-31)
+
+Built on this ledger without re-cutting it, which was the point of naming the slice up front.
+
+**The design changed in one significant way.** This spec assumed slice 2 would be another
+pull connector. It cannot be. A customer running their own app on Azure AI Foundry or AWS
+Bedrock pays for those tokens on *their* Azure/AWS bill, where the spend is aggregated by
+subscription and undifferentiated by application — there is no per-tenant, per-app cost API
+to pull. So the direction inverts: **the customer's app pushes** its own per-call token
+usage to `POST /api/v1/cost/usage` (X-API-Key authed, same key as the rest of the ingest
+surface), and we derive cost from a price book.
+
+**Decision 4 holds.** Per-call records are accepted but not stored per call; they are bucketed
+onto the existing daily grain — `subject_kind=model`, `subject_ref=<normalised model>`,
+`cost_source=derived_tokens`. No new ledger shape, no per-call table. Storing every call would
+be a different product (an observability tool), and the ROI model in slice 3 reads days.
+
+**The one hard part is the write mode**, and it is the opposite of every other cost path here.
+A pull connector re-fetches a whole day and *overwrites* the row, so re-running it is harmless
+— that is what the "idempotent-upsert test" above pins. A pushed batch carries only the calls
+since the last push, so it must **accumulate**, and accumulation is not idempotent. A client
+that times out and retries would silently double its own reported spend, and the doubled figure
+still looks plausible, so nobody notices. Hence `grc.ai_cost_usage_batches` (migration 043): a
+client-supplied `batch_id`, unique **per tenant**, recorded for every accepted push. A replay
+short-circuits to the original result. The per-tenant scope matters twice over — two customers
+picking the same id must not collide, and a cross-tenant read of that table would drop a real
+batch as a duplicate, so its RLS policy is a data-loss guard, not only a confidentiality one.
+
+**Unpriced models are never costed at zero.** Zero on a spend dashboard reads as "this model is
+free", not "we do not know", and it under-reports the bill — the precise failure a cost tool
+exists to prevent. The record is accepted and its tokens recorded, and the model is returned in
+`unpriced_models` so the caller can fix the price book. Prices live in `DEFAULT_PRICE_BOOK`
+overlaid by a per-integration `config_json.price_book` override, per the "no dedicated
+price-book table" line above.
+
+**Providers.** `cost_provider` gains `azure_ai_foundry`, `aws_bedrock`, and a generic
+`self_hosted` so a customer on GCP Vertex or an on-prem vLLM box is never blocked on us adding
+a constant. These are **push-only**: they are subtracted from the daily pull sweep, because a
+provider with no connector would fail its sync every cycle and sit in `status=ERROR`. The
+integration row is auto-provisioned on first push — there is no connect wizard to run.
+
+**Still outstanding:** the open-source telemetry library itself. The endpoint is the contract;
+today a customer integrates against it directly.
+
+Customer-facing contract: [`integrations/self-hosted-ai-spend/reporting-usage.md`](../integrations/self-hosted-ai-spend/reporting-usage.md).
+
+## Slice 3 — human-vs-AI ROI (shipped 2026-08-31)
+
+The headline this whole surface was built for, and the slice that needed the most
+restraint. Slices 1 and 2 report money that was actually spent. This one reports a
+**ratio**, and its numerator is an estimate nobody can observe directly. An ROI feature
+is the easiest place in a product to tell a customer what they want to hear, so the
+guarantees below are enforced in code and pinned by mutation-tested cases rather than
+left to reviewer taste.
+
+### What it replaced
+
+ROI already existed in two places that disagreed:
+
+| Where | Rate | AI cost it divided by |
+|---|---|---|
+| `adoption_service` headline | $75/h hard-coded | an **assumed** $15/seat/week |
+| AI Spend page | $95/h hard-coded, in `localStorage` | the real ledger total |
+
+So one organisation could read two different ROI figures depending on which page it
+opened; the assumptions behind them were per-device, invisible to colleagues, and
+editable with no record; and the adoption headline divided by a made-up cost while the
+real cost ledger sat next to it. The frontend's default of **1240 hours/month** was
+pure invention — the seeded pipeline actually yields ~13.
+
+`grc.roi_assumptions` (migration 044) is now the single per-tenant home for the blended
+fully-loaded hourly rate and the hours-saved source, admin-editable, and every change
+written to `audit.audit_logs` with both old and new values. An unexplained jump in the
+headline should be answerable from the record.
+
+### The four guarantees
+
+**Measured and estimated halves stay distinguishable.** `ai_spend_usd` is the ledger's
+own total — real invoices plus derived token cost, already provenance-tagged by slices 1
+and 2. `human_value_usd` is `hours_saved x blended_hourly_rate`, and both factors are
+assumptions. Every response therefore carries a `basis` and `is_illustrative`.
+
+**No ROI without a denominator.** A tenant that has spent nothing in the window gets
+`roi_multiplier: null`, not infinity and not a large stand-in. "Infinite ROI" is the
+single most misleading thing this endpoint could emit and is one unguarded division
+away; the UI renders the null as "no AI spend in this window to compare against".
+
+**A loss is reported as a loss.** `net_value_usd` is signed and unfloored. A tool that
+cannot show AI costing more than it saves is a marketing asset, not a cost tool — and
+that is the case a customer most needs to see.
+
+**Nothing is presented as measured that is not.** `HoursSavedBasis` separates what the
+tenant *asked for* from what was actually *available*. Nothing yet produces `measured`:
+the adoption pipeline runs over a seeded sample, so it returns `sampled`, and the UI
+renders an amber caveat naming that. A `manual` source with no number supplied falls back
+to the sample rather than being read as zero hours — zero would render a confident claim
+that AI saved nothing, when the truth is that nobody has answered the question yet.
+
+### Deliberately not built
+
+- **Per-department rates.** A single blended rate is cruder but honest; per-department
+  rates invite precision the hours-saved input cannot support.
+- **A time series of ROI.** Charting a ratio whose numerator is a constant assumption
+  would draw a line that only reflects spend, dressed up as a trend.
+- **`measured` basis.** It exists in the enum and is handled end to end, but nothing
+  emits it until AI usage telemetry lands. Declaring it now keeps the honest path from
+  being the special case later.
+
 ## Out of scope (explicit — future slices)
 
-- Self-hosted app instrumentation via open-source telemetry lib (Azure AI Foundry / AWS Bedrock) → **slice 2**.
-- Human-cost model and human-vs-AI **ROI** computation and dashboard → **slice 3**.
+- ~~Self-hosted app instrumentation via open-source telemetry lib (Azure AI Foundry / AWS
+  Bedrock) → **slice 2**.~~ **Shipped** — see "Slice 2" above. The direction inverted from
+  the pull assumed here: there is no per-tenant billing API to pull, so the customer's app
+  pushes. The published telemetry library is still outstanding.
+- ~~Human-cost model and human-vs-AI **ROI** computation and dashboard → **slice 3**.~~
+  **Shipped** — see "Slice 3" above.
 - ChatGPT consumer/Team/Enterprise seat connector (weak/limited cost API).
 - Multi-currency normalization; budgets/alerts; cost anomaly detection; chargeback/showback allocation.
 - A dedicated price-book table (config_json suffices for v1).

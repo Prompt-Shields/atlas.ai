@@ -17,14 +17,20 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
+import { api } from '@/lib/api';
 import {
   getCostSummary,
   getCostTimeseries,
   getCostBreakdown,
+  getRoi,
+  putRoiAssumptions,
   defaultWindow,
   type CostSummary,
   type CostTimeseriesPoint,
   type CostBreakdownRow,
+  type HoursSavedBasis,
+  type HoursSavedSource,
+  type RoiResponse,
 } from '@/lib/cost';
 
 // ── Formatting helpers ──────────────────────────────────────────────
@@ -91,54 +97,244 @@ function StatCard({
 
 // ── AI adoption ROI ─────────────────────────────────────────────────
 //
-// Turns the live ledger total into a human-vs-token ROI view. Two
-// assumption inputs (eng. hours saved / loaded hourly rate) are
-// manual until usage is instrumented; they persist to localStorage so
-// they survive reload. KPIs recompute live as the inputs change.
+// Reads GET /cost/roi. The whole model is server-side (cost-ledger
+// slice 3): the ledger supplies the measured half, the tenant's stored
+// human-cost model supplies the estimated half.
+//
+// This section used to compute ROI in the browser from two numbers kept
+// in localStorage, defaulting to 1240 hours/month at $95/h. Those were
+// per-device, invisible to colleagues, and invented — and the backend's
+// adoption scorecard meanwhile used $75/h, so an organisation read a
+// different ROI depending on which page it opened. Everything below is
+// display only; nothing here recomputes the figures.
 
-const ROI_HOURS_KEY = 'aispend.roi.hoursSaved';
-const ROI_RATE_KEY = 'aispend.roi.loadedRate';
-const ROI_HOURS_DEFAULT = 1240;
-const ROI_RATE_DEFAULT = 95;
+const ROI_BASIS_LABEL: Record<HoursSavedBasis, string> = {
+  measured: 'Measured',
+  sampled: 'Illustrative',
+  manual: 'Your estimate',
+};
 
-/** Read a persisted numeric assumption, falling back to a default. */
-function readStoredNumber(key: string, fallback: number): number {
-  if (typeof window === 'undefined') return fallback;
-  const raw = window.localStorage.getItem(key);
-  if (raw === null) return fallback;
-  const n = Number(raw);
-  return Number.isFinite(n) ? n : fallback;
+/**
+ * Provenance badge for the hours-saved input.
+ *
+ * Not decoration: `sampled` means the hours figure is a representative
+ * stand-in rather than this organisation's own usage, and presenting
+ * that unmarked would show an illustration as a finding.
+ */
+function BasisBadge({ basis }: { basis: HoursSavedBasis }) {
+  const style: Record<HoursSavedBasis, string> = {
+    measured: 'bg-emerald-100 text-emerald-800',
+    sampled: 'bg-amber-100 text-amber-800',
+    manual: 'bg-blue-100 text-blue-800',
+  };
+  return (
+    <span
+      className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium ${style[basis]}`}
+    >
+      {ROI_BASIS_LABEL[basis]}
+    </span>
+  );
 }
 
-function AdoptionRoiSection({ summary }: { summary: CostSummary }) {
-  const [hoursSaved, setHoursSaved] = useState(ROI_HOURS_DEFAULT);
-  const [loadedRate, setLoadedRate] = useState(ROI_RATE_DEFAULT);
+/**
+ * The assumptions behind the headline, readable by everyone and editable
+ * by admins.
+ *
+ * Deliberately on this page rather than behind a settings route: the
+ * numbers are the footnote to the figure directly above them, and an
+ * assumption nobody can see while reading the result may as well be
+ * hard-coded — which is what it was.
+ *
+ * Saving writes through the API, which audits the change. There is no
+ * local copy of these values; after a save the page refetches so the
+ * headline and the assumptions can never disagree on screen.
+ */
+function AssumptionsPanel({
+  roi,
+  canEdit,
+  onSaved,
+}: {
+  roi: RoiResponse;
+  canEdit: boolean;
+  onSaved: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [rate, setRate] = useState(Number(roi.blended_hourly_rate_usd) || 0);
+  const [source, setSource] = useState<HoursSavedSource>(
+    roi.basis === 'manual' ? 'manual' : 'adoption_pipeline',
+  );
+  const [manualHours, setManualHours] = useState(
+    roi.basis === 'manual' ? Number(roi.hours_saved_per_month) || 0 : 0,
+  );
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
-  // Hydrate from localStorage after mount (avoids SSR/client mismatch).
-  useEffect(() => {
-    setHoursSaved(readStoredNumber(ROI_HOURS_KEY, ROI_HOURS_DEFAULT));
-    setLoadedRate(readStoredNumber(ROI_RATE_KEY, ROI_RATE_DEFAULT));
-  }, []);
-
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      window.localStorage.setItem(ROI_HOURS_KEY, String(hoursSaved));
+  const save = async () => {
+    setSaving(true);
+    setSaveError(null);
+    try {
+      await putRoiAssumptions({
+        blended_hourly_rate_usd: rate,
+        hours_saved_source: source,
+        manual_hours_saved_per_month:
+          source === 'manual' ? manualHours : null,
+      });
+      setEditing(false);
+      onSaved();
+    } catch (e) {
+      setSaveError((e as Error).message);
+    } finally {
+      setSaving(false);
     }
-  }, [hoursSaved]);
+  };
 
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      window.localStorage.setItem(ROI_RATE_KEY, String(loadedRate));
-    }
-  }, [loadedRate]);
+  if (!editing) {
+    return (
+      <div className="rounded-lg bg-gray-50 p-3 ring-1 ring-gray-200">
+        <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">
+          Assumptions
+        </p>
+        <dl className="mt-2 space-y-1 text-xs text-gray-600">
+          <div className="flex justify-between gap-6">
+            <dt>Loaded hourly rate</dt>
+            <dd className="font-medium text-gray-900 tabular-nums">
+              {formatUsd(roi.blended_hourly_rate_usd)}/h
+            </dd>
+          </div>
+          <div className="flex justify-between gap-6">
+            <dt>Hours saved / month</dt>
+            <dd className="font-medium text-gray-900 tabular-nums">
+              {Number(roi.hours_saved_per_month).toLocaleString('en-US')} h
+            </dd>
+          </div>
+        </dl>
+        {canEdit ? (
+          <button
+            type="button"
+            onClick={() => setEditing(true)}
+            className="mt-2 text-[11px] font-medium text-primary-700 hover:text-primary-800 hover:underline"
+          >
+            Edit assumptions
+          </button>
+        ) : (
+          <p className="mt-2 text-[11px] text-gray-400">
+            Set for the whole organisation by an admin.
+          </p>
+        )}
+      </div>
+    );
+  }
 
-  // Derived KPIs.
-  const aiSpend = Number(summary.total_cost_usd) || 0;
-  const humanValue = hoursSaved * loadedRate;
-  const roi = aiSpend > 0 ? humanValue / aiSpend : null;
-  const netValue = humanValue - aiSpend;
+  return (
+    <div className="rounded-lg bg-gray-50 p-3 ring-1 ring-gray-200">
+      <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">
+        Assumptions
+      </p>
+      <div className="mt-2 flex flex-col gap-3">
+        <label className="flex flex-col text-xs text-gray-600">
+          <span className="mb-1">Loaded hourly rate (USD)</span>
+          <input
+            type="number"
+            min={1}
+            step={5}
+            value={rate}
+            onChange={(e) => setRate(Math.max(0, Number(e.target.value) || 0))}
+            className="w-48 rounded border border-gray-300 px-2 py-1 text-sm text-gray-900 tabular-nums focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+          />
+          <span className="mt-1 text-[11px] text-gray-400">
+            Salary plus employer overhead, not take-home.
+          </span>
+        </label>
 
-  // Comparison bar: AI spend as a share of human-equivalent value.
+        <label className="flex flex-col text-xs text-gray-600">
+          <span className="mb-1">Hours saved from</span>
+          <select
+            value={source}
+            onChange={(e) => setSource(e.target.value as HoursSavedSource)}
+            className="w-48 rounded border border-gray-300 px-2 py-1 text-sm text-gray-900 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+          >
+            <option value="adoption_pipeline">Adoption pipeline</option>
+            <option value="manual">Our own estimate</option>
+          </select>
+        </label>
+
+        {source === 'manual' && (
+          <label className="flex flex-col text-xs text-gray-600">
+            <span className="mb-1">Hours saved / month</span>
+            <input
+              type="number"
+              min={0}
+              step={10}
+              value={manualHours}
+              onChange={(e) =>
+                setManualHours(Math.max(0, Number(e.target.value) || 0))
+              }
+              className="w-48 rounded border border-gray-300 px-2 py-1 text-sm text-gray-900 tabular-nums focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+            />
+          </label>
+        )}
+
+        {saveError && (
+          <p className="text-[11px] text-red-600">{saveError}</p>
+        )}
+
+        <div className="flex gap-2">
+          <button
+            type="button"
+            disabled={saving || rate <= 0}
+            onClick={() => void save()}
+            className="rounded bg-primary-600 px-3 py-1 text-xs font-medium text-white hover:bg-primary-700 disabled:opacity-50"
+          >
+            {saving ? 'Saving…' : 'Save'}
+          </button>
+          <button
+            type="button"
+            disabled={saving}
+            onClick={() => {
+              setEditing(false);
+              setSaveError(null);
+            }}
+            className="rounded px-3 py-1 text-xs font-medium text-gray-600 hover:bg-gray-100"
+          >
+            Cancel
+          </button>
+        </div>
+        <p className="text-[11px] text-gray-400">
+          Applies to everyone in your organisation. The change is recorded in
+          the audit log.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function AdoptionRoiSection({
+  roi,
+  canEdit,
+  onSaved,
+}: {
+  roi: RoiResponse | null;
+  canEdit: boolean;
+  onSaved: () => void;
+}) {
+  if (roi === null) {
+    return (
+      <section className="mt-8 rounded-xl bg-white p-5 shadow-sm ring-1 ring-gray-200">
+        <h2 className="text-sm font-semibold text-gray-900">AI adoption ROI</h2>
+        <p className="mt-2 text-sm italic text-gray-500">
+          ROI is unavailable for this window.
+        </p>
+      </section>
+    );
+  }
+
+  const aiSpend = Number(roi.ai_spend_usd) || 0;
+  const humanValue = Number(roi.human_value_usd) || 0;
+  const netValue = Number(roi.net_value_usd) || 0;
+  const multiplier =
+    roi.roi_multiplier === null ? null : Number(roi.roi_multiplier);
+
+  // Share of the human-equivalent value that AI spend consumes.
   const spendBarPct =
     humanValue > 0
       ? Math.min(Math.max((aiSpend / humanValue) * 100, 0), 100)
@@ -148,61 +344,41 @@ function AdoptionRoiSection({ summary }: { summary: CostSummary }) {
     <section className="mt-8 rounded-xl bg-white p-5 shadow-sm ring-1 ring-gray-200">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h2 className="text-sm font-semibold text-gray-900">
-            AI adoption ROI
-          </h2>
+          <div className="flex items-center gap-2">
+            <h2 className="text-sm font-semibold text-gray-900">
+              AI adoption ROI
+            </h2>
+            <BasisBadge basis={roi.basis} />
+          </div>
           <p className="mt-1 text-xs text-gray-500">
             Human-equivalent value of AI-assisted work versus what you spend
-            on AI tooling.
+            on AI tooling, over the last {roi.window_days} days.
           </p>
         </div>
 
-        {/* Assumptions */}
-        <div className="rounded-lg bg-gray-50 p-3 ring-1 ring-gray-200">
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">
-            Assumptions
-          </p>
-          <div className="mt-2 flex flex-wrap gap-4">
-            <label className="flex flex-col text-xs text-gray-600">
-              <span className="mb-1">Engineering hours saved / month</span>
-              <input
-                type="number"
-                min={0}
-                step={10}
-                value={hoursSaved}
-                onChange={(e) => setHoursSaved(Math.max(0, Number(e.target.value) || 0))}
-                className="w-40 rounded border border-gray-300 px-2 py-1 text-sm text-gray-900 tabular-nums focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
-              />
-            </label>
-            <label className="flex flex-col text-xs text-gray-600">
-              <span className="mb-1">Loaded hourly rate (USD)</span>
-              <input
-                type="number"
-                min={0}
-                step={5}
-                value={loadedRate}
-                onChange={(e) => setLoadedRate(Math.max(0, Number(e.target.value) || 0))}
-                className="w-40 rounded border border-gray-300 px-2 py-1 text-sm text-gray-900 tabular-nums focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
-              />
-            </label>
-          </div>
-          <p className="mt-2 text-[11px] italic text-gray-400">
-            Hours saved is a manual input until usage is instrumented.
-          </p>
-        </div>
+        <AssumptionsPanel roi={roi} canEdit={canEdit} onSaved={onSaved} />
       </div>
+
+      {/* The caveat that makes the number honest. Rendered whenever the
+          hours-saved input is anything but this tenant's measured usage,
+          which today is always. */}
+      {roi.is_illustrative && (
+        <p className="mt-4 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-900 ring-1 ring-amber-200">
+          {roi.basis_detail}
+        </p>
+      )}
 
       {/* KPI cards */}
       <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
         <StatCard
-          label="AI spend (live)"
+          label="AI spend (measured)"
           value={formatUsd(aiSpend)}
           sub="ledger total this window"
         />
         <StatCard
-          label="Eng. hours saved"
-          value={`${Math.round(hoursSaved).toLocaleString('en-US')} h`}
-          sub="per month (assumption)"
+          label="Hours saved"
+          value={`${Number(roi.hours_saved_in_window).toLocaleString('en-US')} h`}
+          sub="this window (estimated)"
         />
         <StatCard
           label="Human-equivalent value"
@@ -212,18 +388,20 @@ function AdoptionRoiSection({ summary }: { summary: CostSummary }) {
         <StatCard
           label="Net value"
           value={formatUsd(netValue)}
-          sub="human value − AI spend"
+          sub={netValue < 0 ? 'AI costs more than it saves' : 'human value − AI spend'}
         />
         <div className="rounded-xl bg-primary-600 p-5 shadow-sm ring-1 ring-primary-700">
           <p className="text-[11px] font-semibold uppercase tracking-wide text-primary-100">
             Return on AI
           </p>
           <p className="mt-1 text-2xl font-bold text-white tabular-nums">
-            {roi === null ? '—' : `${roi.toFixed(1)}×`}
+            {multiplier === null ? '—' : `${multiplier.toFixed(1)}×`}
           </p>
           <p className="mt-1 text-xs text-primary-100">
-            {roi === null
-              ? 'Add a connector to see ROI'
+            {/* Null is "undefined ratio", not "zero". Showing a number here
+                for a tenant with no spend would be an unsupported claim. */}
+            {multiplier === null
+              ? 'No AI spend in this window to compare against'
               : 'per $1 spent on AI tooling'}
           </p>
         </div>
@@ -266,8 +444,8 @@ function AdoptionRoiSection({ summary }: { summary: CostSummary }) {
           </div>
         ) : (
           <p className="text-sm italic text-gray-500">
-            Set an hours-saved and rate assumption above to compare against AI
-            spend.
+            No human-equivalent value to compare — set an hours-saved
+            assumption in Settings.
           </p>
         )}
       </div>
@@ -383,6 +561,10 @@ export default function AiSpendPage() {
   const [byProvider, setByProvider] = useState<CostBreakdownRow[]>([]);
   const [byModel, setByModel] = useState<CostBreakdownRow[]>([]);
   const [byMember, setByMember] = useState<CostBreakdownRow[]>([]);
+  const [roi, setRoi] = useState<RoiResponse | null>(null);
+  // Editing the assumptions changes the number the whole organisation
+  // reads, so it is admin-gated in the UI as well as on the API.
+  const [canEdit, setCanEdit] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -392,18 +574,33 @@ export default function AiSpendPage() {
     setLoading(true);
     setError(null);
     try {
-      const [s, ts, prov, model, member] = await Promise.all([
+      const [s, ts, prov, model, member, roiResult] = await Promise.all([
         getCostSummary(),
         getCostTimeseries(),
         getCostBreakdown('provider'),
         getCostBreakdown('model'),
         getCostBreakdown('member'),
+        getRoi(),
       ]);
       setSummary(s);
       setSeries(ts);
       setByProvider(prov);
       setByModel(model);
       setByMember(member);
+      setRoi(roiResult);
+      try {
+        const me = await api.getMe();
+        setCanEdit(
+          (me.roles || []).some((r: string) =>
+            ['SUPER_ADMIN', 'TENANT_ADMIN', 'ORG_ADMIN'].includes(r),
+          ),
+        );
+      } catch {
+        // Role lookup is not worth failing the page over — the API
+        // rejects a non-admin write regardless, so the worst case is a
+        // button that is not offered.
+        setCanEdit(false);
+      }
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -542,7 +739,7 @@ export default function AiSpendPage() {
       </div>
 
       {/* AI adoption ROI */}
-      <AdoptionRoiSection summary={summary} />
+      <AdoptionRoiSection roi={roi} canEdit={canEdit} onSaved={() => void load()} />
 
       {/* Time series */}
       <section className="mt-8 rounded-xl bg-white p-5 shadow-sm ring-1 ring-gray-200">

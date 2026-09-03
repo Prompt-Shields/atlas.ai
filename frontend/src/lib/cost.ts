@@ -51,6 +51,71 @@ export interface CostBreakdownRow {
   cost_source: string;
 }
 
+// ──────────────────────────────────────────────────────────────────────
+// ROI (cost-ledger slice 3)
+// ──────────────────────────────────────────────────────────────────────
+
+/**
+ * What the hours-saved figure actually rests on.
+ *
+ * `measured` means this organisation's own observed usage; nothing
+ * produces it yet. `sampled` is a representative stand-in, and `manual`
+ * is an admin's own estimate. Only `measured` may be presented without
+ * an illustration caveat — see `RoiResponse.is_illustrative`.
+ */
+export type HoursSavedBasis = 'measured' | 'sampled' | 'manual';
+
+/** Where the tenant has asked the hours-saved figure to come from. */
+export type HoursSavedSource = 'adoption_pipeline' | 'manual';
+
+export interface RoiAssumptions {
+  blended_hourly_rate_usd: string | number;
+  hours_saved_source: HoursSavedSource;
+  manual_hours_saved_per_month: string | number | null;
+  updated_at: string | null;
+  updated_by_user_id: string | null;
+  /** True while the tenant is seeing defaults it has never saved. */
+  is_default: boolean;
+}
+
+export interface RoiAssumptionsUpdate {
+  blended_hourly_rate_usd: number;
+  hours_saved_source: HoursSavedSource;
+  manual_hours_saved_per_month?: number | null;
+}
+
+/**
+ * AI ROI over a window.
+ *
+ * Half measured, half estimated: `ai_spend_usd` is the ledger's own
+ * total, while `human_value_usd` is hours x rate and inherits the
+ * uncertainty of both.
+ *
+ * `roi_multiplier` is null when there was no spend in the window — the
+ * ratio is undefined, and rendering it as an infinity or a large
+ * stand-in would be a claim the data does not support. Render the null
+ * as "no spend to compare against", never as a number.
+ */
+export interface RoiResponse {
+  window_start: string;
+  window_end: string;
+  window_days: number;
+
+  ai_spend_usd: string | number;
+
+  hours_saved_per_month: string | number;
+  hours_saved_in_window: string | number;
+  blended_hourly_rate_usd: string | number;
+  human_value_usd: string | number;
+
+  net_value_usd: string | number;
+  roi_multiplier: string | number | null;
+
+  basis: HoursSavedBasis;
+  basis_detail: string;
+  is_illustrative: boolean;
+}
+
 export interface CostSyncResponse {
   records_upserted: number;
   since: string;
@@ -169,9 +234,30 @@ export function syncCostIntegration(
   );
 }
 
+export function getRoi(params: CostQueryParams = {}): Promise<RoiResponse> {
+  return request<RoiResponse>(`/cost/roi?${buildQuery(params)}`);
+}
+
+export function getRoiAssumptions(): Promise<RoiAssumptions> {
+  return request<RoiAssumptions>('/cost/roi/assumptions');
+}
+
+/** Admin-only; the change is written to the audit log server-side. */
+export function putRoiAssumptions(
+  body: RoiAssumptionsUpdate,
+): Promise<RoiAssumptions> {
+  return request<RoiAssumptions>('/cost/roi/assumptions', {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  });
+}
+
 export const costApi = {
   getCostSummary,
   getCostTimeseries,
   getCostBreakdown,
   syncCostIntegration,
+  getRoi,
+  getRoiAssumptions,
+  putRoiAssumptions,
 };

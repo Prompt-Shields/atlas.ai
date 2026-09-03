@@ -73,6 +73,20 @@ class IntegrationProvider(str, enum.Enum):
     # `access_token_encrypted` the cached Azure Monitor bearer token.
     SENTINEL = "SENTINEL"
 
+    # Self-hosted AI spend reporting (cost slice 2). No connect flow: the
+    # customer's own app pushes token usage to POST /api/v1/cost/usage and the
+    # integration row is auto-provisioned on first push. AWS_BEDROCK below is
+    # the third target, which is why it is no longer a pure placeholder.
+    #
+    # SELF_HOSTED_AI is the catch-all for anything that is neither — an on-prem
+    # vLLM box, a model behind a self-managed gateway. It exists so that spend
+    # is never filed under a cloud the customer does not use; naming it
+    # GCP_VERTEX to avoid adding a constant would put a wrong vendor on the
+    # dashboard, and a cost tool that misattributes vendors is worse than one
+    # that says "self-hosted".
+    AZURE_AI_FOUNDRY = "AZURE_AI_FOUNDRY"
+    SELF_HOSTED_AI = "SELF_HOSTED_AI"
+
     # Placeholders for v0.2.
     AWS = "AWS"
     AWS_IAM_IDENTITY_CENTER = "AWS_IAM_IDENTITY_CENTER"

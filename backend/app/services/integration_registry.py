@@ -19,7 +19,10 @@ Slack lives here as a read-only surface — the OAuth flow itself
 stays in `app.services.slack_oauth` (PR #30).
 
 AWS / GCP entries carry `status="COMING_SOON"` so the frontend
-renders them as locked tiles with a "Notify me" button.
+renders them as locked tiles with a "Notify me" button. The three
+push-mode cost providers (Azure AI Foundry, Bedrock, self-hosted) are
+the exception: they are `available=True` with no OAuth endpoints,
+because the customer's app pushes usage rather than us pulling it.
 """
 
 from __future__ import annotations
@@ -29,6 +32,26 @@ from typing import Literal
 
 from app.models.integration import IntegrationProvider
 
+# These two aliases are the single source of truth for the category / vendor
+# vocabularies. `app.schemas.integration.ProviderMetaPayload` imports them
+# rather than restating them: it used to hold its own copy, and when the cost
+# connectors were added here and not there, every cost provider failed payload
+# validation and took the whole /integrations grid down with a 500. A shared
+# alias makes that class of drift unrepresentable.
+ProviderCategory = Literal["identity", "device", "data", "communication", "cloud", "cost"]
+ProviderVendor = Literal[
+    "microsoft",
+    "slack",
+    "aws",
+    "gcp",
+    "anthropic",
+    "openai",
+    "cursor",
+    "github",
+    "vercel",
+    "other",
+]
+
 
 @dataclass(frozen=True)
 class ProviderMeta:
@@ -37,19 +60,8 @@ class ProviderMeta:
     provider: IntegrationProvider
     display_name: str
     short_name: str
-    category: Literal["identity", "device", "data", "communication", "cloud", "cost"]
-    vendor: Literal[
-        "microsoft",
-        "slack",
-        "aws",
-        "gcp",
-        "anthropic",
-        "openai",
-        "cursor",
-        "github",
-        "vercel",
-        "other",
-    ]
+    category: ProviderCategory
+    vendor: ProviderVendor
     logo_slug: str  # frontend looks up `/logos/{slug}.svg`
     description: str
     # OAuth endpoints — None for placeholders.
@@ -64,6 +76,16 @@ class ProviderMeta:
     onboarding_recommended: bool
     # Free-text "what you get" — surfaced on the connect card.
     capabilities: list[str]
+
+
+# Shared by the three push-mode cost providers (slice 2). Their value is the
+# same regardless of which cloud the tokens were burned on, and stating "no
+# connect flow" up front saves an admin hunting for a button that is not there.
+_PUSH_CAPABILITIES = [
+    "Report per-call token usage from your own AI apps",
+    "Cost derived from a price book and badged as an estimate",
+    "No connect flow — your app POSTs to /api/v1/cost/usage",
+]
 
 
 # ─── Microsoft providers ─────────────────────────────────────────────
@@ -355,21 +377,26 @@ _AWS_IAM_IC = ProviderMeta(
 )
 
 
+# Bedrock stopped being a placeholder in cost slice 2: it is one of the three
+# push targets below. Guardrails telemetry is still v0.2.
 _AWS_BEDROCK = ProviderMeta(
     provider=IntegrationProvider.AWS_BEDROCK,
     display_name="AWS Bedrock",
     short_name="Bedrock",
-    category="data",
+    category="cost",
     vendor="aws",
     logo_slug="aws-bedrock",
-    description="Bedrock model usage + guardrails telemetry.",
+    description=(
+        "Report token usage from your own Bedrock apps into the AI Spend "
+        "dashboard. Your app pushes; there is nothing to connect."
+    ),
     authorize_url=None,
     token_url=None,
     scopes=[],
     scope_separator=" ",
-    available=False,
+    available=True,
     onboarding_recommended=False,
-    capabilities=["Coming in v0.2"],
+    capabilities=_PUSH_CAPABILITIES,
 )
 
 
@@ -574,6 +601,63 @@ _SENTINEL = ProviderMeta(
 )
 
 
+# ─── Self-hosted AI spend (cost slice 2 — push, not pull) ────────────
+#
+# These three have no connect flow at all, which makes them the odd shape in
+# this registry. There is no per-tenant billing API to pull from: that spend
+# sits on the customer's own Azure/AWS bill, aggregated by subscription and
+# undifferentiated by application. So the customer instruments their app, it
+# POSTs token usage to /api/v1/cost/usage, and the Integration row is
+# auto-provisioned on first push.
+#
+# `available=True` matters here. A False would render them as locked
+# "coming soon" tiles with a Notify-me button, and they are not coming — they
+# work today. The frontend routes their Connect action to instructions rather
+# than an OAuth or credential flow.
+
+
+_AZURE_AI_FOUNDRY = ProviderMeta(
+    provider=IntegrationProvider.AZURE_AI_FOUNDRY,
+    display_name="Azure AI Foundry",
+    short_name="AI Foundry",
+    category="cost",
+    vendor="microsoft",
+    logo_slug="azure-ai-foundry",
+    description=(
+        "Report token usage from your own Azure AI Foundry apps into the AI "
+        "Spend dashboard. Your app pushes; there is nothing to connect."
+    ),
+    authorize_url=None,
+    token_url=None,
+    scopes=[],
+    scope_separator=" ",
+    available=True,
+    onboarding_recommended=False,
+    capabilities=_PUSH_CAPABILITIES,
+)
+
+
+_SELF_HOSTED_AI = ProviderMeta(
+    provider=IntegrationProvider.SELF_HOSTED_AI,
+    display_name="Self-hosted models",
+    short_name="Self-hosted",
+    category="cost",
+    vendor="other",
+    logo_slug="self-hosted-ai",
+    description=(
+        "Report token usage from models you run yourself — an on-prem vLLM "
+        "box, a self-managed gateway — into the AI Spend dashboard."
+    ),
+    authorize_url=None,
+    token_url=None,
+    scopes=[],
+    scope_separator=" ",
+    available=True,
+    onboarding_recommended=False,
+    capabilities=_PUSH_CAPABILITIES,
+)
+
+
 # ─── Registry ────────────────────────────────────────────────────────
 
 
@@ -600,6 +684,8 @@ _REGISTRY: dict[IntegrationProvider, ProviderMeta] = {
         _GITHUB_COPILOT,
         _VERCEL,
         _SENTINEL,
+        _AZURE_AI_FOUNDRY,
+        _SELF_HOSTED_AI,
     ]
 }
 
