@@ -1,0 +1,170 @@
+{
+  "$comment": [
+    "Canonical Microsoft Sentinel scheduled-analytics-rule definitions for the",
+    "PromptShieldsActivity_CL custom table. Companion to",
+    "docs/integrations/microsoft-sentinel/spec.md (v1.1, analyst queue).",
+    "",
+    "This file is the single source of truth. sentinel-analytic-rules.bicep",
+    "deploys it verbatim via loadJsonContent(), and",
+    "backend/tests/unit/test_sentinel_analytic_rules.py validates every query",
+    "against backend/app/services/sentinel_schema.py — so a rule can never",
+    "reference a column the forwarder does not emit. That is the failure this",
+    "arrangement exists to prevent: such a rule deploys cleanly, never fires,",
+    "and the SOC silently believes it is covered.",
+    "",
+    "Thresholds are the spec's proposed defaults (§8, open question 5) and are",
+    "declared as `let` statements at the top of each query so a customer can",
+    "tune them in the portal without rewriting the logic. They await security-PM",
+    "sign-off."
+  ],
+  "rules": [
+    {
+      "id": "high-severity-ai-activity",
+      "displayName": "Prompt Shields — High-severity AI activity",
+      "description": "A Prompt Shields event was recorded at High severity: sensitive data was blocked, redacted, or flagged on its way into an AI tool. This is the catch-all that puts every high-severity event into the analyst queue, so the SOC sees them without writing a detection rule first. Prompt content is never included — pivot on PromptHash to correlate the same prompt across events.",
+      "severity": "High",
+      "enabled": true,
+      "queryFrequency": "PT1H",
+      "queryPeriod": "PT1H",
+      "triggerOperator": "GreaterThan",
+      "triggerThreshold": 0,
+      "suppressionDuration": "PT1H",
+      "suppressionEnabled": false,
+      "tactics": ["Exfiltration"],
+      "query": "PromptShieldsActivity_CL\n| where Severity == \"High\"\n| project\n    TimeGenerated,\n    EventId,\n    User,\n    UserAadObjectId,\n    Department,\n    AiTool,\n    IsShadowAi,\n    EventType,\n    SensitiveType,\n    Detail,\n    EndpointId,\n    EndpointPlatform,\n    PromptHash",
+      "eventGroupingSettings": { "aggregationKind": "SingleAlert" },
+      "entityMappings": [
+        {
+          "entityType": "Account",
+          "fieldMappings": [
+            { "identifier": "FullName", "columnName": "User" },
+            { "identifier": "AadUserId", "columnName": "UserAadObjectId" }
+          ]
+        }
+      ],
+      "incidentConfiguration": {
+        "createIncident": true,
+        "groupingConfiguration": {
+          "enabled": true,
+          "reopenClosedIncident": false,
+          "lookbackDuration": "PT5H",
+          "matchingMethod": "Selected",
+          "groupByEntities": ["Account"],
+          "groupByAlertDetails": [],
+          "groupByCustomDetails": []
+        }
+      }
+    },
+    {
+      "id": "repeated-blocked-same-sensitive-type",
+      "displayName": "Prompt Shields — Repeated blocked prompts of the same sensitive type",
+      "description": "One person was blocked three or more times within an hour trying to put the same class of sensitive data into an AI tool. A single block is a policy working as intended; a burst is someone actively trying to get data out, or someone who does not understand the policy and needs a conversation. Tune AttemptThreshold and LookbackWindow in the query.",
+      "severity": "High",
+      "enabled": true,
+      "queryFrequency": "PT1H",
+      "queryPeriod": "PT1H",
+      "triggerOperator": "GreaterThan",
+      "triggerThreshold": 0,
+      "suppressionDuration": "PT1H",
+      "suppressionEnabled": false,
+      "tactics": ["Exfiltration"],
+      "query": "let LookbackWindow = 1h;\nlet AttemptThreshold = 3;\nPromptShieldsActivity_CL\n| where TimeGenerated > ago(LookbackWindow)\n| where EventType == \"Blocked\"\n| where isnotempty(SensitiveType)\n| summarize\n    Attempts = count(),\n    Tools = make_set(AiTool, 10),\n    FirstAttempt = min(TimeGenerated),\n    TimeGenerated = max(TimeGenerated),\n    UserAadObjectId = any(UserAadObjectId),\n    Department = any(Department)\n    by User, SensitiveType\n| where Attempts >= AttemptThreshold",
+      "eventGroupingSettings": { "aggregationKind": "SingleAlert" },
+      "entityMappings": [
+        {
+          "entityType": "Account",
+          "fieldMappings": [
+            { "identifier": "FullName", "columnName": "User" },
+            { "identifier": "AadUserId", "columnName": "UserAadObjectId" }
+          ]
+        }
+      ],
+      "incidentConfiguration": {
+        "createIncident": true,
+        "groupingConfiguration": {
+          "enabled": true,
+          "reopenClosedIncident": false,
+          "lookbackDuration": "PT5H",
+          "matchingMethod": "Selected",
+          "groupByEntities": ["Account"],
+          "groupByAlertDetails": [],
+          "groupByCustomDetails": []
+        }
+      }
+    },
+    {
+      "id": "new-shadow-ai-tool",
+      "displayName": "Prompt Shields — New shadow AI tool in use",
+      "description": "An unsanctioned AI tool appeared that has not been seen anywhere in the tenant during the baseline window. This is the shadow-AI early warning: a tool with no use case registered against it is being fed real work. BaselineWindow is capped at 14 days because that is Sentinel's maximum queryPeriod for a scheduled rule.",
+      "severity": "Medium",
+      "enabled": true,
+      "queryFrequency": "P1D",
+      "queryPeriod": "P14D",
+      "triggerOperator": "GreaterThan",
+      "triggerThreshold": 0,
+      "suppressionDuration": "PT1H",
+      "suppressionEnabled": false,
+      "tactics": ["Exfiltration"],
+      "query": "let BaselineWindow = 14d;\nlet DetectionWindow = 1d;\nlet KnownTools = PromptShieldsActivity_CL\n    | where TimeGenerated between (ago(BaselineWindow) .. ago(DetectionWindow))\n    | distinct AiTool;\nPromptShieldsActivity_CL\n| where TimeGenerated > ago(DetectionWindow)\n| where IsShadowAi\n| where AiTool !in (KnownTools)\n| summarize\n    Events = count(),\n    TimeGenerated = min(TimeGenerated),\n    UserAadObjectId = any(UserAadObjectId),\n    Department = any(Department),\n    SensitiveTypes = make_set(SensitiveType, 10)\n    by AiTool, User",
+      "eventGroupingSettings": { "aggregationKind": "SingleAlert" },
+      "entityMappings": [
+        {
+          "entityType": "Account",
+          "fieldMappings": [
+            { "identifier": "FullName", "columnName": "User" },
+            { "identifier": "AadUserId", "columnName": "UserAadObjectId" }
+          ]
+        }
+      ],
+      "incidentConfiguration": {
+        "createIncident": true,
+        "groupingConfiguration": {
+          "enabled": true,
+          "reopenClosedIncident": false,
+          "lookbackDuration": "P1D",
+          "matchingMethod": "AllEntities",
+          "groupByEntities": [],
+          "groupByAlertDetails": [],
+          "groupByCustomDetails": []
+        }
+      }
+    },
+    {
+      "id": "bias-flagged-prompt",
+      "displayName": "Prompt Shields — Bias-flagged prompt",
+      "description": "A prompt referencing protected characteristics was flagged — typically candidate screening, performance review, or benefits eligibility routed through an AI tool. This is an AI-governance signal rather than an intrusion, so no MITRE tactic is asserted: mapping it to one would misrepresent it in ATT&CK coverage reporting. Route it to whoever owns responsible-AI policy, not only to the SOC.",
+      "severity": "Medium",
+      "enabled": true,
+      "queryFrequency": "PT1H",
+      "queryPeriod": "PT1H",
+      "triggerOperator": "GreaterThan",
+      "triggerThreshold": 0,
+      "suppressionDuration": "PT1H",
+      "suppressionEnabled": false,
+      "tactics": [],
+      "query": "PromptShieldsActivity_CL\n| where EventType == \"BiasFlagged\"\n| project\n    TimeGenerated,\n    EventId,\n    User,\n    UserAadObjectId,\n    Department,\n    AiTool,\n    SensitiveType,\n    Severity,\n    Detail",
+      "eventGroupingSettings": { "aggregationKind": "SingleAlert" },
+      "entityMappings": [
+        {
+          "entityType": "Account",
+          "fieldMappings": [
+            { "identifier": "FullName", "columnName": "User" },
+            { "identifier": "AadUserId", "columnName": "UserAadObjectId" }
+          ]
+        }
+      ],
+      "incidentConfiguration": {
+        "createIncident": true,
+        "groupingConfiguration": {
+          "enabled": true,
+          "reopenClosedIncident": false,
+          "lookbackDuration": "PT5H",
+          "matchingMethod": "Selected",
+          "groupByEntities": ["Account"],
+          "groupByAlertDetails": [],
+          "groupByCustomDetails": []
+        }
+      }
+    }
+  ]
+}

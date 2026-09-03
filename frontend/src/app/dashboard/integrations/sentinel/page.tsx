@@ -8,7 +8,7 @@
 // via POST /api/v1/integrations/sentinel/connect and renders a seeded event
 // stream from GET /api/v1/integrations/sentinel/events — no live call to
 // Azure Monitor Logs Ingestion API (see
-// docs/feedbacks/integrations/microsoft-sentinel/spec.md for the real
+// docs/integrations/microsoft-sentinel/spec.md for the real
 // ingestion design, out of scope here).
 
 import { useCallback, useEffect, useState } from 'react';

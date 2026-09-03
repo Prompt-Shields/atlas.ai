@@ -1,0 +1,271 @@
+{
+  "version": "Notebook/1.0",
+  "items": [
+    {
+      "type": 1,
+      "name": "header",
+      "content": {
+        "json": "## Prompt Shields \u2014 AI activity\nRedaction, blocking, coaching and shadow-AI signals streamed from Prompt Shields into `PromptShieldsActivity_CL`.\n\n**No prompt content is ever stored or shown here.** `PromptHash` lets you correlate the same prompt across events without revealing it."
+      }
+    },
+    {
+      "type": 9,
+      "name": "parameters",
+      "content": {
+        "version": "KqlParameterItem/1.0",
+        "crossComponentResources": [
+          "{Workspace}"
+        ],
+        "parameters": [
+          {
+            "id": "b1f1f0a0-0000-4000-8000-000000000001",
+            "version": "KqlParameterItem/1.0",
+            "name": "Workspace",
+            "label": "Workspace",
+            "type": 5,
+            "isRequired": true,
+            "value": null,
+            "typeSettings": {
+              "additionalResourceOptions": [],
+              "includeAll": false
+            }
+          },
+          {
+            "id": "b1f1f0a0-0000-4000-8000-000000000002",
+            "version": "KqlParameterItem/1.0",
+            "name": "TimeRange",
+            "label": "Time range",
+            "type": 4,
+            "isRequired": true,
+            "value": {
+              "durationMs": 604800000
+            },
+            "typeSettings": {
+              "selectableValues": [
+                {
+                  "durationMs": 86400000
+                },
+                {
+                  "durationMs": 604800000
+                },
+                {
+                  "durationMs": 2592000000
+                }
+              ],
+              "allowCustom": true
+            }
+          },
+          {
+            "id": "b1f1f0a0-0000-4000-8000-000000000003",
+            "version": "KqlParameterItem/1.0",
+            "name": "AiToolFilter",
+            "label": "AI tool",
+            "type": 2,
+            "isRequired": false,
+            "multiSelect": true,
+            "quote": "'",
+            "delimiter": ",",
+            "query": "PromptShieldsActivity_CL\n| distinct AiTool\n| order by AiTool asc",
+            "value": [
+              "*"
+            ],
+            "typeSettings": {
+              "additionalResourceOptions": [
+                "value::all"
+              ],
+              "showDefault": false
+            },
+            "queryType": 0,
+            "resourceType": "microsoft.operationalinsights/workspaces"
+          }
+        ],
+        "style": "pills",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces"
+      }
+    },
+    {
+      "type": 3,
+      "name": "tiles",
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "PromptShieldsActivity_CL\n| where AiTool in ({AiToolFilter}) or \"*\" in ({AiToolFilter})\n| summarize\n    Events = count(),\n    HighSeverity = countif(Severity == \"High\"),\n    Blocked = countif(EventType == \"Blocked\"),\n    ShadowAiTools = dcountif(AiTool, IsShadowAi),\n    People = dcount(User)\n| project\n    [\"Events\"] = Events,\n    [\"High severity\"] = HighSeverity,\n    [\"Blocked\"] = Blocked,\n    [\"Shadow AI tools\"] = ShadowAiTools,\n    [\"People\"] = People",
+        "size": 4,
+        "title": "At a glance",
+        "timeContext": {
+          "durationMs": 0
+        },
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "table"
+      }
+    },
+    {
+      "type": 3,
+      "name": "activityOverTime",
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "PromptShieldsActivity_CL\n| where AiTool in ({AiToolFilter}) or \"*\" in ({AiToolFilter})\n| summarize Events = count() by bin(TimeGenerated, 1h), EventType\n| order by TimeGenerated asc",
+        "size": 0,
+        "title": "Activity over time, by event type",
+        "timeContext": {
+          "durationMs": 0
+        },
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "timechart"
+      }
+    },
+    {
+      "type": 1,
+      "name": "toolsHeader",
+      "content": {
+        "json": "### Tools and data"
+      }
+    },
+    {
+      "type": 3,
+      "name": "byTool",
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "PromptShieldsActivity_CL\n| where AiTool in ({AiToolFilter}) or \"*\" in ({AiToolFilter})\n| summarize\n    Events = count(),\n    People = dcount(User),\n    Blocked = countif(EventType == \"Blocked\"),\n    Sanctioned = iff(anyif(IsShadowAi, true) == true, \"Shadow AI\", \"Sanctioned\")\n    by AiTool\n| order by Events desc\n| take 20",
+        "size": 0,
+        "title": "AI tools in use \u2014 sanctioned vs shadow",
+        "timeContext": {
+          "durationMs": 0
+        },
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "table",
+        "gridSettings": {
+          "formatters": [
+            {
+              "columnMatch": "Sanctioned",
+              "formatter": 18,
+              "formatOptions": {
+                "thresholdsOptions": "icons",
+                "thresholdsGrid": [
+                  {
+                    "operator": "==",
+                    "thresholdValue": "Shadow AI",
+                    "representation": "critical",
+                    "text": "{0}{1}"
+                  },
+                  {
+                    "operator": "Default",
+                    "representation": "success",
+                    "text": "{0}{1}"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "type": 3,
+      "name": "sensitiveTypes",
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "PromptShieldsActivity_CL\n| where AiTool in ({AiToolFilter}) or \"*\" in ({AiToolFilter})\n| where isnotempty(SensitiveType)\n| summarize Events = count(), Spans = sum(RedactionTokenCount) by SensitiveType\n| order by Events desc\n| take 15",
+        "size": 0,
+        "title": "What kind of sensitive data is being caught",
+        "timeContext": {
+          "durationMs": 0
+        },
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "barchart"
+      }
+    },
+    {
+      "type": 1,
+      "name": "peopleHeader",
+      "content": {
+        "json": "### People and departments"
+      }
+    },
+    {
+      "type": 3,
+      "name": "byDepartment",
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "PromptShieldsActivity_CL\n| where AiTool in ({AiToolFilter}) or \"*\" in ({AiToolFilter})\n| where isnotempty(Department)\n| summarize Events = count(), HighSeverity = countif(Severity == \"High\") by Department\n| order by HighSeverity desc, Events desc\n| take 15",
+        "size": 0,
+        "title": "Where in the org this is happening",
+        "timeContext": {
+          "durationMs": 0
+        },
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "table"
+      }
+    },
+    {
+      "type": 3,
+      "name": "topPeople",
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "PromptShieldsActivity_CL\n| where AiTool in ({AiToolFilter}) or \"*\" in ({AiToolFilter})\n| where Severity == \"High\"\n| summarize\n    HighSeverityEvents = count(),\n    Tools = dcount(AiTool),\n    LastSeen = max(TimeGenerated)\n    by User, Department\n| order by HighSeverityEvents desc\n| take 20",
+        "size": 0,
+        "title": "People with the most high-severity events",
+        "timeContext": {
+          "durationMs": 0
+        },
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "table"
+      }
+    },
+    {
+      "type": 1,
+      "name": "investigationHeader",
+      "content": {
+        "json": "### Investigation\n`PromptHash` is a SHA-256 of the original prompt. It is stable across events, so the same prompt pasted into several tools correlates here without the prompt itself ever leaving Prompt Shields."
+      }
+    },
+    {
+      "type": 3,
+      "name": "recentHighSeverity",
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "PromptShieldsActivity_CL\n| where AiTool in ({AiToolFilter}) or \"*\" in ({AiToolFilter})\n| where Severity == \"High\"\n| project TimeGenerated, User, Department, AiTool, IsShadowAi, EventType, SensitiveType, Detail, EndpointPlatform\n| order by TimeGenerated desc\n| take 50",
+        "size": 0,
+        "title": "Recent high-severity events",
+        "timeContext": {
+          "durationMs": 0
+        },
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "table"
+      }
+    },
+    {
+      "type": 3,
+      "name": "repeatedPrompts",
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "PromptShieldsActivity_CL\n| where AiTool in ({AiToolFilter}) or \"*\" in ({AiToolFilter})\n| summarize Occurrences = count(), Tools = make_set(AiTool, 5), People = dcount(User) by PromptHash\n| where Occurrences > 1\n| order by Occurrences desc\n| take 20",
+        "size": 0,
+        "title": "The same prompt reaching multiple tools or people",
+        "timeContext": {
+          "durationMs": 0
+        },
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "table"
+      }
+    }
+  ],
+  "fallbackResourceIds": [],
+  "$schema": "https://github.com/Microsoft/Application-Insights-Workbooks/blob/master/schema/workbook.json"
+}
