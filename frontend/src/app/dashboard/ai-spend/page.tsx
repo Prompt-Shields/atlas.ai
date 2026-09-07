@@ -23,6 +23,9 @@ import {
   getCostTimeseries,
   getCostBreakdown,
   getRoi,
+  getCostBudgets,
+  upsertCostBudget,
+  deleteCostBudget,
   putRoiAssumptions,
   defaultWindow,
   type CostSummary,
@@ -31,6 +34,8 @@ import {
   type HoursSavedBasis,
   type HoursSavedSource,
   type RoiResponse,
+  type CostBudget,
+  type BudgetAlertLevel,
 } from '@/lib/cost';
 
 // ── Formatting helpers ──────────────────────────────────────────────
@@ -555,6 +560,338 @@ function BreakdownTable({
 
 // ── Page ────────────────────────────────────────────────────────────
 
+
+// Providers a budget may be scoped to. Kept as a literal list rather than
+// derived from the breakdown rows: a tenant should be able to set a ceiling
+// for a provider *before* it has spent anything, which is exactly when a
+// budget is most useful.
+const BUDGET_PROVIDERS = [
+  'anthropic',
+  'openai',
+  'cursor',
+  'github_copilot',
+  'vercel',
+  'azure_ai_foundry',
+  'aws_bedrock',
+  'self_hosted_ai',
+] as const;
+
+const ALERT_LEVEL_LABEL: Record<BudgetAlertLevel, string> = {
+  ok: 'Within budget',
+  warning: 'Approaching',
+  exceeded: 'Over budget',
+};
+
+/**
+ * Where one budget stands.
+ *
+ * The no-data case is rendered as its own state rather than as a 0% bar.
+ * A tenant whose connectors have never synced would otherwise read a
+ * full green bar and conclude their spend is under control, when the
+ * truth is that nothing is being measured — the same trap `BasisBadge`
+ * exists to prevent one section up.
+ */
+function BudgetRow({
+  budget,
+  canEdit,
+  onEdit,
+  onDelete,
+}: {
+  budget: CostBudget;
+  canEdit: boolean;
+  onEdit: (b: CostBudget) => void;
+  onDelete: (b: CostBudget) => void;
+}) {
+  const pct = budget.percent_used === null ? null : Number(budget.percent_used);
+  const provisional = Number(budget.provisional_usd);
+  const scope = budget.provider ? budget.provider : 'All AI spend';
+
+  const barStyle: Record<BudgetAlertLevel, string> = {
+    ok: 'bg-emerald-500',
+    warning: 'bg-amber-500',
+    exceeded: 'bg-rose-500',
+  };
+  const chipStyle: Record<BudgetAlertLevel, string> = {
+    ok: 'bg-emerald-100 text-emerald-800',
+    warning: 'bg-amber-100 text-amber-800',
+    exceeded: 'bg-rose-100 text-rose-800',
+  };
+
+  return (
+    <div className="rounded-lg border border-slate-200 p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="text-sm font-medium text-slate-900">{scope}</div>
+          <div className="text-xs text-slate-500">
+            {formatUsd(budget.spend_usd)} of {formatUsd(budget.amount_usd)} this month
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          {budget.has_ledger_data && (
+            <span
+              className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium ${chipStyle[budget.alert_level]}`}
+            >
+              {ALERT_LEVEL_LABEL[budget.alert_level]}
+            </span>
+          )}
+          {!budget.alerts_enabled && (
+            <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600">
+              Alerts off
+            </span>
+          )}
+          {canEdit && (
+            <>
+              <button
+                type="button"
+                onClick={() => onEdit(budget)}
+                className="text-xs font-medium text-blue-700 hover:underline"
+              >
+                Edit
+              </button>
+              <button
+                type="button"
+                onClick={() => onDelete(budget)}
+                className="text-xs font-medium text-slate-500 hover:underline"
+              >
+                Remove
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+
+      {budget.has_ledger_data ? (
+        <>
+          <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-slate-100">
+            <div
+              className={`h-full rounded-full ${barStyle[budget.alert_level]}`}
+              style={{ width: `${Math.min(pct ?? 0, 100)}%` }}
+            />
+          </div>
+          <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
+            {pct !== null && <span>{pct.toFixed(1)}% used</span>}
+            {provisional > 0 && (
+              <span className="text-amber-700">
+                {formatUsd(provisional)} provisional — the vendor may still revise it
+              </span>
+            )}
+            {budget.projected_month_end_usd !== null && (
+              <span>
+                Tracking to {formatUsd(budget.projected_month_end_usd)} by month end
+              </span>
+            )}
+          </div>
+        </>
+      ) : (
+        /* Not a 0% bar. See the component docstring. */
+        <p className="mt-3 rounded-md bg-slate-50 px-3 py-2 text-xs text-slate-600">
+          No spend recorded this month, so there is nothing to measure against this
+          budget yet. If you expect spend here, check that the cost connector is
+          syncing — an empty ledger and a genuinely unspent month look identical in
+          the number alone.
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Monthly ceilings and their alert state.
+ *
+ * Placed above the ROI section because a budget is the one thing on this
+ * page that acts without being read: everything else answers a question
+ * somebody came here to ask, while a budget is what mails an admin when
+ * nobody came at all.
+ */
+function BudgetsSection({
+  budgets,
+  canEdit,
+  onChanged,
+}: {
+  budgets: CostBudget[];
+  canEdit: boolean;
+  onChanged: () => void;
+}) {
+  const [editing, setEditing] = useState<CostBudget | null>(null);
+  const [adding, setAdding] = useState(false);
+  const [amount, setAmount] = useState('');
+  const [threshold, setThreshold] = useState('80');
+  const [alertsOn, setAlertsOn] = useState(true);
+  const [provider, setProvider] = useState<string>('');
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const startEdit = (b: CostBudget) => {
+    setEditing(b);
+    setAdding(false);
+    setAmount(String(b.amount_usd));
+    setThreshold(String(b.warn_threshold_percent));
+    setAlertsOn(b.alerts_enabled);
+    setProvider(b.provider ?? '');
+    setErr(null);
+  };
+
+  const startAdd = () => {
+    setAdding(true);
+    setEditing(null);
+    setAmount('');
+    setThreshold('80');
+    setAlertsOn(true);
+    setProvider('');
+    setErr(null);
+  };
+
+  const cancel = () => {
+    setEditing(null);
+    setAdding(false);
+    setErr(null);
+  };
+
+  const save = async () => {
+    setSaving(true);
+    setErr(null);
+    try {
+      await upsertCostBudget({
+        provider: provider === '' ? null : provider,
+        amount_usd: Number(amount),
+        warn_threshold_percent: Number(threshold),
+        alerts_enabled: alertsOn,
+      });
+      cancel();
+      onChanged();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Could not save the budget');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const remove = async (b: CostBudget) => {
+    setErr(null);
+    try {
+      await deleteCostBudget(b.id);
+      onChanged();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Could not remove the budget');
+    }
+  };
+
+  return (
+    <section className="rounded-xl border border-slate-200 bg-white p-5">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-sm font-semibold text-slate-900">Monthly budgets</h2>
+          <p className="mt-0.5 text-xs text-slate-500">
+            Admins are emailed once when spend passes the warning threshold, and
+            once again if it goes over. Crossings do not re-send daily.
+          </p>
+        </div>
+        {canEdit && !adding && !editing && (
+          <button
+            type="button"
+            onClick={startAdd}
+            className="rounded-md bg-slate-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-800"
+          >
+            Add budget
+          </button>
+        )}
+      </div>
+
+      {err && (
+        <p className="mt-3 rounded-md bg-rose-50 px-3 py-2 text-xs text-rose-700">{err}</p>
+      )}
+
+      {(adding || editing) && (
+        <div className="mt-4 grid gap-3 rounded-lg bg-slate-50 p-4 sm:grid-cols-4">
+          <label className="text-xs text-slate-600">
+            Scope
+            <select
+              value={provider}
+              disabled={!!editing}
+              onChange={(e) => setProvider(e.target.value)}
+              className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1 text-sm disabled:bg-slate-100"
+            >
+              <option value="">All AI spend</option>
+              {BUDGET_PROVIDERS.map((p) => (
+                <option key={p} value={p}>
+                  {p}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="text-xs text-slate-600">
+            Monthly ceiling (USD)
+            <input
+              type="number"
+              min="1"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1 text-sm"
+            />
+          </label>
+          <label className="text-xs text-slate-600">
+            Warn at (%)
+            <input
+              type="number"
+              min="1"
+              max="100"
+              value={threshold}
+              onChange={(e) => setThreshold(e.target.value)}
+              className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1 text-sm"
+            />
+          </label>
+          <div className="flex items-end gap-2">
+            <label className="flex items-center gap-1.5 text-xs text-slate-600">
+              <input
+                type="checkbox"
+                checked={alertsOn}
+                onChange={(e) => setAlertsOn(e.target.checked)}
+              />
+              Email alerts
+            </label>
+          </div>
+          <div className="sm:col-span-4 flex gap-2">
+            <button
+              type="button"
+              onClick={save}
+              disabled={saving || !amount}
+              className="rounded-md bg-slate-900 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
+            >
+              {saving ? 'Saving…' : 'Save'}
+            </button>
+            <button
+              type="button"
+              onClick={cancel}
+              className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      <div className="mt-4 space-y-3">
+        {budgets.length === 0 ? (
+          <p className="text-xs text-slate-500">
+            No budgets set. Without one, nothing on this page will tell you about
+            AI spend unless you come and look.
+          </p>
+        ) : (
+          budgets.map((b) => (
+            <BudgetRow
+              key={b.id}
+              budget={b}
+              canEdit={canEdit}
+              onEdit={startEdit}
+              onDelete={remove}
+            />
+          ))
+        )}
+      </div>
+    </section>
+  );
+}
+
 export default function AiSpendPage() {
   const [summary, setSummary] = useState<CostSummary | null>(null);
   const [series, setSeries] = useState<CostTimeseriesPoint[]>([]);
@@ -562,6 +899,7 @@ export default function AiSpendPage() {
   const [byModel, setByModel] = useState<CostBreakdownRow[]>([]);
   const [byMember, setByMember] = useState<CostBreakdownRow[]>([]);
   const [roi, setRoi] = useState<RoiResponse | null>(null);
+  const [budgets, setBudgets] = useState<CostBudget[]>([]);
   // Editing the assumptions changes the number the whole organisation
   // reads, so it is admin-gated in the UI as well as on the API.
   const [canEdit, setCanEdit] = useState(false);
@@ -574,13 +912,14 @@ export default function AiSpendPage() {
     setLoading(true);
     setError(null);
     try {
-      const [s, ts, prov, model, member, roiResult] = await Promise.all([
+      const [s, ts, prov, model, member, roiResult, budgetRows] = await Promise.all([
         getCostSummary(),
         getCostTimeseries(),
         getCostBreakdown('provider'),
         getCostBreakdown('model'),
         getCostBreakdown('member'),
         getRoi(),
+        getCostBudgets(),
       ]);
       setSummary(s);
       setSeries(ts);
@@ -588,6 +927,7 @@ export default function AiSpendPage() {
       setByModel(model);
       setByMember(member);
       setRoi(roiResult);
+      setBudgets(budgetRows);
       try {
         const me = await api.getMe();
         setCanEdit(
@@ -739,6 +1079,12 @@ export default function AiSpendPage() {
       </div>
 
       {/* AI adoption ROI */}
+      <BudgetsSection
+        budgets={budgets}
+        canEdit={canEdit}
+        onChanged={() => void load()}
+      />
+
       <AdoptionRoiSection roi={roi} canEdit={canEdit} onSaved={() => void load()} />
 
       {/* Time series */}

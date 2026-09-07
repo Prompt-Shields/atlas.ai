@@ -29,6 +29,7 @@ from app.models.ai_cost_record import (
     CostSubjectKind,
     SelfHostedCostProvider,
 )
+from app.models.cost_budget import CostBudget
 from app.models.integration import (
     Integration,
     IntegrationProvider,
@@ -39,6 +40,8 @@ from app.models.tenant import Tenant
 from app.models.user import APIKey
 from app.schemas.cost import (
     BreakdownRow,
+    BudgetPayload,
+    BudgetUpsert,
     CronSyncItem,
     CronSyncResponse,
     RoiAssumptionsPayload,
@@ -51,6 +54,12 @@ from app.schemas.cost import (
     TimeseriesPoint,
 )
 from app.services.audit import log_audit_event
+from app.services.cost.budgets import (
+    BudgetStatus,
+    dispatch_budget_alerts,
+    evaluate_budget,
+    load_budgets,
+)
 from app.services.cost.roi import build_roi, get_or_default_assumptions
 from app.services.cost.self_hosted_ingest import ingest_usage
 from app.services.cost.sync_service import _cost_provider_for, sync_integration
@@ -223,6 +232,21 @@ async def cron_sync(
                             error=str(exc)[:500],
                         )
                     )
+
+        # Budgets are evaluated after every tenant has synced, not inside the
+        # loop above: a budget must be judged against the month's finished
+        # numbers, and alerting mid-sweep would compare this month's spend to
+        # a ledger still missing the connector being synced two lines later.
+        for tid in tenant_ids:
+            await set_tenant_guc(db, tid)
+            try:
+                await dispatch_budget_alerts(db, tid)
+            except Exception as exc:  # noqa: BLE001 — alerting never aborts the sweep.
+                logger.warning(
+                    "cron_budget_alerts_failed",
+                    tenant_id=str(tid),
+                    error=str(exc),
+                )
 
     return CronSyncResponse(
         integrations_synced=len(results),
@@ -610,3 +634,154 @@ async def put_roi_assumptions(
     await db.commit()
     await db.refresh(stored)
     return _assumptions_payload(stored, is_default=False)
+
+
+def _budget_payload(budget: CostBudget, status: BudgetStatus) -> BudgetPayload:
+    """Join a stored ceiling to this month's standing."""
+    return BudgetPayload(
+        id=budget.id,
+        provider=budget.provider,
+        amount_usd=budget.amount_usd,
+        warn_threshold_percent=budget.warn_threshold_percent,
+        alerts_enabled=budget.alerts_enabled,
+        period_start=status.period_start,
+        as_of=status.as_of,
+        spend_usd=status.spend_usd,
+        provisional_usd=status.provisional_usd,
+        percent_used=status.percent_used,
+        alert_level=status.alert_level,
+        has_ledger_data=status.has_ledger_data,
+        projected_month_end_usd=status.projected_month_end_usd,
+        last_alerted_at=budget.last_alerted_at,
+    )
+
+
+@router.get("/budgets", response_model=list[BudgetPayload])
+async def list_budgets(
+    user: AuthUser,
+    db: AsyncSession = Depends(get_tenant_db_session),
+) -> list[BudgetPayload]:
+    """Every budget for the tenant with this month's spend against it.
+
+    Readable by any authenticated user, matching the ROI assumptions: a ceiling
+    is context for a number the whole organisation sees, and hiding it from the
+    people reading the spend would defeat the point of setting it.
+    """
+    budgets = await load_budgets(db, user.tenant_id)
+    return [_budget_payload(b, await evaluate_budget(db, b)) for b in budgets]
+
+
+@router.put("/budgets", response_model=BudgetPayload)
+async def upsert_budget(
+    payload: BudgetUpsert,
+    user: OrgAdmin,
+    db: AsyncSession = Depends(get_tenant_db_session),
+) -> BudgetPayload:
+    """Create or replace the budget for one scope. Admin-only, and audited.
+
+    Upsert rather than separate POST/PATCH because the resource is identified
+    by (tenant, provider) rather than by an id the caller has to fetch first —
+    "set the Cursor budget to $500" is one call whether or not one already
+    exists.
+
+    Raising the ceiling clears the alert state. Otherwise a budget that alerted
+    at 100% last week would stay silent after being doubled, which is the one
+    moment the tenant most wants to hear from it again.
+    """
+    existing = (
+        await db.execute(
+            select(CostBudget).where(
+                CostBudget.tenant_id == user.tenant_id,
+                CostBudget.provider.is_(None)
+                if payload.provider is None
+                else CostBudget.provider == payload.provider,
+            )
+        )
+    ).scalar_one_or_none()
+
+    previous = (
+        {
+            "amount_usd": str(existing.amount_usd),
+            "warn_threshold_percent": str(existing.warn_threshold_percent),
+            "alerts_enabled": existing.alerts_enabled,
+        }
+        if existing is not None
+        else None
+    )
+
+    if existing is None:
+        existing = CostBudget(tenant_id=user.tenant_id, provider=payload.provider)
+        db.add(existing)
+    elif payload.amount_usd != existing.amount_usd:
+        existing.last_alerted_period = None
+        existing.last_alerted_level = None
+        existing.last_alerted_at = None
+
+    existing.amount_usd = payload.amount_usd
+    existing.warn_threshold_percent = payload.warn_threshold_percent
+    existing.alerts_enabled = payload.alerts_enabled
+    existing.updated_by_user_id = user.user_id
+
+    await log_audit_event(
+        db,
+        event_type="cost.budget.updated",
+        action="update",
+        actor_id=user.user_id,
+        actor_email=user.email,
+        tenant_id=user.tenant_id,
+        resource_type="cost_budget",
+        details={
+            "provider": payload.provider.value if payload.provider else None,
+            "previous": previous,
+            "current": {
+                "amount_usd": str(payload.amount_usd),
+                "warn_threshold_percent": str(payload.warn_threshold_percent),
+                "alerts_enabled": payload.alerts_enabled,
+            },
+        },
+    )
+
+    await db.commit()
+    await db.refresh(existing)
+    return _budget_payload(existing, await evaluate_budget(db, existing))
+
+
+@router.delete("/budgets/{budget_id}", status_code=204)
+async def delete_budget(
+    budget_id: uuid.UUID,
+    user: OrgAdmin,
+    db: AsyncSession = Depends(get_tenant_db_session),
+) -> None:
+    """Remove a budget. Admin-only, and audited.
+
+    The explicit tenant filter is not redundant with RLS: without it a valid
+    id from another tenant would be a cross-tenant delete if the GUC were ever
+    unset, and we never rely on RLS alone.
+    """
+    budget = (
+        await db.execute(
+            select(CostBudget).where(
+                CostBudget.id == budget_id,
+                CostBudget.tenant_id == user.tenant_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if budget is None:
+        raise NotFoundError("Budget not found")
+
+    await log_audit_event(
+        db,
+        event_type="cost.budget.deleted",
+        action="delete",
+        actor_id=user.user_id,
+        actor_email=user.email,
+        tenant_id=user.tenant_id,
+        resource_type="cost_budget",
+        details={
+            "provider": budget.provider.value if budget.provider else None,
+            "amount_usd": str(budget.amount_usd),
+        },
+    )
+
+    await db.delete(budget)
+    await db.commit()

@@ -261,3 +261,62 @@ export const costApi = {
   getRoiAssumptions,
   putRoiAssumptions,
 };
+
+// ─── Budgets (slice 4) ──────────────────────────────────────────────
+
+export type BudgetAlertLevel = 'ok' | 'warning' | 'exceeded';
+
+/**
+ * A monthly ceiling with this month's standing attached.
+ *
+ * Read `has_ledger_data` before rendering a low `percent_used` as good
+ * news. A tenant whose connectors have never synced reports 0% used and
+ * 0% used means nothing there — the same trap as `roi_multiplier` being
+ * null rather than infinite. Render the no-data case as "no spend data
+ * yet", never as a reassuring green bar.
+ *
+ * `projected_month_end_usd` is null until enough of the month has
+ * elapsed to extrapolate honestly. Null means "too early to say", not
+ * zero.
+ */
+export interface CostBudget {
+  id: string;
+  provider: string | null;
+  amount_usd: string | number;
+  warn_threshold_percent: string | number;
+  alerts_enabled: boolean;
+
+  period_start: string;
+  as_of: string;
+  spend_usd: string | number;
+  provisional_usd: string | number;
+  percent_used: string | number | null;
+  alert_level: BudgetAlertLevel;
+  has_ledger_data: boolean;
+  projected_month_end_usd: string | number | null;
+  last_alerted_at: string | null;
+}
+
+export interface CostBudgetUpsert {
+  provider?: string | null;
+  amount_usd: number;
+  warn_threshold_percent?: number;
+  alerts_enabled?: boolean;
+}
+
+export function getCostBudgets(): Promise<CostBudget[]> {
+  return request<CostBudget[]>('/cost/budgets');
+}
+
+export function upsertCostBudget(
+  body: CostBudgetUpsert,
+): Promise<CostBudget> {
+  return request<CostBudget>('/cost/budgets', {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  });
+}
+
+export function deleteCostBudget(budgetId: string): Promise<void> {
+  return request<void>(`/cost/budgets/${budgetId}`, { method: 'DELETE' });
+}
