@@ -24,6 +24,8 @@ import {
   getCostBreakdown,
   getRoi,
   getCostBudgets,
+  getCostAnomalies,
+  acknowledgeCostAnomaly,
   upsertCostBudget,
   deleteCostBudget,
   putRoiAssumptions,
@@ -35,6 +37,7 @@ import {
   type HoursSavedSource,
   type RoiResponse,
   type CostBudget,
+  type CostAnomaly,
   type BudgetAlertLevel,
 } from '@/lib/cost';
 
@@ -722,6 +725,104 @@ function BudgetRow({
  * somebody came here to ask, while a budget is what mails an admin when
  * nobody came at all.
  */
+/**
+ * Detected spend spikes awaiting a look.
+ *
+ * Renders nothing at all when there is nothing to report. A permanently
+ * present "0 anomalies" panel is a small lie by omission: it implies the
+ * detector ran and cleared the period, when it may equally have had too
+ * little history to say anything. Absence of a card means absence of a
+ * finding, which is the only claim the data supports.
+ *
+ * Placed above the budgets section because an anomaly is time-sensitive in
+ * a way a monthly ceiling is not — a runaway process is still running.
+ */
+function AnomaliesSection({
+  anomalies,
+  canEdit,
+  onChanged,
+}: {
+  anomalies: CostAnomaly[];
+  canEdit: boolean;
+  onChanged: () => void;
+}) {
+  const [busy, setBusy] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  if (anomalies.length === 0) return null;
+
+  const ack = async (id: string) => {
+    setBusy(id);
+    setErr(null);
+    try {
+      await acknowledgeCostAnomaly(id);
+      onChanged();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Could not acknowledge');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <section className="rounded-xl border border-amber-300 bg-amber-50/60 p-5">
+      <div>
+        <h2 className="text-sm font-semibold text-slate-900">
+          Unusual spend {anomalies.length > 1 && `(${anomalies.length})`}
+        </h2>
+        <p className="mt-0.5 text-xs text-slate-600">
+          Days where spend broke sharply from its own recent median. Only
+          finalized days are checked, so these are not partial figures.
+        </p>
+      </div>
+
+      {err && (
+        <p className="mt-3 rounded-md bg-rose-50 px-3 py-2 text-xs text-rose-700">{err}</p>
+      )}
+
+      <div className="mt-4 space-y-3">
+        {anomalies.map((a) => (
+          <div
+            key={a.id}
+            className="rounded-lg border border-amber-200 bg-white p-4"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="text-sm font-medium text-slate-900">
+                  {providerLabel(a.provider)} — {formatUsd(a.observed_usd)} on{' '}
+                  {new Date(a.usage_date).toLocaleDateString(undefined, {
+                    day: 'numeric',
+                    month: 'short',
+                  })}
+                </div>
+                {/* The baseline is not a footnote: without it the multiple is
+                    an assertion the reader cannot check. */}
+                <div className="mt-0.5 text-xs text-slate-600">
+                  <span className="font-semibold text-amber-800">
+                    {Number(a.ratio).toFixed(1)}×
+                  </span>{' '}
+                  the usual {formatUsd(a.baseline_usd)}/day, measured over the
+                  previous {a.baseline_days} days
+                </div>
+              </div>
+              {canEdit && (
+                <button
+                  type="button"
+                  onClick={() => ack(a.id)}
+                  disabled={busy === a.id}
+                  className="shrink-0 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 disabled:opacity-50"
+                >
+                  {busy === a.id ? 'Saving…' : 'Acknowledge'}
+                </button>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function BudgetsSection({
   budgets,
   canEdit,
@@ -919,6 +1020,7 @@ export default function AiSpendPage() {
   const [byMember, setByMember] = useState<CostBreakdownRow[]>([]);
   const [roi, setRoi] = useState<RoiResponse | null>(null);
   const [budgets, setBudgets] = useState<CostBudget[]>([]);
+  const [anomalies, setAnomalies] = useState<CostAnomaly[]>([]);
   // Editing the assumptions changes the number the whole organisation
   // reads, so it is admin-gated in the UI as well as on the API.
   const [canEdit, setCanEdit] = useState(false);
@@ -931,7 +1033,8 @@ export default function AiSpendPage() {
     setLoading(true);
     setError(null);
     try {
-      const [s, ts, prov, model, member, roiResult, budgetRows] = await Promise.all([
+      const [s, ts, prov, model, member, roiResult, budgetRows, anomalyRows] =
+        await Promise.all([
         getCostSummary(),
         getCostTimeseries(),
         getCostBreakdown('provider'),
@@ -939,6 +1042,7 @@ export default function AiSpendPage() {
         getCostBreakdown('member'),
         getRoi(),
         getCostBudgets(),
+        getCostAnomalies(),
       ]);
       setSummary(s);
       setSeries(ts);
@@ -947,6 +1051,7 @@ export default function AiSpendPage() {
       setByMember(member);
       setRoi(roiResult);
       setBudgets(budgetRows);
+      setAnomalies(anomalyRows);
       try {
         const me = await api.getMe();
         setCanEdit(
@@ -1098,6 +1203,12 @@ export default function AiSpendPage() {
       </div>
 
       {/* AI adoption ROI */}
+      <AnomaliesSection
+        anomalies={anomalies}
+        canEdit={canEdit}
+        onChanged={() => void load()}
+      />
+
       <BudgetsSection
         budgets={budgets}
         canEdit={canEdit}

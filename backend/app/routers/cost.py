@@ -29,6 +29,7 @@ from app.models.ai_cost_record import (
     CostSubjectKind,
     SelfHostedCostProvider,
 )
+from app.models.cost_anomaly import CostAnomaly
 from app.models.cost_budget import CostBudget
 from app.models.integration import (
     Integration,
@@ -39,6 +40,7 @@ from app.models.roi_assumptions import HoursSavedSource, RoiAssumptions
 from app.models.tenant import Tenant
 from app.models.user import APIKey
 from app.schemas.cost import (
+    AnomalyPayload,
     BreakdownRow,
     BudgetPayload,
     BudgetUpsert,
@@ -54,6 +56,7 @@ from app.schemas.cost import (
     TimeseriesPoint,
 )
 from app.services.audit import log_audit_event
+from app.services.cost.anomalies import detect_and_alert
 from app.services.cost.budgets import (
     BudgetStatus,
     dispatch_budget_alerts,
@@ -244,6 +247,18 @@ async def cron_sync(
             except Exception as exc:  # noqa: BLE001 — alerting never aborts the sweep.
                 logger.warning(
                     "cron_budget_alerts_failed",
+                    tenant_id=str(tid),
+                    error=str(exc),
+                )
+            # Anomaly detection runs in the same pass but its own try: a
+            # budget-alert failure must not cost the tenant its spike
+            # detection, and vice versa.
+            await set_tenant_guc(db, tid)
+            try:
+                await detect_and_alert(db, tid)
+            except Exception as exc:  # noqa: BLE001 — detection never aborts the sweep.
+                logger.warning(
+                    "cron_anomaly_detection_failed",
                     tenant_id=str(tid),
                     error=str(exc),
                 )
@@ -785,3 +800,82 @@ async def delete_budget(
 
     await db.delete(budget)
     await db.commit()
+
+
+@router.get("/anomalies", response_model=list[AnomalyPayload])
+async def list_anomalies(
+    user: AuthUser,
+    include_acknowledged: bool = Query(default=False),
+    db: AsyncSession = Depends(get_tenant_db_session),
+) -> list[AnomalyPayload]:
+    """Detected spend spikes, newest first.
+
+    Unacknowledged only by default: the list is a to-do, and an acknowledged
+    anomaly is done. `include_acknowledged=true` gets the full history, which
+    is what you want when asking "has this happened before?" — the question
+    that turns a one-off into a pattern.
+    """
+    query = select(CostAnomaly).where(CostAnomaly.tenant_id == user.tenant_id)
+    if not include_acknowledged:
+        query = query.where(CostAnomaly.acknowledged_at.is_(None))
+
+    rows = (
+        (await db.execute(query.order_by(CostAnomaly.usage_date.desc(), CostAnomaly.provider)))
+        .scalars()
+        .all()
+    )
+    return [AnomalyPayload.model_validate(r) for r in rows]
+
+
+@router.post("/anomalies/{anomaly_id}/acknowledge", response_model=AnomalyPayload)
+async def acknowledge_anomaly(
+    anomaly_id: uuid.UUID,
+    user: OrgAdmin,
+    db: AsyncSession = Depends(get_tenant_db_session),
+) -> AnomalyPayload:
+    """Mark a spike as explained. Admin-only, and audited.
+
+    Acknowledging is not deleting: the row stays as history, and the detector
+    reads the flag so a spike somebody has already accounted for is never
+    raised again. Re-acknowledging an acknowledged row is a no-op rather than
+    an error — two admins clicking the same button should not produce a 409.
+
+    The explicit tenant filter is not redundant with RLS: a valid id from
+    another tenant must 404, and we never rely on RLS alone.
+    """
+    row = (
+        await db.execute(
+            select(CostAnomaly).where(
+                CostAnomaly.id == anomaly_id,
+                CostAnomaly.tenant_id == user.tenant_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        raise NotFoundError("Anomaly not found")
+
+    if row.acknowledged_at is None:
+        row.acknowledged_at = datetime.now(UTC)
+        row.acknowledged_by_user_id = user.user_id
+
+        await log_audit_event(
+            db,
+            event_type="cost.anomaly.acknowledged",
+            action="update",
+            actor_id=user.user_id,
+            actor_email=user.email,
+            tenant_id=user.tenant_id,
+            resource_type="cost_anomaly",
+            resource_id=str(row.id),
+            details={
+                "provider": row.provider.value if row.provider else None,
+                "usage_date": str(row.usage_date),
+                "observed_usd": str(row.observed_usd),
+                "baseline_usd": str(row.baseline_usd),
+                "ratio": str(row.ratio),
+            },
+        )
+        await db.commit()
+        await db.refresh(row)
+
+    return AnomalyPayload.model_validate(row)
