@@ -353,3 +353,189 @@ async def test_postgres_rls_enforced_on_prompt_events() -> None:
             {"a": row_a_id, "b": row_b_id},
         )
         assert (res_b.scalar() or []) == ["sdk"]
+
+
+async def test_postgres_rls_enforced_on_sentinel_dead_letters() -> None:
+    """RLS on grc.sentinel_dead_letters isolates rows by tenant.
+
+    Dead letters hold the full outbound payload of an undelivered batch —
+    every mapped column for every event in it. A cross-tenant read here would
+    leak one customer's AI activity to another, so the table gets the same
+    scrutiny as prompt_events itself.
+
+    Mechanics follow test_postgres_rls_enforced_on_prompt_events exactly: FORCE
+    ROW LEVEL SECURITY because the test role owns the table, the NOLOGIN
+    rls_check_role for the SELECT assertions because superusers bypass FORCE,
+    the GUC set to each row's own tenant_id before its INSERT (FOR ALL with
+    only USING doubles as WITH CHECK), and the nil UUID standing in for
+    "unset". See that test's docstring for the full rationale.
+
+    As with prompt_events, `event_count`/`attempts`/`status` carry Python-side
+    ORM defaults only, so `create_all` emits no server defaults for them and
+    these raw INSERTs must supply them explicitly. Migration 042 does declare
+    server defaults, so this is a create_all artefact, not a schema gap.
+    """
+    from tests.conftest import TestSessionLocal
+
+    tenant_a = uuid.UUID("00000000-0000-0000-0000-0000000000a3")
+    tenant_b = uuid.UUID("00000000-0000-0000-0000-0000000000b3")
+
+    async with TestSessionLocal() as session:
+        if session.get_bind().dialect.name != "postgresql":
+            pytest.skip("RLS enforcement requires Postgres")
+
+        await session.execute(text("CREATE SCHEMA IF NOT EXISTS grc"))
+
+        # conftest's create_all builds this from the ORM model, so the DDL
+        # no-ops in the normal case. `status` and `integration_id` are declared
+        # as text/uuid here to avoid enum and FK prerequisites on the
+        # standalone path.
+        await session.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS grc.sentinel_dead_letters (
+                    id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+                    tenant_id      uuid NOT NULL,
+                    integration_id uuid NOT NULL,
+                    status         text NOT NULL DEFAULT 'PENDING',
+                    reason         varchar(100) NOT NULL,
+                    payload        jsonb NOT NULL DEFAULT '[]'::jsonb,
+                    event_count    integer NOT NULL DEFAULT 0,
+                    attempts       integer NOT NULL DEFAULT 1,
+                    created_at     timestamptz NOT NULL DEFAULT now(),
+                    updated_at     timestamptz NOT NULL DEFAULT now()
+                )
+                """
+            )
+        )
+
+        await session.execute(
+            text("ALTER TABLE grc.sentinel_dead_letters ENABLE ROW LEVEL SECURITY")
+        )
+        await session.execute(
+            text("ALTER TABLE grc.sentinel_dead_letters FORCE ROW LEVEL SECURITY")
+        )
+        await session.execute(
+            text("DROP POLICY IF EXISTS tenant_isolation_test ON grc.sentinel_dead_letters")
+        )
+        # Byte-identical to migration 042's tenant_isolation policy.
+        await session.execute(
+            text(
+                """
+                CREATE POLICY tenant_isolation_test ON grc.sentinel_dead_letters
+                USING (tenant_id = current_setting('app.current_tenant_id', TRUE)::uuid)
+                """
+            )
+        )
+
+        await session.execute(
+            text(
+                """
+                DO $$ BEGIN
+                  IF NOT EXISTS (
+                    SELECT 1 FROM pg_roles WHERE rolname = 'rls_check_role'
+                  ) THEN
+                    CREATE ROLE rls_check_role NOLOGIN NOSUPERUSER;
+                  END IF;
+                END $$
+                """
+            )
+        )
+        await session.execute(text("GRANT USAGE ON SCHEMA grc TO rls_check_role"))
+        await session.execute(text("GRANT SELECT ON grc.sentinel_dead_letters TO rls_check_role"))
+        await session.execute(text("GRANT rls_check_role TO CURRENT_USER"))
+
+        # The dead-letter rows carry a real FK to grc.integrations, so each
+        # tenant needs an integration to hang them off.
+        integration_a = str(uuid.uuid4())
+        integration_b = str(uuid.uuid4())
+
+        async def _seed_integration(integration_id: str, tenant_id: uuid.UUID) -> None:
+            await set_tenant_guc(session, tenant_id)
+            await session.execute(
+                text(
+                    """
+                    INSERT INTO grc.integrations
+                        (id, tenant_id, provider, status, display_name,
+                         is_active, is_test_data)
+                    VALUES (:id, :tenant_id, 'SENTINEL', 'CONNECTED',
+                            'Microsoft Sentinel', true, true)
+                    """
+                ),
+                {"id": integration_id, "tenant_id": str(tenant_id)},
+            )
+
+        await _seed_integration(integration_a, tenant_a)
+        await _seed_integration(integration_b, tenant_b)
+
+        row_a_id = str(uuid.uuid4())
+        row_b_id = str(uuid.uuid4())
+        await set_tenant_guc(session, tenant_a)
+        await session.execute(
+            text(
+                """
+                INSERT INTO grc.sentinel_dead_letters
+                    (id, tenant_id, integration_id, status, reason, payload,
+                     event_count, attempts)
+                VALUES (:id, :tenant_id, :integration_id, 'PENDING', 'http_403',
+                        '[]'::jsonb, 1, 1)
+                """
+            ),
+            {
+                "id": row_a_id,
+                "tenant_id": str(tenant_a),
+                "integration_id": integration_a,
+            },
+        )
+        await set_tenant_guc(session, tenant_b)
+        await session.execute(
+            text(
+                """
+                INSERT INTO grc.sentinel_dead_letters
+                    (id, tenant_id, integration_id, status, reason, payload,
+                     event_count, attempts)
+                VALUES (:id, :tenant_id, :integration_id, 'PENDING', 'exhausted_retries',
+                        '[]'::jsonb, 1, 1)
+                """
+            ),
+            {
+                "id": row_b_id,
+                "tenant_id": str(tenant_b),
+                "integration_id": integration_b,
+            },
+        )
+
+        await session.execute(
+            text(
+                "SELECT set_config('app.current_tenant_id',"
+                " '00000000-0000-0000-0000-000000000000', true)"
+            )
+        )
+        await session.execute(text("SET LOCAL ROLE rls_check_role"))
+
+        # Fail closed on an unmatched GUC.
+        res_unset = await session.execute(
+            text("SELECT count(*) FROM grc.sentinel_dead_letters WHERE id IN (:a, :b)"),
+            {"a": row_a_id, "b": row_b_id},
+        )
+        assert (res_unset.scalar() or 0) == 0
+
+        await session.execute(text(f"SET LOCAL app.current_tenant_id = '{tenant_a}'"))
+        res_a = await session.execute(
+            text(
+                "SELECT array_agg(reason ORDER BY reason) "
+                "FROM grc.sentinel_dead_letters WHERE id IN (:a, :b)"
+            ),
+            {"a": row_a_id, "b": row_b_id},
+        )
+        assert (res_a.scalar() or []) == ["http_403"]
+
+        await session.execute(text(f"SET LOCAL app.current_tenant_id = '{tenant_b}'"))
+        res_b = await session.execute(
+            text(
+                "SELECT array_agg(reason ORDER BY reason) "
+                "FROM grc.sentinel_dead_letters WHERE id IN (:a, :b)"
+            ),
+            {"a": row_a_id, "b": row_b_id},
+        )
+        assert (res_b.scalar() or []) == ["exhausted_retries"]

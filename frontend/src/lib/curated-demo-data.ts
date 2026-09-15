@@ -1103,7 +1103,7 @@ export const INTEGRATION_CATALOGUE: IntegrationCard[] = [
     lastError: null,
     connectedAt: null,
   },
-  // SIEM — see docs/feedbacks/integrations/microsoft-sentinel/spec.md.
+  // SIEM — see docs/integrations/microsoft-sentinel/spec.md.
   {
     meta: {
       provider: "SENTINEL",

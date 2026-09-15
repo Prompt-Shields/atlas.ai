@@ -5,6 +5,8 @@ Modes:
 - risk_analyzer: Processes pending blobs through risk analysis (runs once, exits)
 - correlation_engine: Correlates risks and creates action plans (runs once, exits)
 - slack_dispatcher: Picks up PENDING SurveyDelivery rows and sends DMs (runs continuously)
+- sentinel_forwarder: Ships prompt telemetry into customers' Microsoft Sentinel
+  workspaces via the Azure Monitor Logs Ingestion API (runs continuously)
 
 Azure Container Apps Jobs:
 - risk_analyzer and correlation_engine run as scheduled jobs (cron triggers)
@@ -178,6 +180,64 @@ async def run_device_risk_engine() -> None:
         sys.exit(1)
 
 
+async def run_sentinel_forwarder() -> None:
+    """Continuously ship prompt telemetry into customers' Sentinel workspaces.
+
+    Unlike the MDM syncs this cannot use `_run_continuous_sync`: the forwarder
+    reads `grc.prompt_events` and writes `grc.sentinel_*`, all tenant-scoped
+    under RLS, so each tenant is processed inside its own
+    `tenant_scoped_session` rather than one shared standalone session.
+
+    One tenant's failure never aborts the sweep — `forward_integration` is
+    fault-isolating, and the per-tenant try/except covers the session itself.
+    """
+    import httpx
+    from sqlalchemy import select
+
+    from app.models.tenant import Tenant
+    from app.services.sentinel_forwarder import forward_pending
+    from worker_app.tenant_session import tenant_scoped_session
+
+    settings = get_settings()
+    interval = settings.worker_poll_interval_seconds
+    logger.info("sentinel_forwarder_started", poll_interval=interval)
+
+    async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
+        while not _shutdown:
+            try:
+                # `grc.tenants` has no RLS, so enumeration needs an
+                # unrestricted session; every subsequent read/write is scoped.
+                async with get_standalone_session() as admin_db:
+                    tenant_ids = (await admin_db.execute(select(Tenant.id))).scalars().all()
+            except Exception as exc:
+                logger.error("sentinel_forwarder_enumerate_failed", error=str(exc))
+                await asyncio.sleep(interval)
+                continue
+
+            forwarded = 0
+            for tenant_id in tenant_ids:
+                if _shutdown:
+                    break
+                try:
+                    async with tenant_scoped_session(tenant_id) as db:
+                        forwarded += await forward_pending(
+                            db, client=client, batch_size=settings.worker_batch_size
+                        )
+                except Exception as exc:
+                    logger.warning(
+                        "sentinel_forwarder_tenant_failed",
+                        tenant_id=str(tenant_id),
+                        error=str(exc),
+                    )
+
+            if forwarded > 0:
+                logger.info("sentinel_forwarder_batch", events_forwarded=forwarded)
+
+            await asyncio.sleep(interval)
+
+    logger.info("sentinel_forwarder_stopped")
+
+
 async def run_slack_dispatcher() -> None:
     """Continuously poll PENDING SurveyDelivery rows and send DMs.
 
@@ -294,6 +354,10 @@ async def main() -> None:
             signal.signal(signal.SIGTERM, handle_shutdown)
             signal.signal(signal.SIGINT, handle_shutdown)
             await run_microsoft_sync()
+        elif mode == "sentinel_forwarder":
+            signal.signal(signal.SIGTERM, handle_shutdown)
+            signal.signal(signal.SIGINT, handle_shutdown)
+            await run_sentinel_forwarder()
         elif mode == "intune_sync":
             signal.signal(signal.SIGTERM, handle_shutdown)
             signal.signal(signal.SIGINT, handle_shutdown)

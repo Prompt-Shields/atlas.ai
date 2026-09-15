@@ -67,9 +67,10 @@ class IntegrationProvider(str, enum.Enum):
     GITHUB_COPILOT = "GITHUB_COPILOT"
     VERCEL = "VERCEL"
 
-    # SIEM — see docs/feedbacks/integrations/microsoft-sentinel/spec.md.
-    # v1 is catalog registration + connect endpoint storing config +
-    # a seeded event stream; no live Azure Monitor call (issue #247).
+    # SIEM — see docs/integrations/microsoft-sentinel/spec.md.
+    # Unlike the OAuth providers, the credential slots hold a customer app
+    # registration: `refresh_token_encrypted` is its long-lived client secret,
+    # `access_token_encrypted` the cached Azure Monitor bearer token.
     SENTINEL = "SENTINEL"
 
     # Placeholders for v0.2.

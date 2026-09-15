@@ -555,9 +555,10 @@ _SENTINEL = ProviderMeta(
         "detections) into your Sentinel workspace so the SOC can pivot "
         "from investigations into Prompt Shields activity."
     ),
-    # v1 is a connect wizard that stores workspace/table config + a
-    # seeded event stream — no live Azure Monitor Logs Ingestion call.
-    # See docs/feedbacks/integrations/microsoft-sentinel/spec.md.
+    # Not OAuth: the customer supplies an app registration in *their* Azure AD
+    # tenant and the forwarder uses client credentials against it. The connect
+    # wizard collects those coordinates directly — see
+    # docs/integrations/microsoft-sentinel/spec.md §5.
     authorize_url=None,
     token_url=None,
     scopes=[],
@@ -566,7 +567,8 @@ _SENTINEL = ProviderMeta(
     onboarding_recommended=False,
     capabilities=[
         "Map Prompt Shields event types to a Sentinel custom table",
-        "Live event stream preview before enabling real ingestion",
+        "Stream prompt telemetry via the Azure Monitor Logs Ingestion API",
+        "Replay undelivered batches from the dead-letter queue",
         "Correlate AI activity alongside Defender / Purview / Entra logs",
     ],
 )

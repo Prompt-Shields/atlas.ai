@@ -97,6 +97,11 @@ from app.models.saas_vendor import (  # noqa: F401
     VendorContractStatus,
     VendorDiscoveryMethod,
 )
+from app.models.sentinel_forward import (  # noqa: F401
+    SentinelDeadLetter,
+    SentinelDeadLetterStatus,
+    SentinelForwardCursor,
+)
 from app.models.settings import TenantSetting  # noqa: F401
 from app.models.slack_workspace import SlackWorkspace  # noqa: F401
 from app.models.spm_entities import (  # noqa: F401
