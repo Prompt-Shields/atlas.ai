@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import uuid
 from datetime import date, datetime
 from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.models.ai_cost_record import SelfHostedCostProvider
+from app.models.ai_cost_record import CostProvider, SelfHostedCostProvider
+from app.models.cost_budget import (
+    DEFAULT_WARN_THRESHOLD_PERCENT,
+    BudgetAlertLevel,
+)
 from app.models.roi_assumptions import HoursSavedSource
 from app.services.cost.roi import HoursSavedBasis
 
@@ -211,3 +216,66 @@ class RoiResponse(BaseModel):
     # usage. The UI is expected to badge it; the API states it either way so a
     # consumer cannot accidentally present an illustration as a finding.
     is_illustrative: bool
+
+
+class BudgetPayload(BaseModel):
+    """A budget as the API returns it, with this month's standing attached.
+
+    The status fields are folded into the same object rather than served from a
+    separate endpoint because they are never wanted apart: a ceiling without
+    the spend beside it is a number the reader has to go and contextualise, and
+    the whole point of this slice is to stop making them do that.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    provider: CostProvider | None
+    amount_usd: Decimal
+    warn_threshold_percent: Decimal
+    alerts_enabled: bool
+
+    # ─── this month's standing ────────────────────────────────────
+    period_start: date
+    as_of: date
+    spend_usd: Decimal
+    provisional_usd: Decimal
+    percent_used: Decimal | None
+    alert_level: BudgetAlertLevel
+
+    # False when the tenant has no cost rows this month at all. The UI must
+    # read this before rendering a low percentage as reassurance: "0% used"
+    # and "we have no data" look identical in the number alone.
+    has_ledger_data: bool
+
+    # None until enough of the month has elapsed to extrapolate honestly.
+    projected_month_end_usd: Decimal | None
+
+    last_alerted_at: datetime | None
+
+
+class BudgetUpsert(BaseModel):
+    """Create or replace the budget for one scope.
+
+    ``extra="forbid"`` matching the ROI assumptions update: a misspelled field
+    silently dropped would leave an admin believing they had set a ceiling that
+    does not exist, and they would find out from an invoice.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    # None targets the tenant-wide budget. Explicit in the body rather than a
+    # path parameter so "the overall budget" does not need a magic path
+    # segment like /budgets/_all.
+    provider: CostProvider | None = None
+
+    # Upper bound is a typo guard rather than a policy, as on the ROI rate:
+    # an accidental extra zero should not silently raise the ceiling tenfold.
+    amount_usd: Decimal = Field(..., gt=0, le=10_000_000)
+
+    # Mirrors the DB CHECK. A threshold of 0 would warn before a cent was
+    # spent; above 100 it could never fire, which is a setting that quietly
+    # does nothing.
+    warn_threshold_percent: Decimal = Field(default=DEFAULT_WARN_THRESHOLD_PERCENT, gt=0, le=100)
+
+    alerts_enabled: bool = True
