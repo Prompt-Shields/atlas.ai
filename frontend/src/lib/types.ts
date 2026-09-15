@@ -213,7 +213,17 @@ export type IntegrationProvider =
   | 'GCP'
   | 'GCP_WORKSPACE'
   | 'GCP_VERTEX'
-  | 'SENTINEL';
+  | 'SENTINEL'
+  // AI-spend cost connectors (pull — API key pasted into a form).
+  | 'ANTHROPIC'
+  | 'OPENAI'
+  | 'CURSOR'
+  | 'GITHUB_COPILOT'
+  | 'VERCEL'
+  // AI-spend cost providers (push — the customer's own app reports usage;
+  // AWS_BEDROCK above is the third of these).
+  | 'AZURE_AI_FOUNDRY'
+  | 'SELF_HOSTED_AI';
 
 export type IntegrationStatusServer =
   | 'NOT_CONNECTED'
@@ -226,8 +236,18 @@ export interface ProviderMetaPayload {
   provider: IntegrationProvider;
   display_name: string;
   short_name: string;
-  category: 'identity' | 'device' | 'data' | 'communication' | 'cloud';
-  vendor: 'microsoft' | 'slack' | 'aws' | 'gcp' | 'other';
+  category: 'identity' | 'device' | 'data' | 'communication' | 'cloud' | 'cost';
+  vendor:
+    | 'microsoft'
+    | 'slack'
+    | 'aws'
+    | 'gcp'
+    | 'anthropic'
+    | 'openai'
+    | 'cursor'
+    | 'github'
+    | 'vercel'
+    | 'other';
   logo_slug: string;
   description: string;
   capabilities: string[];

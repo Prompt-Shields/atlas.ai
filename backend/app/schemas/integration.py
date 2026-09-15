@@ -9,7 +9,7 @@ not-connected → NOT_CONNECTED; placeholder → COMING_SOON.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -17,6 +17,7 @@ from app.models.integration import (
     IntegrationProvider,
     IntegrationStatus,
 )
+from app.services.integration_registry import ProviderCategory, ProviderVendor
 
 
 class ProviderMetaPayload(BaseModel):
@@ -25,8 +26,8 @@ class ProviderMetaPayload(BaseModel):
     provider: IntegrationProvider
     display_name: str
     short_name: str
-    category: Literal["identity", "device", "data", "communication", "cloud"]
-    vendor: Literal["microsoft", "slack", "aws", "gcp", "other"]
+    category: ProviderCategory
+    vendor: ProviderVendor
     logo_slug: str
     description: str
     capabilities: list[str]

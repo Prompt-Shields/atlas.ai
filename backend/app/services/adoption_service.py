@@ -18,11 +18,19 @@ Four quality dimensions, each scored 0-100:
 Headline: ROI (value of hours saved against a blended fully-loaded cost) and
 an upskilling score derived from how much complexity handled per user grew
 across the window.
+
+The ROI multiplier here is a *scorecard* figure: it divides by an assumed
+per-seat tooling cost (`_WEEKLY_SEAT_COST`) because this module is
+tenant-agnostic and has no database access. `GET /api/v1/cost/roi` is the
+canonical answer — it divides by the tenant's real ledger spend and applies
+that tenant's own blended rate. Where the two disagree, the endpoint is right.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+
+from app.models.roi_assumptions import DEFAULT_BLENDED_HOURLY_RATE_USD
 
 # ──────────────────────────────────────────────────────────────────────
 # Seed data — stand-in for a real transcript store, one row per session.
@@ -79,7 +87,12 @@ _SEED_SESSIONS: tuple[_Session, ...] = (
 )
 
 # Blended fully-loaded hourly cost used to translate time saved into ROI.
-_BLENDED_HOURLY_COST = 75.0
+# Imported rather than restated: this module and the AI Spend page each used to
+# carry their own rate ($75 here, $95 there), so one organisation read two
+# different ROI figures depending on which page it opened. The canonical,
+# per-tenant model lives in `RoiAssumptions`; this is only its default, and
+# this scorecard is tenant-agnostic so it cannot consult the override.
+_BLENDED_HOURLY_COST = float(DEFAULT_BLENDED_HOURLY_RATE_USD)
 # Assumed weekly per-seat AI tooling spend the time saved is measured against.
 _WEEKLY_SEAT_COST = 15.0
 # A department needs at least this share of sessions reaching an outcome to
