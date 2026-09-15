@@ -576,6 +576,25 @@ const BUDGET_PROVIDERS = [
   'self_hosted_ai',
 ] as const;
 
+// The ledger stores providers as lowercase enum values. Rendering those raw
+// puts "github_copilot" in front of a finance reader, so map them once here.
+// Falls back to the raw value rather than hiding an unmapped provider — a
+// budget you cannot see is worse than one with an ugly name.
+const PROVIDER_LABEL: Record<string, string> = {
+  anthropic: 'Anthropic',
+  openai: 'OpenAI',
+  cursor: 'Cursor',
+  github_copilot: 'GitHub Copilot',
+  vercel: 'Vercel',
+  azure_ai_foundry: 'Azure AI Foundry',
+  aws_bedrock: 'AWS Bedrock',
+  self_hosted_ai: 'Self-hosted AI',
+};
+
+function providerLabel(p: string | null): string {
+  return p === null ? 'All AI spend' : (PROVIDER_LABEL[p] ?? p);
+}
+
 const ALERT_LEVEL_LABEL: Record<BudgetAlertLevel, string> = {
   ok: 'Within budget',
   warning: 'Approaching',
@@ -604,7 +623,7 @@ function BudgetRow({
 }) {
   const pct = budget.percent_used === null ? null : Number(budget.percent_used);
   const provisional = Number(budget.provisional_usd);
-  const scope = budget.provider ? budget.provider : 'All AI spend';
+  const scope = providerLabel(budget.provider);
 
   const barStyle: Record<BudgetAlertLevel, string> = {
     ok: 'bg-emerald-500',
@@ -814,7 +833,7 @@ function BudgetsSection({
               <option value="">All AI spend</option>
               {BUDGET_PROVIDERS.map((p) => (
                 <option key={p} value={p}>
-                  {p}
+                  {PROVIDER_LABEL[p] ?? p}
                 </option>
               ))}
             </select>
