@@ -30,26 +30,20 @@ cross-tenant by design).
 from __future__ import annotations
 
 import json
-import uuid
-from datetime import UTC, datetime
 
 import httpx
 import structlog
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field, HttpUrl
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import OrgAdmin
 from app.database import get_db_session
 from app.errors import ConflictError, ForbiddenError, UnauthorizedError
-from app.models.integration import (
-    Integration,
-    IntegrationProvider,
-    IntegrationStatus,
-)
+from app.models.integration import IntegrationProvider
 from app.schemas.integration import IntegrationCard
 from app.services.crypto import encrypt_token
+from app.services.integration_connect import to_card, upsert_connected
 from app.services.jamf_api import (
     JamfAPIError,
     JamfAuthError,
@@ -102,89 +96,6 @@ class JumpCloudConnectRequest(BaseModel):
 # ─── Shared helpers ──────────────────────────────────────────────────
 
 
-async def _upsert_connected(
-    db: AsyncSession,
-    *,
-    tenant_id: uuid.UUID,
-    user_id: uuid.UUID,
-    provider: IntegrationProvider,
-    display_name: str,
-    external_id: str | None,
-    encrypted_blob: str,
-) -> Integration:
-    existing = (
-        await db.execute(
-            select(Integration).where(
-                Integration.tenant_id == tenant_id,
-                Integration.provider == provider,
-            )
-        )
-    ).scalar_one_or_none()
-
-    now = datetime.now(UTC)
-
-    if existing is None:
-        record = Integration(
-            tenant_id=tenant_id,
-            provider=provider,
-            display_name=display_name,
-            external_id=external_id,
-            external_name=display_name,
-            access_token_encrypted=encrypted_blob,
-            scopes=None,
-            status=IntegrationStatus.CONNECTED,
-            is_active=True,
-            connected_by_user_id=user_id,
-            connected_at=now,
-        )
-        db.add(record)
-        await db.commit()
-        await db.refresh(record)
-        return record
-
-    existing.access_token_encrypted = encrypted_blob
-    existing.external_id = external_id or existing.external_id
-    existing.display_name = display_name or existing.display_name
-    existing.status = IntegrationStatus.CONNECTED
-    existing.is_active = True
-    existing.connected_by_user_id = user_id
-    existing.connected_at = now
-    existing.last_error = None
-    await db.commit()
-    await db.refresh(existing)
-    return existing
-
-
-def _to_card(integration: Integration) -> IntegrationCard:
-    from app.services.integration_registry import get_provider
-
-    meta = get_provider(integration.provider)
-    return IntegrationCard(
-        meta={
-            "provider": meta.provider,
-            "display_name": meta.display_name,
-            "short_name": meta.short_name,
-            "category": meta.category,
-            "vendor": meta.vendor,
-            "logo_slug": meta.logo_slug,
-            "description": meta.description,
-            "capabilities": meta.capabilities,
-            "available": meta.available,
-            "onboarding_recommended": meta.onboarding_recommended,
-        },
-        status=integration.status,
-        integration_id=str(integration.id),
-        display_name=integration.display_name,
-        external_id=integration.external_id,
-        external_name=integration.external_name,
-        scopes=[],
-        last_synced_at=integration.last_synced_at,
-        last_error=integration.last_error,
-        connected_at=integration.connected_at,
-        config={},
-    )
-
-
 # ─── Jamf Pro ────────────────────────────────────────────────────────
 
 
@@ -233,7 +144,7 @@ async def jamf_connect(
             }
         )
     )
-    record = await _upsert_connected(
+    record = await upsert_connected(
         db,
         tenant_id=user.tenant_id,
         user_id=user.user_id,
@@ -247,7 +158,7 @@ async def jamf_connect(
         tenant_id=str(user.tenant_id),
         integration_id=str(record.id),
     )
-    return _to_card(record)
+    return to_card(record)
 
 
 # ─── Kandji ──────────────────────────────────────────────────────────
@@ -283,7 +194,7 @@ async def kandji_connect(
             raise ConflictError(f"Could not reach Kandji: {exc}")
 
     blob = encrypt_token(json.dumps({"base_url": base_url, "api_token": payload.api_token}))
-    record = await _upsert_connected(
+    record = await upsert_connected(
         db,
         tenant_id=user.tenant_id,
         user_id=user.user_id,
@@ -297,7 +208,7 @@ async def kandji_connect(
         tenant_id=str(user.tenant_id),
         integration_id=str(record.id),
     )
-    return _to_card(record)
+    return to_card(record)
 
 
 # ─── JumpCloud ───────────────────────────────────────────────────────
@@ -329,7 +240,7 @@ async def jumpcloud_connect(
             raise ConflictError(f"Could not reach JumpCloud: {exc}")
 
     blob = encrypt_token(json.dumps({"api_key": payload.api_key}))
-    record = await _upsert_connected(
+    record = await upsert_connected(
         db,
         tenant_id=user.tenant_id,
         user_id=user.user_id,
@@ -343,4 +254,4 @@ async def jumpcloud_connect(
         tenant_id=str(user.tenant_id),
         integration_id=str(record.id),
     )
-    return _to_card(record)
+    return to_card(record)

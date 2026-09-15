@@ -177,6 +177,11 @@ New page `frontend/src/app/dashboard/ai-spend/`, following the existing dashboar
 
 Connecting a cost vendor reuses the existing `/dashboard/integrations` connect flow; the new providers appear as tiles via `integration_registry`.
 
+> **Correction (slice 6).** This was wrong, and the error was load-bearing: that
+> flow handled only the three MDM providers, so registering a tile made these
+> providers *appear* connectable without making them connectable. See "Slice 6"
+> below.
+
 ## Error handling
 
 - **Adapter failure** (network, auth, schema drift) → that integration goes `ERROR` with a stored reason; sync continues for others; the dashboard surfaces the error state on the connector tile.
@@ -429,6 +434,72 @@ detection runs rather than being resurrected as new.
   smaller the slice the noisier the ratio, and guard 2 exists because ratios on
   small numbers are noise amplifiers.
 
+## Slice 6 — connecting the pull-mode providers (shipped 2026-09-15)
+
+Slices 1-5 built the ledger, ROI, budgets and anomaly detection on top of five
+pull-mode connectors — Anthropic, OpenAI, Cursor, GitHub Copilot, Vercel — that
+**no customer could connect**. The connectors read
+`Integration.access_token_encrypted`; nothing wrote it. `PATCH /integrations/{id}`
+sets only `display_name`, `config_json` and `is_active`, none of these providers
+has an OAuth flow, and the connect page gated on
+`new Set(['JAMF_PRO','KANDJI','JUMPCLOUD'])`. They advertised `available=True`
+and led to a page that did not handle them. Every demo of the ledger to date ran
+on seeded rows.
+
+### Endpoints
+
+`POST /integrations/{anthropic,openai,cursor,github-copilot,vercel}/connect`,
+one per provider rather than one polymorphic endpoint, for the same reason
+`mdm_connect` has three: the credential shapes genuinely differ (a bare key for
+the first three; a token plus org slug and optional seat price for Copilot; a
+token plus team scoping and optional AI Gateway for Vercel), and collapsing them
+into optional fields would lose input validation.
+
+### Verification runs the real sync path
+
+Each endpoint builds a transient, unsaved `Integration` holding the submitted
+credential and awaits that provider's own `fetch_cost` over a one-day window. A
+credential that passes is therefore known to work for the nightly sync, not
+merely known to authenticate. Copilot is why this matters: its token needs
+`manage_billing:copilot` **on a specific org**, so a token that looks valid
+against a generic probe endpoint can still be useless to us. An empty result is
+a pass — a tenant with no spend yesterday is connected, not rejected.
+
+Failure mapping: 401/403 → 401 with a message naming the missing billing access;
+404 → 409 naming the org/team as wrong; anything else, including a connector
+`ValueError` on an unusable payload → 409. Nothing is written unless
+verification passes.
+
+### Two storage corrections
+
+- **The bare key, not a JSON blob.** `mdm_connect` stores a JSON credential blob;
+  every cost connector calls `decrypt_token(...)` and uses the result *directly*
+  as the key. Following the MDM convention here would have produced integrations
+  that connect cleanly and then fail in the worker. A test asserts the round-trip.
+- **`config_json` is API-visible.** It is returned to the browser as
+  `IntegrationCard.config`, so Vercel's AI Gateway key — a second credential the
+  slice-2 adapter read from `config_json` in cleartext — is now stored as
+  ciphertext under `vercel_ai_gateway_key_encrypted`, and
+  `integration_connect.redact_config` strips any `*_encrypted` key on the way
+  out. `GET /integrations` routes through the same redaction. The plaintext key
+  never shipped, so no migration is needed.
+
+### Shared plumbing
+
+`app/services/integration_connect.py` now holds the upsert + card rendering both
+connect routers use; `mdm_connect` was rewired to it with no behaviour change
+(its 9 tests pass unmodified).
+
+### Deliberately not built
+
+- **Credential rotation reminders / expiry tracking.** Vendors differ on whether
+  keys expire at all, and a reminder we cannot ground in a real expiry date is
+  noise.
+- **A "test connection" button separate from connect.** Connect *is* the test —
+  a second button implying a different check would be a lie about what runs.
+- **Editing a stored credential in place.** Reconnecting overwrites the row and
+  clears `last_error`, which is the same operation with one fewer code path.
+
 ## Out of scope (explicit — future slices)
 
 - ~~Self-hosted app instrumentation via open-source telemetry lib (Azure AI Foundry / AWS
@@ -440,5 +511,6 @@ detection runs rather than being resurrected as new.
 - ChatGPT consumer/Team/Enterprise seat connector (weak/limited cost API).
 - ~~budgets/alerts~~ **Shipped** — see "Slice 4" above.
 - ~~cost anomaly detection~~ **Shipped** — see "Slice 5" above.
+- ~~No way to connect the pull-mode providers~~ **Shipped** — see "Slice 6" above.
 - Multi-currency normalization; chargeback/showback allocation.
 - A dedicated price-book table (config_json suffices for v1).

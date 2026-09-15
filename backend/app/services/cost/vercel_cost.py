@@ -8,7 +8,8 @@ lives encrypted on the Integration row and is sent as
 The Vercel team id/slug comes from the integration's ``config_json``
 (``vercel_team_id`` and/or ``vercel_team_slug``). AI Gateway ingestion is
 gated behind ``config_json["vercel_ai_gateway"]`` (default off) and uses a
-separate AI-Gateway API key (``config_json["vercel_ai_gateway_key"]``) since
+separate AI-Gateway API key (``config_json["vercel_ai_gateway_key_encrypted"]``,
+Fernet ciphertext — never cleartext, as config_json is API-visible) since
 the gateway endpoint authenticates with its own key.
 
 Endpoints used:
@@ -263,7 +264,13 @@ class VercelCostConnector:
 
         gateway_report: dict[str, Any] | None = None
         if cfg.get("vercel_ai_gateway"):
-            gateway_key = cfg.get("vercel_ai_gateway_key") or token
+            # The gateway key is a second credential, so it is stored as
+            # Fernet ciphertext: ``config_json`` is served back to the
+            # browser by GET /integrations and must hold no cleartext
+            # secret. Falls back to the main token when unset, which is
+            # what Vercel accepts for most accounts.
+            gateway_enc = cfg.get("vercel_ai_gateway_key_encrypted")
+            gateway_key = decrypt_token(gateway_enc) if gateway_enc else token
             async with httpx.AsyncClient(
                 base_url=_GATEWAY_BASE_URL,
                 headers={"Authorization": f"Bearer {gateway_key}"},
