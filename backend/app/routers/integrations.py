@@ -48,6 +48,7 @@ from app.schemas.integration import (
     ProviderMetaPayload,
 )
 from app.services.crypto import encrypt_token
+from app.services.integration_connect import redact_config
 from app.services.integration_registry import (
     get_provider,
     list_providers,
@@ -103,16 +104,14 @@ def _scopes_list(scopes: str | None) -> list[str]:
 
 
 def _safe_json_object(raw: str | None) -> dict[str, Any]:
-    """Decode `config_json` Text → dict; empty dict on malformed input."""
-    import json
+    """Decode `config_json` Text → dict; empty dict on malformed input.
 
-    if not raw:
-        return {}
-    try:
-        value = json.loads(raw)
-    except (json.JSONDecodeError, TypeError):
-        return {}
-    return value if isinstance(value, dict) else {}
+    Delegates to ``redact_config`` so secrets a provider stored in
+    ``config_json`` as ciphertext (keys suffixed ``_encrypted``, e.g.
+    Vercel's AI Gateway key) are stripped before this reaches the
+    browser — this dict is served as ``IntegrationCard.config``.
+    """
+    return redact_config(raw)
 
 
 def _to_card(

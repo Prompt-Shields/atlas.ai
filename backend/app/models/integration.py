@@ -148,7 +148,11 @@ class Integration(GRCBase, TenantScopedMixin, TestDataMixin):
     config_json: Mapped[str | None] = mapped_column(
         Text,
         nullable=True,
-        comment="JSON object of provider-specific non-secret config",
+        comment=(
+            "JSON object of provider-specific non-secret config. Returned "
+            "to the browser as IntegrationCard.config, so any secret here "
+            "must be ciphertext under a *_encrypted key."
+        ),
     )
 
     # Last successful sync (worker writes this).

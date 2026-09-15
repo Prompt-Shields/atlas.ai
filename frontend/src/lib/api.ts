@@ -423,6 +423,63 @@ class ApiClient {
     );
   }
 
+  // ── Cost provider connect endpoints ─────────────────────────────
+  // Pull-mode AI spend providers. The backend live-verifies the key by
+  // running the provider's real cost fetch before storing it, so a
+  // success here means the nightly sync will work too. Keys are
+  // Fernet-encrypted server-side and never returned.
+
+  async anthropicConnect(payload: {
+    api_key: string;
+  }): Promise<IntegrationCardResponse> {
+    return this.request<IntegrationCardResponse>(
+      '/integrations/anthropic/connect',
+      { method: 'POST', body: JSON.stringify(payload) },
+    );
+  }
+
+  async openaiConnect(payload: {
+    api_key: string;
+  }): Promise<IntegrationCardResponse> {
+    return this.request<IntegrationCardResponse>(
+      '/integrations/openai/connect',
+      { method: 'POST', body: JSON.stringify(payload) },
+    );
+  }
+
+  async cursorConnect(payload: {
+    api_key: string;
+  }): Promise<IntegrationCardResponse> {
+    return this.request<IntegrationCardResponse>(
+      '/integrations/cursor/connect',
+      { method: 'POST', body: JSON.stringify(payload) },
+    );
+  }
+
+  async copilotConnect(payload: {
+    api_key: string;
+    github_org: string;
+    seat_price_usd?: string;
+  }): Promise<IntegrationCardResponse> {
+    return this.request<IntegrationCardResponse>(
+      '/integrations/github-copilot/connect',
+      { method: 'POST', body: JSON.stringify(payload) },
+    );
+  }
+
+  async vercelConnect(payload: {
+    api_key: string;
+    team_id?: string;
+    team_slug?: string;
+    ai_gateway?: boolean;
+    ai_gateway_key?: string;
+  }): Promise<IntegrationCardResponse> {
+    return this.request<IntegrationCardResponse>(
+      '/integrations/vercel/connect',
+      { method: 'POST', body: JSON.stringify(payload) },
+    );
+  }
+
   // ── Onboarding (PR #33) ─────────────────────────────────────────
   async getOnboardingStatus(): Promise<OnboardingStatusResponse> {
     return this.request<OnboardingStatusResponse>('/onboarding/status');
