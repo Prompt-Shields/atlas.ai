@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import pathlib
 import uuid
 from collections.abc import AsyncGenerator, Generator
 from unittest.mock import AsyncMock, MagicMock
@@ -340,3 +341,44 @@ def mock_llm_client() -> MagicMock:
         }
     )
     return client
+
+
+# ─── Automatic `unit` marker for tests/unit/ ─────────────────────────
+
+
+_UNIT_TEST_DIR = pathlib.Path(__file__).parent / "unit"
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_collection_modifyitems(config, items):
+    """Mark everything under tests/unit/ as `unit`, whether or not it says so.
+
+    CI runs `pytest tests/unit/ -m "unit"`, so a file that forgets
+    `pytestmark = [pytest.mark.unit]` is collected and then silently
+    deselected — it passes locally, never runs in CI, and nothing reports the
+    gap. That is not hypothetical: 33 files and 297 tests had drifted out of
+    the CI run this way, and two of them had been failing undetected.
+
+    Requiring each author to remember a marker is the bug. The directory is
+    already the classification — a test under tests/unit/ is a unit test by
+    construction — so the marker is derived from it rather than restated, and
+    a new file cannot fall out of CI by omission.
+
+    Additive only: existing markers (including the one file marked
+    `integration`) are preserved, so nothing that was selected before stops
+    being selected.
+
+    `tryfirst` because pytest applies `-m` deselection in its own
+    implementation of this same hook; marks added afterwards would come too
+    late to affect selection.
+    """
+    for item in items:
+        path = pathlib.Path(str(getattr(item, "path", item.fspath)))
+        if _UNIT_TEST_DIR not in path.parents:
+            continue
+        # Must test real markers, not `item.keywords`: keywords also contain
+        # the node's path components, and the directory is *named* "unit", so
+        # `"unit" in item.keywords` is unconditionally true here and skips
+        # every file. That mistake makes this hook a silent no-op.
+        if not any(m.name == "unit" for m in item.iter_markers()):
+            item.add_marker(pytest.mark.unit)

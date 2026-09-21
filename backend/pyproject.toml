@@ -93,9 +93,17 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 addopts = "-v --tb=short --strict-markers"
 markers = [
+    # Applied automatically to everything under tests/unit/ by the
+    # pytest_collection_modifyitems hook in tests/conftest.py — CI selects on
+    # it, so deriving it from the directory keeps a new file from silently
+    # falling out of the run.
     "unit: Unit tests",
     "e2e: End-to-end tests",
     "slow: Slow tests",
+    # Registered so --strict-markers tells the truth about it. One file
+    # carries this marker; it lives under tests/unit/ and so also runs as a
+    # unit test.
+    "integration: Integration tests",
 ]
 
 [tool.mypy]
