@@ -57,6 +57,7 @@ const CATEGORY_LABELS: Record<IntegrationCategory | 'all', string> = {
   data: 'Data',
   communication: 'Communication',
   cloud: 'Cloud',
+  cost: 'AI Spend',
 };
 
 const CATEGORY_ORDER: (IntegrationCategory | 'all')[] = [
@@ -66,6 +67,7 @@ const CATEGORY_ORDER: (IntegrationCategory | 'all')[] = [
   'data',
   'communication',
   'cloud',
+  'cost',
 ];
 
 const STATUS_LABELS: Record<IntegrationStatus, string> = {
@@ -89,6 +91,11 @@ const VENDOR_ACCENT: Record<IntegrationVendor, string> = {
   slack: 'bg-purple-50 text-purple-700 ring-purple-200',
   aws: 'bg-orange-50 text-orange-700 ring-orange-200',
   gcp: 'bg-emerald-50 text-emerald-700 ring-emerald-200',
+  anthropic: 'bg-orange-50 text-orange-800 ring-orange-200',
+  openai: 'bg-teal-50 text-teal-700 ring-teal-200',
+  cursor: 'bg-slate-100 text-slate-700 ring-slate-300',
+  github: 'bg-gray-100 text-gray-800 ring-gray-300',
+  vercel: 'bg-gray-100 text-gray-900 ring-gray-300',
   other: 'bg-gray-100 text-gray-700 ring-gray-200',
 };
 
@@ -97,6 +104,11 @@ const VENDOR_INITIAL_BG: Record<IntegrationVendor, string> = {
   slack: 'bg-purple-600',
   aws: 'bg-orange-600',
   gcp: 'bg-emerald-600',
+  anthropic: 'bg-orange-700',
+  openai: 'bg-teal-700',
+  cursor: 'bg-slate-700',
+  github: 'bg-gray-800',
+  vercel: 'bg-gray-900',
   other: 'bg-gray-600',
 };
 
@@ -583,6 +595,7 @@ export default function IntegrationsPage() {
       data: 0,
       communication: 0,
       cloud: 0,
+      cost: 0,
     };
     for (const card of allCards) c[card.meta.category] += 1;
     return c;
@@ -610,6 +623,16 @@ export default function IntegrationsPage() {
     'JUMPCLOUD',
   ]);
 
+  // Cost slice 2: these report spend by pushing, so there is no connect
+  // flow to route to. Without this branch they fall through to the OAuth
+  // path, whose catch-all fakes a "connected (demo)" state — telling an
+  // admin their spend is wired up when nothing has been instrumented.
+  const PUSH_ONLY_PROVIDERS = new Set([
+    'AZURE_AI_FOUNDRY',
+    'AWS_BEDROCK',
+    'SELF_HOSTED_AI',
+  ]);
+
   const handleConnect = async (card: IntegrationCard) => {
     if (card.status === 'COMING_SOON') {
       setToast(`Got it — we'll email you when ${card.meta.shortName} ships.`);
@@ -625,6 +648,15 @@ export default function IntegrationsPage() {
 
     if (NON_OAUTH_MDMS.has(card.meta.provider)) {
       router.push(`/dashboard/integrations/${card.meta.provider}/connect`);
+      return;
+    }
+
+    if (PUSH_ONLY_PROVIDERS.has(card.meta.provider)) {
+      setToast(
+        `${card.meta.shortName} reports spend by pushing — instrument your app ` +
+          `to POST usage to /api/v1/cost/usage. The tile connects itself on the ` +
+          `first batch.`,
+      );
       return;
     }
 

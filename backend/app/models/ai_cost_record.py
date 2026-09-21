@@ -33,11 +33,40 @@ _JSONBColumn = JSON().with_variant(JSONB(), "postgresql")
 
 
 class CostProvider(str, enum.Enum):
+    # Pull-mode vendors (slice 1): a connector fetches billed dollars.
     anthropic = "anthropic"
     openai = "openai"
     cursor = "cursor"
     github_copilot = "github_copilot"
     vercel = "vercel"
+
+    # Push-mode, self-hosted (slice 2): the customer's own app reports its
+    # token usage and we derive cost. There is no per-tenant billing API to
+    # pull for these — the spend is on the customer's own cloud bill,
+    # undifferentiated by application. `self_hosted` is the catch-all so a
+    # customer on GCP Vertex or an on-prem model is not blocked on us adding
+    # a constant.
+    azure_ai_foundry = "azure_ai_foundry"
+    aws_bedrock = "aws_bedrock"
+    self_hosted = "self_hosted"
+
+
+class SelfHostedCostProvider(str, enum.Enum):
+    """The subset of ``CostProvider`` that accepts pushed usage.
+
+    A separate type, rather than validating against ``CostProvider`` at the
+    edge, so the push endpoint structurally cannot be handed ``anthropic`` or
+    ``openai``. Those providers' spend already arrives through their billing
+    API; accepting a push for one would add derived rows alongside the
+    vendor-reported ones and double-count the customer's bill against itself.
+    """
+
+    azure_ai_foundry = "azure_ai_foundry"
+    aws_bedrock = "aws_bedrock"
+    self_hosted = "self_hosted"
+
+    def to_cost_provider(self) -> CostProvider:
+        return CostProvider(self.value)
 
 
 class CostKind(str, enum.Enum):

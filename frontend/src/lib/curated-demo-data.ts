@@ -820,18 +820,29 @@ export type IntegrationStatus =
   | "DISABLED"
   | "COMING_SOON"
 
+// Mirrors ProviderCategory / ProviderVendor in the backend's
+// app/services/integration_registry.py, which the API schema imports directly.
+// Adding a vendor here also needs a swatch in VENDOR_INITIAL_BG and adding a
+// category needs a label + count in the integrations grid; both are exhaustive
+// Records, so the compiler will say so.
 export type IntegrationCategory =
   | "identity"
   | "device"
   | "data"
   | "communication"
   | "cloud"
+  | "cost"
 
 export type IntegrationVendor =
   | "microsoft"
   | "slack"
   | "aws"
   | "gcp"
+  | "anthropic"
+  | "openai"
+  | "cursor"
+  | "github"
+  | "vercel"
   | "other"
 
 export interface IntegrationProviderMeta {
