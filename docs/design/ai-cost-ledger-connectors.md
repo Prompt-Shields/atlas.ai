@@ -1,7 +1,7 @@
 # AI Cost Ledger + Vendor Connectors — Design Spec
 
 **Date:** 2026-06-17
-**Status:** Slices 1, 2 and 3 all shipped — see the per-slice sections below
+**Status:** Slices 1, 2, 3 and 4 all shipped — see the per-slice sections below
 **Scope:** atlas.ai backend + dashboard. First slice of a larger "AI Spend & ROI" product surface.
 
 ## Problem
@@ -301,6 +301,71 @@ that AI saved nothing, when the truth is that nobody has answered the question y
   emits it until AI usage telemetry lands. Declaring it now keeps the honest path from
   being the special case later.
 
+
+## Slice 4 — budgets and threshold alerts (shipped 2026-09-07)
+
+`grc.cost_budgets`, migration 045. A monthly USD ceiling per tenant, either
+tenant-wide (NULL `provider`) or scoped to one provider, evaluated after the
+daily cron sweep and mailed to admins on a threshold crossing.
+
+Slices 1-3 all answer a question somebody came to the page to ask. This is the
+first part of the ledger that speaks without being asked, which is the point:
+the failure mode of a cost tool is not a wrong number, it is a correct number
+nobody read until the invoice arrived.
+
+### The three guards
+
+Each mirrors one slice 3 needed, and each exists because the obvious
+implementation would produce a confident, false answer:
+
+1. **No ledger data is not 0% used.** A tenant whose connectors have never
+   synced has no cost rows, and `sum(...) = 0` is indistinguishable in SQL from
+   a tenant that genuinely spent nothing. Reporting "0% of budget used" to the
+   first is the same shape of lie as slice 3's infinite ROI — the most
+   reassuring reading of an absence of evidence — and the more dangerous one
+   because it looks like good news. `has_ledger_data` carries the distinction;
+   the UI renders that case as its own state rather than as a full green bar,
+   and `should_alert` refuses to raise an overspend alarm from it (a dead
+   connector is a connector problem, and saying "budget exceeded" would point
+   the admin at the wrong thing entirely).
+
+2. **Provisional spend is named, not hidden.** Today's rows land
+   `is_provisional=true` and the vendor may revise them. A budget that flips to
+   `exceeded` on provisional data is not wrong to say so, but the alert body and
+   the UI both name how much of the figure can still move.
+
+3. **A projection is not a measurement.** `projected_month_end_usd` is `null`
+   until seven days of the month have elapsed, rather than being computed and
+   caveated — a number on a dashboard is read and the caveat beside it is not.
+
+### Alerting once, not daily
+
+`last_alerted_period` + `last_alerted_level` on the row. An alert fires only
+when the computed level is *worse* than the one already announced this period;
+equal or lower never re-sends, and a new month resets. A budget that emails
+every day it is over reads as urgent on day one and as noise by day three, and
+a filtered alert is strictly worse than no alert — it is one you believe you
+have.
+
+Raising the ceiling clears the alert state, because that is the one moment a
+tenant most wants to hear from the budget again.
+
+The row is stamped only *after* a successful send: stamping first would let a
+bounced mail permanently silence that crossing.
+
+### Deliberately not built
+
+- **Slack delivery.** The adapter exists in the codebase, but per-tenant OAuth
+  state (which workspace, which channel, what if the token lapsed) is a second
+  failure surface, and a half-wired channel that silently drops messages is
+  precisely the failure this slice exists to prevent. Email only for now.
+- **A per-day budget.** The ledger's grain is daily, but nobody sets a daily AI
+  budget, and offering one would invite alerts on a Tuesday spike a month
+  absorbs without trouble.
+- **Hard enforcement.** A budget reports; it does not disable a connector or
+  block spend. Cutting off a team's AI access from a provisional number that
+  the vendor may revise downward is a much worse error than a late email.
+
 ## Out of scope (explicit — future slices)
 
 - ~~Self-hosted app instrumentation via open-source telemetry lib (Azure AI Foundry / AWS
@@ -310,5 +375,6 @@ that AI saved nothing, when the truth is that nobody has answered the question y
 - ~~Human-cost model and human-vs-AI **ROI** computation and dashboard → **slice 3**.~~
   **Shipped** — see "Slice 3" above.
 - ChatGPT consumer/Team/Enterprise seat connector (weak/limited cost API).
-- Multi-currency normalization; budgets/alerts; cost anomaly detection; chargeback/showback allocation.
+- ~~budgets/alerts~~ **Shipped** — see "Slice 4" above.
+- Multi-currency normalization; cost anomaly detection; chargeback/showback allocation.
 - A dedicated price-book table (config_json suffices for v1).

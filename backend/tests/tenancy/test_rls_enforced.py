@@ -860,3 +860,133 @@ async def test_postgres_rls_enforced_on_roi_assumptions() -> None:
             text("SELECT array_agg(blended_hourly_rate_usd) FROM grc.roi_assumptions")
         )
         assert (res_b.scalar() or []) == [Decimal("250.00")]
+
+
+async def test_postgres_rls_enforced_on_cost_budgets() -> None:
+    """RLS on grc.cost_budgets isolates rows by tenant.
+
+    The leak this prevents is not only a read. `dispatch_budget_alerts` loads
+    a tenant's budgets and then emails that tenant's admins about whatever it
+    found, so a cross-tenant read would mail one organisation another's
+    spending — the ceiling, the actual spend against it, and the provider. Of
+    every table in the cost ledger this is the one whose rows are actively
+    pushed outward, which makes the isolation load-bearing rather than
+    defensive.
+
+    Mechanics follow test_postgres_rls_enforced_on_roi_assumptions exactly:
+    FORCE ROW LEVEL SECURITY because the test role owns the table, the NOLOGIN
+    rls_check_role for the SELECT assertions because superusers bypass FORCE,
+    the GUC set to each row's own tenant_id before its INSERT, and the nil UUID
+    standing in for "unset".
+    """
+    from tests.conftest import TestSessionLocal
+
+    tenant_a = uuid.UUID("00000000-0000-0000-0000-0000000000a6")
+    tenant_b = uuid.UUID("00000000-0000-0000-0000-0000000000b6")
+
+    async with TestSessionLocal() as session:
+        if session.get_bind().dialect.name != "postgresql":
+            pytest.skip("RLS enforcement requires Postgres")
+
+        await session.execute(text("CREATE SCHEMA IF NOT EXISTS grc"))
+
+        # conftest's create_all builds this from the ORM model, so the DDL
+        # no-ops in the normal case. `provider` and `last_alerted_level` are
+        # declared as text to avoid an enum prerequisite on the standalone path.
+        await session.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS grc.cost_budgets (
+                    id                     uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+                    tenant_id              uuid NOT NULL,
+                    provider               text,
+                    amount_usd             numeric(14, 2) NOT NULL,
+                    warn_threshold_percent numeric(5, 2) NOT NULL DEFAULT 80.00,
+                    alerts_enabled         boolean NOT NULL DEFAULT true,
+                    last_alerted_period    date,
+                    last_alerted_level     text,
+                    last_alerted_at        timestamptz,
+                    updated_by_user_id     uuid,
+                    created_at             timestamptz NOT NULL DEFAULT now(),
+                    updated_at             timestamptz NOT NULL DEFAULT now()
+                )
+                """
+            )
+        )
+
+        await session.execute(text("ALTER TABLE grc.cost_budgets ENABLE ROW LEVEL SECURITY"))
+        await session.execute(text("ALTER TABLE grc.cost_budgets FORCE ROW LEVEL SECURITY"))
+        await session.execute(
+            text("DROP POLICY IF EXISTS tenant_isolation_test ON grc.cost_budgets")
+        )
+        # Byte-identical to migration 045's tenant_isolation policy.
+        await session.execute(
+            text(
+                """
+                CREATE POLICY tenant_isolation_test ON grc.cost_budgets
+                USING (tenant_id = current_setting('app.current_tenant_id', TRUE)::uuid)
+                """
+            )
+        )
+
+        await session.execute(
+            text(
+                """
+                DO $$ BEGIN
+                  IF NOT EXISTS (
+                    SELECT 1 FROM pg_roles WHERE rolname = 'rls_check_role'
+                  ) THEN
+                    CREATE ROLE rls_check_role NOLOGIN NOSUPERUSER;
+                  END IF;
+                END $$
+                """
+            )
+        )
+        await session.execute(text("GRANT USAGE ON SCHEMA grc TO rls_check_role"))
+        await session.execute(text("GRANT SELECT ON grc.cost_budgets TO rls_check_role"))
+        await session.execute(text("GRANT rls_check_role TO CURRENT_USER"))
+
+        row_a_id = str(uuid.uuid4())
+        row_b_id = str(uuid.uuid4())
+
+        async def _seed(row_id: str, tenant_id: uuid.UUID, amount: str) -> None:
+            await set_tenant_guc(session, tenant_id)
+            await session.execute(
+                text(
+                    """
+                    INSERT INTO grc.cost_budgets
+                        (id, tenant_id, amount_usd, warn_threshold_percent, alerts_enabled)
+                    VALUES (:id, :tenant_id, :amount, 80.00, true)
+                    """
+                ),
+                {"id": row_id, "tenant_id": str(tenant_id), "amount": amount},
+            )
+
+        await _seed(row_a_id, tenant_a, "1000.00")
+        await _seed(row_b_id, tenant_b, "9999.00")
+
+        await session.execute(
+            text(
+                "SELECT set_config('app.current_tenant_id',"
+                " '00000000-0000-0000-0000-000000000000', true)"
+            )
+        )
+        await session.execute(text("SET LOCAL ROLE rls_check_role"))
+
+        # Fail closed on an unmatched GUC.
+        res_unset = await session.execute(
+            text("SELECT count(*) FROM grc.cost_budgets WHERE id IN (:a, :b)"),
+            {"a": row_a_id, "b": row_b_id},
+        )
+        assert (res_unset.scalar() or 0) == 0
+
+        # The unfiltered read `load_budgets` performs once RLS is the only
+        # thing scoping it. Returning the other tenant's ceiling here is what
+        # would put their spending into this tenant's alert email.
+        await session.execute(text(f"SET LOCAL app.current_tenant_id = '{tenant_a}'"))
+        res_a = await session.execute(text("SELECT array_agg(amount_usd) FROM grc.cost_budgets"))
+        assert (res_a.scalar() or []) == [Decimal("1000.00")]
+
+        await session.execute(text(f"SET LOCAL app.current_tenant_id = '{tenant_b}'"))
+        res_b = await session.execute(text("SELECT array_agg(amount_usd) FROM grc.cost_budgets"))
+        assert (res_b.scalar() or []) == [Decimal("9999.00")]
