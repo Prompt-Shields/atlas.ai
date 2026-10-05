@@ -1,0 +1,80 @@
+# Promptly Guide adoption figures
+
+Promptly Guide is an employee-facing Mac app that guides people through their work apps and AI tools. Its central promise (requirement **E4** in the promptly-guide repository) is that **the employer learns nothing about one person**. Guide's issues #37 and #38 cover how its signals reach Atlas, and this page describes the Atlas side of that.
+
+- Code: `app/routers/guide.py`, `app/services/guide_adoption_service.py`, `app/models/guide_adoption.py`, `app/auth/firebase_token.py`.
+- Migration: `046`.
+
+## The decisions this is built on
+
+- **Nothing by default** (promptly-guide #38). No adoption signal leaves a Mac unless the person using it opted in. That holds for every kind of figure: topics, apps and walkthrough completions.
+- **The organisation offers; the person decides.** A tenant chooses which kinds it wants counted (`offered_kinds`). Guide shows that offer to the person, and the person says yes or no.
+- **No device row, no person row.** Guide Macs are not enrolled through `devices/register`. That endpoint stores `user_external_id` on every device, which is the per-person row E4 rules out.
+
+## How a Guide Mac authenticates
+
+Guide signs people in through the organisation's identity provider, by way of a Google Firebase Authentication (Identity Platform) project. It sends that Firebase **ID token** as the Bearer token on each call. Atlas then works through these steps:
+
+1. It reads the token's `aud` (the Firebase project) and `firebase.tenant` without trusting them. It uses them to find the tenant's `GuideConnection` through `grc.resolve_guide_connection`, a SECURITY DEFINER resolver built the same way as `resolve_device_by_token`.
+2. It verifies the token against that project, as Firebase documents:
+   - RS256, signed by one of Google's `securetoken` certificates (cached for the `max-age` Google sends);
+   - the `iss` and `aud` are right;
+   - not expired, not issued in the future;
+   - has a sign-in time and a non-empty `sub`.
+3. It sets the tenant GUC. From here on, RLS applies.
+
+From the token, Atlas uses only the project, the tenant and `sub`. It never reads, logs or stores the email, name or groups. An unknown project gets the same `401` as a bad token, so nobody can find out which projects are connected by asking.
+
+## What is stored
+
+Nothing is stored per person. A contribution is folded into running counts as it arrives:
+
+| Table | Holds |
+| --- | --- |
+| `guide_connections` | The tenant's Firebase project, its Identity Platform tenant, and `offered_kinds` |
+| `guide_adoption_contributors` | Tenant, month, team, and how many people contributed |
+| `guide_adoption_counts` | Tenant, month, team, category, and how many of those people reached it |
+| `guide_adoption_receipts` | Tenant, month, and a keyed hash of (tenant, `sub`, month), so that one person counts once a month |
+
+The three adoption tables have **no timestamp columns**. A receipt and a count updated in the same second could otherwise be lined up, which would tie a person's receipt to their team and categories.
+
+The receipt is an HMAC keyed by a value derived from the server secret, so nobody can recompute it from a list of emails. No API reads it. Rotating `JWT_SECRET_KEY` resets the once-a-month check for the current month. That is acceptable, because a second contribution from the same person can only add one to counts that the gate bands anyway.
+
+## What a contribution may say
+
+```json
+POST /api/v1/guide/adoption
+{ "team": "sales", "period": { "year": 2026, "month": 9 },
+  "reached": [ { "kind": "app", "id": "Claude" }, { "kind": "completion", "id": "finished" } ] }
+```
+
+- **Only a finished month**, from the last three. Guide sends after a month ends. Accepting a month still running would let one more contribution move a band while someone watches.
+- **Only compiled-in identifiers.** Each kind has its own pattern:
+  - topic: `<pack>/<entry>`;
+  - app: a well-known tool's name;
+  - completion: a walkthrough ending.
+
+  Free text is refused, and so is any field beyond these three (`extra="forbid"`).
+- **Only offered kinds.** A category of a kind the tenant does not offer rejects the whole contribution. Guide only sends what was offered, so a client that sends anything else is suspect.
+- A second contribution from the same person for the same month returns `{"counted": false}` and changes nothing.
+
+## What an admin sees
+
+`GET /api/v1/guide/adoption/report?period=2026-09` (Analyst and above) runs the counts through the gate. The gate is a port of Guide's `AdoptionGate`, and the two must keep the same rules:
+
+- A team with **fewer than 10** contributors that month reports **nothing**, not even which categories it touched. Its name is listed under `teams_too_small`.
+- Within a team that reports, a category that reached fewer than 10 people is **suppressed, not rounded**. The report says how many were left out per team, but never which ones.
+- Figures are **bands** (`under 20%`, `20–29%` … `80% or more`), and there is **no team total**. No figure can be recovered by subtraction, and none can say "all of the team" or "none of them".
+- Only kinds the tenant offers right now are shown.
+
+Every report carries a note: only people who chose to be counted are in these figures, so a band is a share of them, not of the whole team.
+
+## Setting it up
+
+`PUT /api/v1/guide/connection` (TenantAdmin) with `firebase_project_id`, optionally `firebase_tenant_id`, and `offered_kinds`. A Firebase project and tenant can belong to only one Atlas tenant (`409` otherwise). An empty `offered_kinds` means the tenant counts nothing, and Guide does not ask anyone.
+
+## Limits
+
+- **Team is client-sent.** Guide takes it from the organisation's configuration profile, so a person on a Mac they administer could name another team. The minimum group size and bands blunt the effect, but they do not prevent it.
+- **The request itself reveals the caller to Atlas for its duration.** The token is verified and then dropped. The audit middleware does not cover `/api/v1/guide/`, so no client IP is logged against a contribution. Keep it that way, and keep request logs free of `Authorization` headers.
+- **Differencing across months** can narrow a band for a team that changed size. The same limit is documented in Guide's `docs/adoption-analytics.md`.

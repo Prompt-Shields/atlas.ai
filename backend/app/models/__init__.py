@@ -60,6 +60,12 @@ from app.models.enrolled_device import EnrolledDevice  # noqa: F401
 from app.models.extension_heartbeat import (  # noqa: F401
     ExtensionDeviceHeartbeat,
 )
+from app.models.guide_adoption import (  # noqa: F401
+    GuideAdoptionContributors,
+    GuideAdoptionCount,
+    GuideAdoptionReceipt,
+    GuideConnection,
+)
 from app.models.handbook import (  # noqa: F401
     HandbookAcknowledgement,
     HandbookReminderLog,
