@@ -73,3 +73,41 @@ class GuideAdoptionReportOut(BaseModel):
     # Said beside every figure: only people who opted in are counted (#38), so a
     # band is a share of them, not of the whole team.
     note: str
+
+
+class GuideRiskRowOut(BaseModel):
+    key: str
+    events: int
+    devices: int
+
+
+class GuideRiskOut(BaseModel):
+    since: str
+    until: str
+    by_category: list[GuideRiskRowOut]
+    by_app: list[GuideRiskRowOut]
+    by_action: list[GuideRiskRowOut]
+    suppressed: dict[str, int]
+    minimum_devices: int
+
+
+class GuidePilotMonthOut(BaseModel):
+    period: str
+    tools: list[GuideFigureOut]
+    finished: list[GuideFigureOut]
+    not_finished: list[GuideFigureOut]
+    topics: list[GuideFigureOut]
+    teams_too_small: list[str]
+    suppressed_categories: dict[str, int]
+
+
+class GuidePilotReportOut(BaseModel):
+    """The 30-day pilot report (promptly-guide #39): aggregate only."""
+
+    connected_at: str
+    generated_at: str
+    offered_kinds: list[str]
+    months: list[GuidePilotMonthOut]
+    risk: GuideRiskOut
+    minimum_group_size: int
+    notes: list[str]

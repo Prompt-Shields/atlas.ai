@@ -69,6 +69,20 @@ POST /api/v1/guide/adoption
 
 Every report carries a note: only people who chose to be counted are in these figures, so a band is a share of them, not of the whole team.
 
+## The 30-day pilot report (promptly-guide #39)
+
+`GET /api/v1/guide/pilot-report` (Analyst and above). Add `?format=markdown` for a shareable copy. This is the end-of-pilot report, and the Atlas demo. It is built from aggregate data only, and it is not available until 30 days after Guide was connected: before that the endpoint returns `409 PILOT_NOT_READY` with the date it will be ready.
+
+| Section | From | Through |
+| --- | --- | --- |
+| AI tools in use | Guide's `app` figures | The gate above: teams of 10 or more, bands, no totals |
+| Where people get stuck | Guide's `completion` figures (walkthroughs finished, and where they stopped) and `topic` figures (what people needed help with) | The same gate |
+| Risky behaviour | Atlas's own prompt telemetry from the Prompt Shields clients (`grc.prompt_events`): violations by kind of personal data, by AI tool, and by what was done about them | Counts for the whole tenant. **A row is shown only if at least 10 devices contributed to it**; the report says how many rows were left out, but not which |
+
+- **Months covered:** Guide's figures are monthly, so the report covers the finished months since connection, at most three.
+- **Risk window:** the risk section covers the same days.
+- **Prompt tips:** Guide's prompt tips are not counted (promptly-guide #34), so nothing in the risk section comes from Guide.
+
 ## Setting it up
 
 `PUT /api/v1/guide/connection` (TenantAdmin) with `firebase_project_id`, optionally `firebase_tenant_id`, and `offered_kinds`. A Firebase project and tenant can belong to only one Atlas tenant (`409` otherwise). An empty `offered_kinds` means the tenant counts nothing, and Guide does not ask anyone.

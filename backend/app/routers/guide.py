@@ -4,6 +4,7 @@ Admin (Atlas JWT):
   PUT  /guide/connection           TenantAdmin  connect a Firebase project; choose kinds offered
   GET  /guide/connection           TenantAdmin
   GET  /guide/adoption/report      Analyst      figures for a month, through the gate
+  GET  /guide/pilot-report         Analyst      the 30-day pilot report (#39), JSON or markdown
 
 Guide (Firebase ID token as Bearer, no device row, no Atlas user):
   GET  /guide/offer                which kinds the organisation offers to count
@@ -19,9 +20,11 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
+from typing import Literal
 
 from fastapi import APIRouter, Depends, Query
 from fastapi import status as http_status
+from fastapi.responses import PlainTextResponse
 from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
@@ -43,6 +46,7 @@ from app.config import get_settings
 from app.database import get_db_session, set_tenant_guc
 from app.errors import AppException, ConflictError, ForbiddenError, NotFoundError, UnauthorizedError
 from app.models.guide_adoption import ADOPTION_KINDS, GuideConnection
+from app.models.tenant import Tenant
 from app.schemas.guide import (
     GuideAdoptionReportOut,
     GuideConnectionIn,
@@ -51,8 +55,13 @@ from app.schemas.guide import (
     GuideContributionOut,
     GuideFigureOut,
     GuideOfferOut,
+    GuidePilotMonthOut,
+    GuidePilotReportOut,
+    GuideRiskOut,
+    GuideRiskRowOut,
 )
 from app.services import guide_adoption_service as adoption
+from app.services import guide_pilot_report as pilot
 
 router = APIRouter(prefix="/guide", tags=["Promptly Guide"])
 
@@ -269,4 +278,78 @@ async def adoption_report(
         suppressed_categories=report.suppressed_categories,
         minimum_group_size=adoption.MINIMUM_GROUP_SIZE,
         note=OPT_IN_NOTE,
+    )
+
+
+def _figure_out(f: adoption.Figure) -> GuideFigureOut:
+    return GuideFigureOut(
+        team=f.team,
+        category_kind=f.category_kind,
+        category_id=f.category_id,
+        band=f.band.text,
+        band_lower=f.band.lower,
+    )
+
+
+@router.get("/pilot-report", response_model=None)
+async def pilot_report(
+    user: Analyst,
+    format: Literal["json", "markdown"] = Query("json"),  # noqa: A002 — the query name
+    db: AsyncSession = Depends(get_tenant_db_session),
+) -> GuidePilotReportOut | PlainTextResponse:
+    """The 30-day pilot report (promptly-guide #39): AI tools in use and where people
+    get stuck from Guide's gated figures, risky behaviour from Atlas's own prompt
+    telemetry. Aggregate only; see `app/services/guide_pilot_report.py`."""
+    tenant_id = _tenant_of(user.tenant_id)
+    try:
+        report = await pilot.build(db, tenant_id)
+    except pilot.PilotNotReady as not_ready:
+        raise AppException(
+            code="PILOT_NOT_READY",
+            message=str(not_ready),
+            status_code=http_status.HTTP_409_CONFLICT,
+            details={"ready_on": not_ready.ready_on.date().isoformat()},
+        )
+    if report is None:
+        raise NotFoundError("Guide connection")
+    if format == "markdown":
+        tenant = await db.get(Tenant, tenant_id)
+        name = tenant.name if tenant is not None else "your organisation"
+        return PlainTextResponse(pilot.markdown(report, name), media_type="text/markdown")
+    risk = report.risk
+    return GuidePilotReportOut(
+        connected_at=report.connected_at.isoformat(),
+        generated_at=report.generated_at.isoformat(),
+        offered_kinds=report.offered_kinds,
+        months=[
+            GuidePilotMonthOut(
+                period=m.period,
+                tools=[_figure_out(f) for f in m.tools],
+                finished=[_figure_out(f) for f in m.finished],
+                not_finished=[_figure_out(f) for f in m.not_finished],
+                topics=[_figure_out(f) for f in m.topics],
+                teams_too_small=m.teams_too_small,
+                suppressed_categories=m.suppressed_categories,
+            )
+            for m in report.months
+        ],
+        risk=GuideRiskOut(
+            since=risk.since.isoformat(),
+            until=risk.until.isoformat(),
+            by_category=[
+                GuideRiskRowOut(key=r.key, events=r.events, devices=r.devices)
+                for r in risk.by_category
+            ],
+            by_app=[
+                GuideRiskRowOut(key=r.key, events=r.events, devices=r.devices) for r in risk.by_app
+            ],
+            by_action=[
+                GuideRiskRowOut(key=r.key, events=r.events, devices=r.devices)
+                for r in risk.by_action
+            ],
+            suppressed=risk.suppressed,
+            minimum_devices=pilot.MINIMUM_DEVICES,
+        ),
+        minimum_group_size=adoption.MINIMUM_GROUP_SIZE,
+        notes=report.notes,
     )
