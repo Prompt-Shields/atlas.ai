@@ -216,3 +216,50 @@ async def test_only_an_admin_connects_guide(client: AsyncClient, viewer_token: s
         headers=auth_header(viewer_token),
     )
     assert r.status_code == 403
+
+
+# ── Approved tools for steering (promptly-guide #57) ─────────────────────────
+
+
+async def _use_case(tool: str, status, classes: str, tenant_id: uuid.UUID = TEST_TENANT_ID) -> None:
+    from app.models.use_case import UseCase, UseCaseSource
+
+    async with TestSessionLocal() as s:
+        s.add(
+            UseCase(
+                tenant_id=tenant_id,
+                title=f"{tool} use",
+                tool=tool,
+                department="Sales",
+                status=status,
+                source=UseCaseSource.FORM,
+                data_classes=classes,
+            )
+        )
+        await s.commit()
+
+
+async def test_guide_reads_the_tools_active_use_cases_name(client: AsyncClient) -> None:
+    from app.models.use_case import UseCaseStatus
+
+    await _connect(client, ["app"])
+    await _use_case("Microsoft Copilot", UseCaseStatus.ACTIVE, '["customer_pii"]')
+    await _use_case("microsoft copilot", UseCaseStatus.ACTIVE, '["proprietary_code", "made_up"]')
+    await _use_case("ChatGPT", UseCaseStatus.DRAFT, "[]")
+    await _use_case("Claude", UseCaseStatus.RETIRED, "[]")
+    await _use_case("Gemini", UseCaseStatus.ACTIVE, "not json")
+    await _use_case("Le Chat", UseCaseStatus.ACTIVE, "[]", tenant_id=OTHER_TENANT_ID)
+    r = await client.get("/api/v1/guide/approved-tools", headers=_guide())
+    assert r.status_code == 200, r.text
+    assert r.json() == {
+        "tools": [
+            {"name": "Gemini", "data_classes": []},
+            {"name": "Microsoft Copilot", "data_classes": ["customer data", "source code"]},
+        ]
+    }
+
+
+async def test_approved_tools_need_a_guide_token(client: AsyncClient) -> None:
+    await _connect(client, ["app"])
+    r = await client.get("/api/v1/guide/approved-tools", headers=_admin(TEST_TENANT_ID))
+    assert r.status_code == 401

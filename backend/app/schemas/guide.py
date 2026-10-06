@@ -111,3 +111,15 @@ class GuidePilotReportOut(BaseModel):
     risk: GuideRiskOut
     minimum_group_size: int
     notes: list[str]
+
+
+class GuideApprovedToolOut(BaseModel):
+    """A sanctioned AI tool, as Guide's steering (F14) reads one: a name, and the
+    kinds of data it is approved for in Guide's own words."""
+
+    name: str
+    data_classes: list[str]
+
+
+class GuideApprovedToolsOut(BaseModel):
+    tools: list[GuideApprovedToolOut]

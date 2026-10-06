@@ -8,6 +8,7 @@ Admin (Atlas JWT):
 
 Guide (Firebase ID token as Bearer, no device row, no Atlas user):
   GET  /guide/offer                which kinds the organisation offers to count
+  GET  /guide/approved-tools       the organisation's sanctioned AI tools, for steering (F14)
   POST /guide/adoption             one opted-in person's month: team, month, categories
 
 A Guide Mac is never enrolled as a device here. `devices/register` records
@@ -18,6 +19,7 @@ and is then dropped: its email, name and groups are not read, logged or stored.
 
 from __future__ import annotations
 
+import json
 import uuid
 from dataclasses import dataclass
 from typing import Literal
@@ -47,8 +49,11 @@ from app.database import get_db_session, set_tenant_guc
 from app.errors import AppException, ConflictError, ForbiddenError, NotFoundError, UnauthorizedError
 from app.models.guide_adoption import ADOPTION_KINDS, GuideConnection
 from app.models.tenant import Tenant
+from app.models.use_case import UseCase, UseCaseStatus
 from app.schemas.guide import (
     GuideAdoptionReportOut,
+    GuideApprovedToolOut,
+    GuideApprovedToolsOut,
     GuideConnectionIn,
     GuideConnectionOut,
     GuideContributionIn,
@@ -152,6 +157,69 @@ async def offer(caller: GuideCaller = Depends(require_guide_caller)) -> GuideOff
         offered_kinds=_kinds(list(caller.offered)),  # type: ignore[arg-type]
         minimum_group_size=adoption.MINIMUM_GROUP_SIZE,
     )
+
+
+# Atlas's data-class taxonomy (`UseCase.data_classes`) in the words Guide's steering
+# and policy answers use (promptly-guide `DataClass`). A class with no counterpart is
+# left out rather than guessed at: Guide then simply does not say the tool is approved
+# for it.
+GUIDE_DATA_CLASSES = {
+    "customer_pii": "customer data",
+    "employee_pii": "personal data",
+    "vendor_pii": "personal data",
+    "donor_pii": "personal data",
+    "phi": "personal data",
+    "proprietary_code": "source code",
+    "strategy_docs": "confidential",
+    "financial_data": "confidential",
+    "public": "public",
+}
+MAX_APPROVED_TOOLS = 100
+
+
+def approved_tools(use_cases: list[tuple[str, str | None]]) -> list[GuideApprovedToolOut]:
+    """One entry per tool named by an ACTIVE use case (names compared without case),
+    with the union of what its use cases are approved for. Pure."""
+    names: dict[str, str] = {}
+    classes: dict[str, set[str]] = {}
+    for tool, raw in use_cases:
+        name = (tool or "").strip()
+        if not name:
+            continue
+        key = name.casefold()
+        names.setdefault(key, name)
+        try:
+            listed = json.loads(raw or "[]")
+        except (json.JSONDecodeError, TypeError):
+            listed = []
+        mapped = {
+            GUIDE_DATA_CLASSES[c] for c in listed if isinstance(c, str) and c in GUIDE_DATA_CLASSES
+        }
+        classes.setdefault(key, set()).update(mapped)
+    out = [
+        GuideApprovedToolOut(name=names[k], data_classes=sorted(classes[k])) for k in sorted(names)
+    ]
+    return out[:MAX_APPROVED_TOOLS]
+
+
+@router.get("/approved-tools", response_model=GuideApprovedToolsOut)
+async def guide_approved_tools(
+    caller: GuideCaller = Depends(require_guide_caller),
+    db: AsyncSession = Depends(get_db_session),
+) -> GuideApprovedToolsOut:
+    """The organisation's sanctioned AI tools, from its AI use-case registry: every tool
+    an ACTIVE use case names. Organisation configuration only -- tool names and data
+    classes, never who registered or owns a use case. Guide reads it to steer people
+    from an unapproved AI tool to an approved one (promptly-guide #57, F14)."""
+    rows = (
+        await db.execute(
+            select(UseCase.tool, UseCase.data_classes).where(
+                UseCase.tenant_id == caller.tenant_id,
+                UseCase.status == UseCaseStatus.ACTIVE,
+            )
+        )
+    ).all()
+    return GuideApprovedToolsOut(tools=approved_tools([(r.tool, r.data_classes) for r in rows]))
 
 
 @router.post("/adoption", response_model=GuideContributionOut)

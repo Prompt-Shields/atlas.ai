@@ -83,6 +83,17 @@ Every report carries a note: only people who chose to be counted are in these fi
 - **Risk window:** the risk section covers the same days.
 - **Prompt tips:** Guide's prompt tips are not counted (promptly-guide #34), so nothing in the risk section comes from Guide.
 
+## Approved tools for steering (promptly-guide #57)
+
+`GET /api/v1/guide/approved-tools` is authenticated by the Guide caller's Firebase ID token, the same way as the adoption calls. It returns the organisation's sanctioned AI tools, taken from its AI use-case registry:
+- every tool that an **ACTIVE** use case names, with names compared without case;
+- for each tool, the union of what its use cases are approved for, translated into Guide's data classes (`customer_pii` becomes "customer data", `proprietary_code` becomes "source code", and so on);
+- taxonomy values with no Guide counterpart are left out.
+
+The response holds tool names and data classes only, never who registered or owns a use case. Guide uses it to steer someone in an unapproved AI tool towards an approved one, alongside the organisation's own `approved-tools.json`.
+
+A use case scoped to one department still counts as approval for the whole organisation here. Guide has no department to match it against.
+
 ## Setting it up
 
 `PUT /api/v1/guide/connection` (TenantAdmin) with `firebase_project_id`, optionally `firebase_tenant_id`, and `offered_kinds`. A Firebase project and tenant can belong to only one Atlas tenant (`409` otherwise). An empty `offered_kinds` means the tenant counts nothing, and Guide does not ask anyone.
