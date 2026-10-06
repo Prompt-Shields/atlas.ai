@@ -123,3 +123,16 @@ class GuideApprovedToolOut(BaseModel):
 
 class GuideApprovedToolsOut(BaseModel):
     tools: list[GuideApprovedToolOut]
+
+
+class GuideGroupsOut(BaseModel):
+    """The signed-in person's SCIM groups, by name (#58)."""
+
+    groups: list[str]
+
+
+class GuideScimTokenOut(BaseModel):
+    """Shown once. Give it, and the tenant URL, to the identity provider."""
+
+    token: str
+    endpoint_path: str

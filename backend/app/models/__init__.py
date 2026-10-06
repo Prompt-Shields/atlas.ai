@@ -66,6 +66,12 @@ from app.models.guide_adoption import (  # noqa: F401
     GuideAdoptionReceipt,
     GuideConnection,
 )
+from app.models.guide_scim import (  # noqa: F401
+    GuideScimGroup,
+    GuideScimMember,
+    GuideScimToken,
+    GuideScimUser,
+)
 from app.models.handbook import (  # noqa: F401
     HandbookAcknowledgement,
     HandbookReminderLog,

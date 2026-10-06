@@ -9,6 +9,11 @@ Admin (Atlas JWT):
 Guide (Firebase ID token as Bearer, no device row, no Atlas user):
   GET  /guide/offer                which kinds the organisation offers to count
   GET  /guide/approved-tools       the organisation's sanctioned AI tools, for steering (F14)
+  GET  /guide/groups               the signed-in person's SCIM groups, by name (#58)
+
+Admin, SCIM (#58):
+  POST   /guide/scim-token         TenantAdmin  make (or replace) the tenant's SCIM token
+  DELETE /guide/scim-token         TenantAdmin  revoke it
   POST /guide/adoption             one opted-in person's month: team, month, categories
 
 A Guide Mac is never enrolled as a device here. `devices/register` records
@@ -44,10 +49,12 @@ from app.auth.firebase_token import (
     get_firebase_verifier,
     unverified_target,
 )
+from app.auth.scim_token import generate_scim_token
 from app.config import get_settings
 from app.database import get_db_session, set_tenant_guc
 from app.errors import AppException, ConflictError, ForbiddenError, NotFoundError, UnauthorizedError
 from app.models.guide_adoption import ADOPTION_KINDS, GuideConnection
+from app.models.guide_scim import GuideScimGroup, GuideScimMember, GuideScimToken, GuideScimUser
 from app.models.tenant import Tenant
 from app.models.use_case import UseCase, UseCaseStatus
 from app.schemas.guide import (
@@ -59,11 +66,13 @@ from app.schemas.guide import (
     GuideContributionIn,
     GuideContributionOut,
     GuideFigureOut,
+    GuideGroupsOut,
     GuideOfferOut,
     GuidePilotMonthOut,
     GuidePilotReportOut,
     GuideRiskOut,
     GuideRiskRowOut,
+    GuideScimTokenOut,
 )
 from app.services import guide_adoption_service as adoption
 from app.services import guide_pilot_report as pilot
@@ -93,6 +102,8 @@ class GuideCaller:
     offered: frozenset[str]
     # Firebase `sub`. Used once, for the monthly receipt; never stored as is.
     subject: str
+    # Read only by `GET /guide/groups`; never stored.
+    email: str | None = None
 
 
 async def _connection_for(
@@ -148,7 +159,12 @@ async def require_guide_caller(
         raise UnauthorizedError("Invalid or expired token")
     tenant_id, offered = connection
     await set_tenant_guc(db, tenant_id)
-    return GuideCaller(tenant_id=tenant_id, offered=frozenset(offered), subject=identity.subject)
+    return GuideCaller(
+        tenant_id=tenant_id,
+        offered=frozenset(offered),
+        subject=identity.subject,
+        email=identity.email,
+    )
 
 
 @router.get("/offer", response_model=GuideOfferOut)
@@ -421,3 +437,68 @@ async def pilot_report(
         minimum_group_size=adoption.MINIMUM_GROUP_SIZE,
         notes=report.notes,
     )
+
+
+# ---------------------------------------------------------------------------
+# SCIM (#58): the token the identity provider uses, and a person's groups
+# ---------------------------------------------------------------------------
+
+
+@router.get("/groups", response_model=GuideGroupsOut)
+async def guide_groups(
+    caller: GuideCaller = Depends(require_guide_caller),
+    db: AsyncSession = Depends(get_db_session),
+) -> GuideGroupsOut:
+    """The SCIM groups the signed-in person is in, by name, for group-based enablement:
+    which of the organisation's documents Guide answers from. Found by the sign-in's
+    email against the provisioned userName; none when the person is not provisioned,
+    or is deprovisioned (`active` false)."""
+    if not caller.email:
+        return GuideGroupsOut(groups=[])
+    rows = (
+        await db.execute(
+            select(GuideScimGroup.display_name)
+            .join(GuideScimMember, GuideScimMember.group_id == GuideScimGroup.id)
+            .join(GuideScimUser, GuideScimUser.id == GuideScimMember.user_id)
+            .where(
+                GuideScimUser.tenant_id == caller.tenant_id,
+                GuideScimUser.user_name_key == caller.email.lower(),
+                GuideScimUser.active.is_(True),
+            )
+        )
+    ).scalars()
+    return GuideGroupsOut(groups=sorted(set(rows)))
+
+
+@router.post("/scim-token", response_model=GuideScimTokenOut)
+async def make_scim_token(
+    user: TenantAdmin,
+    db: AsyncSession = Depends(get_tenant_db_session),
+) -> GuideScimTokenOut:
+    """A new SCIM token for the tenant's identity provider, shown once. Replaces any
+    token the tenant had: the old one stops working at once."""
+    tenant_id = _tenant_of(user.tenant_id)
+    raw, token_hash = generate_scim_token()
+    row = (
+        await db.execute(select(GuideScimToken).where(GuideScimToken.tenant_id == tenant_id))
+    ).scalar_one_or_none()
+    if row is None:
+        db.add(GuideScimToken(tenant_id=tenant_id, token_hash=token_hash))
+    else:
+        row.token_hash = token_hash
+    await db.commit()
+    return GuideScimTokenOut(token=raw, endpoint_path="/api/v1/scim/v2")
+
+
+@router.delete("/scim-token", status_code=http_status.HTTP_204_NO_CONTENT)
+async def revoke_scim_token(
+    user: TenantAdmin,
+    db: AsyncSession = Depends(get_tenant_db_session),
+) -> None:
+    tenant_id = _tenant_of(user.tenant_id)
+    row = (
+        await db.execute(select(GuideScimToken).where(GuideScimToken.tenant_id == tenant_id))
+    ).scalar_one_or_none()
+    if row is not None:
+        await db.delete(row)
+        await db.commit()

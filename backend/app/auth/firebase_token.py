@@ -14,9 +14,11 @@ tenant connected (`GuideConnection`), so the caller looks the connection up by t
 token's unverified `aud` and then verifies against exactly that project.
 
 What a verified token is used for, and nothing more: the project and the Identity
-Platform tenant (to find the Atlas tenant) and `sub` (to stop one person
-contributing twice in a month, see `guide_adoption_service.receipt`). The email,
-the name and the groups are never read, logged or stored.
+Platform tenant (to find the Atlas tenant), `sub` (to stop one person contributing
+twice in a month, see `guide_adoption_service.receipt`), and -- for `GET
+/guide/groups` only -- the email, to find the person's SCIM groups (#58). The name
+and the token's own group claims are never read, and nothing from the token is
+logged or stored.
 """
 
 from __future__ import annotations
@@ -52,6 +54,9 @@ class FirebaseIdentity:
     # "" when the project does not use Identity Platform multi-tenancy.
     firebase_tenant: str
     subject: str
+    # The sign-in's email, as the identity provider gave it to Firebase. Read only by
+    # `GET /guide/groups`, to find the person's SCIM groups (#58); never stored.
+    email: str | None = None
 
 
 def unverified_target(token: str) -> tuple[str, str]:
@@ -142,7 +147,13 @@ class FirebaseTokenVerifier:
         tenant = firebase.get("tenant", "") if isinstance(firebase, dict) else ""
         if not isinstance(tenant, str):
             raise FirebaseTokenError("Unreadable tenant")
-        return FirebaseIdentity(project_id=project_id, firebase_tenant=tenant, subject=subject)
+        email = claims.get("email")
+        return FirebaseIdentity(
+            project_id=project_id,
+            firebase_tenant=tenant,
+            subject=subject,
+            email=email.strip() if isinstance(email, str) and email.strip() else None,
+        )
 
 
 _verifier = FirebaseTokenVerifier()

@@ -94,6 +94,27 @@ The response holds tool names and data classes only, never who registered or own
 
 A use case scoped to one department still counts as approval for the whole organisation here. Guide has no department to match it against.
 
+## SCIM provisioning, for group-based enablement (promptly-guide #58)
+
+Atlas hosts a SCIM 2.0 endpoint at `/api/v1/scim/v2`. The customer's Entra ID provisioning service pushes users and groups into it.
+
+- **Token.** A tenant admin makes the token with `POST /api/v1/guide/scim-token`. The response shows it once, and only a hash is stored. Making a new token replaces the old one, and `DELETE /api/v1/guide/scim-token` revokes it. Paste the token and the tenant URL into Entra's provisioning settings.
+- **Supported calls.** This is the subset Entra's provisioning uses:
+  - Users and Groups: list, get, create, delete;
+  - `eq` filters on `userName`, `externalId` and `displayName`;
+  - PUT for Users;
+  - PATCH: `active`, `userName` and `externalId` on Users; add, remove and replace `members`, and `displayName`, on Groups;
+  - `ServiceProviderConfig`.
+
+  Errors come back in SCIM's own error shape.
+- **What is stored** (`app/models/guide_scim.py`):
+  - a user is a `userName`, an `externalId` and `active`;
+  - a group is a `displayName`, an `externalId` and its members.
+
+  Entra also sends names, emails, titles, managers and phone numbers. Atlas accepts them and stores none of them.
+- **What Guide reads.** `GET /api/v1/guide/groups` uses the Guide caller's Firebase token. Atlas reads the token's email for this endpoint only, matches it, case-insensitively, against a provisioned, active `userName`, and returns that person's group names. Someone deprovisioned (`active` false) or never provisioned gets no groups. Nothing about what Guide does is joined to these tables.
+- **Kept apart from the Graph pull.** These are separate tables from `directory_*`: the push is its own, thinner store, under its own token.
+
 ## Setting it up
 
 `PUT /api/v1/guide/connection` (TenantAdmin) with `firebase_project_id`, optionally `firebase_tenant_id`, and `offered_kinds`. A Firebase project and tenant can belong to only one Atlas tenant (`409` otherwise). An empty `offered_kinds` means the tenant counts nothing, and Guide does not ask anyone.
