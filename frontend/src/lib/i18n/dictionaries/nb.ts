@@ -40,6 +40,7 @@ const nb: Dictionary = {
     aiSpend: 'AI-forbruk',
     developer: 'Utvikler',
     promptActivity: 'Prompt-aktivitet',
+    pilotReport: 'Pilotrapport',
     admin: 'Administrasjon',
   },
   dashboardHome: {
