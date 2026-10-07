@@ -25,6 +25,7 @@ from app.models.guide_adoption import (
 )
 from tests.conftest import TEST_TENANT_ID, TestSessionLocal, auth_header
 from tests.unit import firebase_keys as keys
+from tests.unit.guide_db import guide_resolvers  # noqa: F401
 
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 

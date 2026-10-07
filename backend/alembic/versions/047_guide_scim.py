@@ -28,6 +28,18 @@ depends_on: str | Sequence[str] | None = None
 _TABLES = ("guide_scim_tokens", "guide_scim_users", "guide_scim_groups", "guide_scim_members")
 
 
+# Also run by the Guide tests, whose schema comes from ``create_all``.
+RESOLVE_GUIDE_SCIM_TOKEN = """
+CREATE OR REPLACE FUNCTION grc.resolve_guide_scim_token(p_hash text)
+RETURNS TABLE (tenant_id uuid)
+LANGUAGE sql SECURITY DEFINER
+SET search_path = grc
+AS $$
+    SELECT tenant_id FROM grc.guide_scim_tokens WHERE token_hash = p_hash LIMIT 1
+$$;
+"""
+
+
 def _common() -> list[sa.Column]:
     return [
         sa.Column(
@@ -128,17 +140,7 @@ def upgrade() -> None:
             """
         )
 
-    op.execute(
-        """
-        CREATE OR REPLACE FUNCTION grc.resolve_guide_scim_token(p_hash text)
-        RETURNS TABLE (tenant_id uuid)
-        LANGUAGE sql SECURITY DEFINER
-        SET search_path = grc
-        AS $$
-            SELECT tenant_id FROM grc.guide_scim_tokens WHERE token_hash = p_hash LIMIT 1
-        $$;
-        """
-    )
+    op.execute(RESOLVE_GUIDE_SCIM_TOKEN)
 
 
 def downgrade() -> None:

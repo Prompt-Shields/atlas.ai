@@ -18,6 +18,7 @@ from app.auth.jwt import create_access_token
 from app.main import app
 from tests.conftest import TEST_TENANT_ID, auth_header
 from tests.unit import firebase_keys as keys
+from tests.unit.guide_db import guide_resolvers  # noqa: F401
 
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 

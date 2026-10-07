@@ -51,6 +51,21 @@ def _tenant() -> sa.Column:
     return sa.Column("tenant_id", postgresql.UUID(as_uuid=True), nullable=False)
 
 
+# Also run by the Guide tests, whose schema comes from ``create_all``.
+RESOLVE_GUIDE_CONNECTION = """
+CREATE OR REPLACE FUNCTION grc.resolve_guide_connection(p_project text, p_tenant text)
+RETURNS TABLE (tenant_id uuid, offered_kinds json)
+LANGUAGE sql SECURITY DEFINER
+SET search_path = grc
+AS $$
+    SELECT tenant_id, offered_kinds
+    FROM grc.guide_connections
+    WHERE firebase_project_id = p_project AND firebase_tenant_id = p_tenant
+    LIMIT 1
+$$;
+"""
+
+
 def upgrade() -> None:
     op.create_table(
         "guide_connections",
@@ -134,20 +149,7 @@ def upgrade() -> None:
         )
 
     # ── SECURITY DEFINER connection resolver (pre-tenant lookup; bypasses RLS) ──
-    op.execute(
-        """
-        CREATE OR REPLACE FUNCTION grc.resolve_guide_connection(p_project text, p_tenant text)
-        RETURNS TABLE (tenant_id uuid, offered_kinds json)
-        LANGUAGE sql SECURITY DEFINER
-        SET search_path = grc
-        AS $$
-            SELECT tenant_id, offered_kinds
-            FROM grc.guide_connections
-            WHERE firebase_project_id = p_project AND firebase_tenant_id = p_tenant
-            LIMIT 1
-        $$;
-        """
-    )
+    op.execute(RESOLVE_GUIDE_CONNECTION)
 
 
 def downgrade() -> None:

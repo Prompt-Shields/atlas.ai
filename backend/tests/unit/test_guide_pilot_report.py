@@ -23,6 +23,7 @@ from app.models.prompt_event import PromptEvent
 from app.schemas.telemetry import PromptEventAction, PromptEventKind, PromptEventSource
 from app.services import guide_pilot_report as pilot
 from tests.conftest import TEST_TENANT_ID, TestSessionLocal, auth_header, ensure_tenant
+from tests.unit.guide_db import guide_resolvers  # noqa: F401
 
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 
