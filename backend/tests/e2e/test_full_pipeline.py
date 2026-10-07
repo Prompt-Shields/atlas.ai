@@ -27,7 +27,9 @@ import pytest
 pytestmark = [pytest.mark.e2e, pytest.mark.asyncio]
 
 BASE_URL = os.environ.get("E2E_API_URL", "http://localhost:8001/api/v1")
-SUPER_EMAIL = os.environ.get("SUPER_ADMIN_EMAIL", "admin@test.local")
+# Not *.local or *.test: login takes an EmailStr, and email-validator refuses those
+# special-use domains, so a super admin there could never log in.
+SUPER_EMAIL = os.environ.get("SUPER_ADMIN_EMAIL", "admin@example.com")
 SUPER_PASS = os.environ.get("SUPER_ADMIN_PASSWORD", "TestAdmin_P@ss1")
 
 
