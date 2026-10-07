@@ -9,7 +9,7 @@ import pytest_asyncio
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from tests.conftest import TestSessionLocal
+from tests.conftest import TestSessionLocal, ensure_tenant
 
 
 @pytest_asyncio.fixture
@@ -26,6 +26,7 @@ async def test_enqueue_inserts_row(db: AsyncSession):
     from app.services.billing.outbox import enqueue
 
     tenant_id = uuid.uuid4()
+    await ensure_tenant(db, tenant_id)
     await enqueue(db, operation="seat_sync", tenant_id=tenant_id, payload={"seats": 3})
     await db.commit()
 
@@ -46,6 +47,7 @@ async def test_enqueue_default_empty_payload(db: AsyncSession):
     from app.services.billing.outbox import enqueue
 
     tenant_id = uuid.uuid4()
+    await ensure_tenant(db, tenant_id)
     await enqueue(db, operation="seat_sync", tenant_id=tenant_id)
     await db.commit()
 
