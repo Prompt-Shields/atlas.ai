@@ -263,3 +263,29 @@ async def test_approved_tools_need_a_guide_token(client: AsyncClient) -> None:
     await _connect(client, ["app"])
     r = await client.get("/api/v1/guide/approved-tools", headers=_admin(TEST_TENANT_ID))
     assert r.status_code == 401
+
+
+# ── When a customer asks for more (promptly-guide #38) ───────────────────────
+
+
+@pytest.mark.parametrize("parameter", ["user", "email", "Device_ID", "person"])
+async def test_a_figure_about_one_person_is_refused_not_answered_empty(
+    client: AsyncClient, parameter: str
+) -> None:
+    await _connect(client, ["app"])
+    for path in ("/api/v1/guide/adoption/report", "/api/v1/guide/pilot-report"):
+        r = await client.get(
+            path,
+            params={"period": _period_text(), parameter: "kari@example.com"},
+            headers=_admin(TEST_TENANT_ID),
+        )
+        assert r.status_code == 400, (path, r.text)
+        assert r.json()["error"]["code"] == "ADOPTION_IS_BY_TEAM"
+
+
+async def test_the_minimum_group_size_is_ten_as_guide_pins_it() -> None:
+    from app.services import guide_adoption_service as adoption
+
+    # Lowering it is a change to Guide's gate and this port together, for months after
+    # the change only (promptly-guide docs/adoption-analytics.md).
+    assert adoption.MINIMUM_GROUP_SIZE == 10

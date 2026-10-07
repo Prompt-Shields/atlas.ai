@@ -69,6 +69,10 @@ POST /api/v1/guide/adoption
 
 Every report carries a note: only people who chose to be counted are in these figures, so a band is a share of them, not of the whole team.
 
+## Asking for more
+
+A figures request that names a person, a user, an email or a device is refused with `400 ADOPTION_IS_BY_TEAM`, and the response says why. It is not answered with an empty report, which would read as "nobody". There is no per-person data to answer it with anyway. promptly-guide's `docs/adoption-analytics.md` ("When a customer asks for more") states the whole rule. The minimum group size of 10 is pinned in tests here and in Guide.
+
 ## The 30-day pilot report (promptly-guide #39)
 
 `GET /api/v1/guide/pilot-report` (Analyst and above). Add `?format=markdown` for a shareable copy. This is the end-of-pilot report, and the Atlas demo. It is built from aggregate data only, and it is not available until 30 days after Guide was connected: before that the endpoint returns `409 PILOT_NOT_READY` with the date it will be ready.

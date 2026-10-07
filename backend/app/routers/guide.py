@@ -29,7 +29,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Literal
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi import status as http_status
 from fastapi.responses import PlainTextResponse
 from fastapi.security import HTTPAuthorizationCredentials
@@ -272,6 +272,40 @@ async def contribute(
 # ---------------------------------------------------------------------------
 
 
+# Asking for a figure about one person is refused, and says why, rather than answered
+# with an empty report that would read as "nobody" (promptly-guide #38, "When a customer
+# asks for more"). There is no per-person data to answer it with in any case.
+_PERSON_PARAMETERS = {
+    "user",
+    "user_id",
+    "userid",
+    "email",
+    "person",
+    "employee",
+    "upn",
+    "device",
+    "device_id",
+    "subject",
+    "sub",
+    "member",
+}
+
+
+def _refuse_a_person(request: Request) -> None:
+    asked = {k.lower() for k in request.query_params} & _PERSON_PARAMETERS
+    if asked:
+        raise AppException(
+            code="ADOPTION_IS_BY_TEAM",
+            message=(
+                "Promptly Guide's adoption figures are by team and month only, from teams of "
+                f"{adoption.MINIMUM_GROUP_SIZE} or more. There is no figure about one person, "
+                "and none is kept to be asked for."
+            ),
+            status_code=http_status.HTTP_400_BAD_REQUEST,
+            details={"refused_parameters": sorted(asked)},
+        )
+
+
 def _tenant_of(user_tenant: uuid.UUID | None) -> uuid.UUID:
     if user_tenant is None:
         raise ForbiddenError("Tenant context required")
@@ -326,10 +360,12 @@ async def get_connection(
 
 @router.get("/adoption/report", response_model=GuideAdoptionReportOut)
 async def adoption_report(
+    request: Request,
     user: Analyst,
     period: str = Query(..., description="YYYY-MM"),
     db: AsyncSession = Depends(get_tenant_db_session),
 ) -> GuideAdoptionReportOut:
+    _refuse_a_person(request)
     tenant_id = _tenant_of(user.tenant_id)
     try:
         year, month = adoption.parse_period(period)
@@ -377,6 +413,7 @@ def _figure_out(f: adoption.Figure) -> GuideFigureOut:
 
 @router.get("/pilot-report", response_model=None)
 async def pilot_report(
+    request: Request,
     user: Analyst,
     format: Literal["json", "markdown"] = Query("json"),  # noqa: A002 — the query name
     db: AsyncSession = Depends(get_tenant_db_session),
@@ -384,6 +421,7 @@ async def pilot_report(
     """The 30-day pilot report (promptly-guide #39): AI tools in use and where people
     get stuck from Guide's gated figures, risky behaviour from Atlas's own prompt
     telemetry. Aggregate only; see `app/services/guide_pilot_report.py`."""
+    _refuse_a_person(request)
     tenant_id = _tenant_of(user.tenant_id)
     try:
         report = await pilot.build(db, tenant_id)
