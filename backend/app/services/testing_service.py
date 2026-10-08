@@ -164,9 +164,24 @@ async def purge_test_data(
         correlation_id=correlation_id,
     )
 
+    # Outbox messages carry no test flag of their own: each one is about a
+    # correlation (aggregate_id), so it is test data when that correlation is.
+    # Deleted first, while the correlations they point at still exist.
+    test_correlations = select(CorrelationActionPlan.id).where(
+        CorrelationActionPlan.is_test_data.is_(True)
+    )
+    if tenant_id:
+        test_correlations = test_correlations.where(CorrelationActionPlan.tenant_id == tenant_id)
+    result = await db.execute(
+        delete(OutboxMessage).where(
+            OutboxMessage.aggregate_type == "correlation",
+            OutboxMessage.aggregate_id.in_(test_correlations),
+        )
+    )
+    counts["outbox_messages"] = result.rowcount  # type: ignore[assignment]
+
     # Delete in correct order (foreign key dependencies)
     for model, name in [
-        (OutboxMessage, "outbox_messages"),
         (DispatchEvent, "dispatch_events"),
         (CorrelationActionPlan, "correlations"),
         (RiskMitigation, "risks"),

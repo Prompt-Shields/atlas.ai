@@ -3,7 +3,7 @@ End-to-end tests for the full AI-GRC pipeline.
 
 These tests exercise:
   1. Tenant creation
-  2. User/invite lifecycle
+  2. A tenant user with an org and an API key
   3. Blob ingestion (manual adapter)
   4. Risk analysis job trigger
   5. Correlation engine job trigger
@@ -18,37 +18,21 @@ Run against a live local stack:
 from __future__ import annotations
 
 import asyncio
-import os
 import uuid
 
 import httpx
 import pytest
 
-pytestmark = [pytest.mark.e2e, pytest.mark.asyncio]
+from tests.e2e.stack import BASE_URL, SUPER_EMAIL, SUPER_PASS, ingest, tenant_user
+from tests.e2e.stack import auth as _auth
+from tests.e2e.stack import login as _login
 
-BASE_URL = os.environ.get("E2E_API_URL", "http://localhost:8001/api/v1")
-# Not *.local or *.test: login takes an EmailStr, and email-validator refuses those
-# special-use domains, so a super admin there could never log in.
-SUPER_EMAIL = os.environ.get("SUPER_ADMIN_EMAIL", "admin@example.com")
-SUPER_PASS = os.environ.get("SUPER_ADMIN_PASSWORD", "TestAdmin_P@ss1")
+pytestmark = [pytest.mark.e2e, pytest.mark.asyncio]
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-
-async def _login(client: httpx.AsyncClient, email: str, password: str) -> str:
-    resp = await client.post(
-        f"{BASE_URL}/auth/login",
-        json={"email": email, "password": password},
-    )
-    resp.raise_for_status()
-    return resp.json()["access_token"]
-
-
-def _auth(token: str) -> dict[str, str]:
-    return {"Authorization": f"Bearer {token}"}
 
 
 async def _sleep(seconds: int) -> None:
@@ -87,31 +71,36 @@ class TestE2EPipeline:
         assert data["slug"] == slug
 
     async def test_03_ingest_blob(self) -> None:
-        """Ingest a blob via the manual adapter endpoint."""
-        token = await _login(self.client, SUPER_EMAIL, SUPER_PASS)
-        resp = await self.client.post(
+        """A tenant user ingests a blob via the manual adapter: JWT plus API key."""
+        user = await tenant_user(self.client, f"ingest-{self.test_run_id}")
+        without_key = await self.client.post(
             f"{BASE_URL}/adapters/manual/ingest",
-            headers=_auth(token),
-            json={
-                "content": (
-                    f"[TEST:{self.test_run_id}] AI model deployed without bias testing. "
-                    "No documentation for training data provenance. "
-                    "Model serves 10k daily predictions in healthcare domain."
-                ),
-                "source_type": "manual",
-                "source_id": f"e2e-test-{self.test_run_id}",
-            },
+            headers=_auth(user.token),
+            json={"content": "no key", "source_type": "manual", "source_id": "no-key"},
         )
-        assert resp.status_code in (200, 201), resp.text
-        data = resp.json()
-        assert "id" in data
+        assert without_key.status_code == 401, without_key.text
+        blob = await ingest(
+            self.client,
+            user,
+            content=(
+                f"[TEST:{self.test_run_id}] AI model deployed without bias testing. "
+                "No documentation for training data provenance. "
+                "Model serves 10k daily predictions in healthcare domain."
+            ),
+            source_id=f"e2e-test-{self.test_run_id}",
+        )
+        assert blob["id"]
+        assert blob["tenant_id"] == user.tenant_id
+        assert blob["org_id"] == user.org_id
 
     async def test_04_trigger_test_pipeline(self) -> None:
         """Trigger risk analysis via admin test-run endpoint."""
         token = await _login(self.client, SUPER_EMAIL, SUPER_PASS)
+        user = await tenant_user(self.client, f"pipeline-{self.test_run_id}")
         resp = await self.client.post(
             f"{BASE_URL}/admin/test/run-pipeline",
             headers=_auth(token),
+            params={"tenant_id": user.tenant_id, "org_id": user.org_id},
         )
         assert resp.status_code in (200, 202), resp.text
 
