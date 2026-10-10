@@ -29,4 +29,7 @@ async def signup(
         tenant_slug=body.tenant_slug,
         full_name=body.full_name,
     )
+    # Committed before the response: the session dependency commits only after the
+    # response is sent, and the caller's next request must see the new row.
+    await db.commit()
     return SignupResponse(**result)
