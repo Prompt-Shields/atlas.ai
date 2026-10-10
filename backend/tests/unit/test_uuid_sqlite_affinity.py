@@ -11,7 +11,8 @@ integer ``10``. Reading it back then runs ``uuid.UUID(10)`` and explodes with
 Our deterministic test fixtures (TEST_TENANT_ID, SUPER_ADMIN_ID, …) are exactly
 such all-digit UUIDs, so this broke every test that reads a created row back.
 conftest forces UUID columns to ``CHAR(32)`` (TEXT affinity) on SQLite to fix
-it. Production uses native Postgres UUID and was never affected.
+it. Production uses native Postgres UUID and was never affected; on Postgres
+this checks that the column is native ``uuid`` and the round trip holds.
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ import pytest
 from sqlalchemy import text
 
 from app.models.use_case import UseCase
-from tests.conftest import TestSessionLocal
+from tests.conftest import TEST_DATABASE_URL, TestSessionLocal, ensure_tenant
 
 # A UUID whose hex form is entirely decimal digits — the shape that triggers
 # SQLite NUMERIC-affinity coercion.
@@ -34,6 +35,7 @@ async def test_all_digit_uuid_round_trips_without_int_coercion() -> None:
     assert ALL_DIGIT_UUID.hex == "00000000000000000000000000000010"
 
     async with TestSessionLocal() as session:
+        await ensure_tenant(session, ALL_DIGIT_UUID)
         record = UseCase(
             id=ALL_DIGIT_UUID,
             tenant_id=ALL_DIGIT_UUID,
@@ -46,11 +48,17 @@ async def test_all_digit_uuid_round_trips_without_int_coercion() -> None:
         session.add(record)
         await session.commit()
 
-        # Stored as TEXT, not coerced to an integer.
-        stored_type = (
-            await session.execute(text("SELECT typeof(tenant_id) FROM use_cases"))
-        ).scalar_one()
-        assert stored_type == "text"
+        if TEST_DATABASE_URL.startswith("sqlite"):
+            # Stored as TEXT, not coerced to an integer.
+            stored_type = (
+                await session.execute(text("SELECT typeof(tenant_id) FROM use_cases"))
+            ).scalar_one()
+            assert stored_type == "text"
+        else:
+            stored_type = (
+                await session.execute(text("SELECT pg_typeof(tenant_id)::text FROM grc.use_cases"))
+            ).scalar_one()
+            assert stored_type == "uuid"
 
         # Re-reading the row must not raise and must give back a real UUID.
         await session.refresh(record)

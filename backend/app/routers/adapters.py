@@ -49,7 +49,7 @@ async def manual_ingest(
         metadata=body.metadata,
     )
 
-    return [
+    blobs = [
         BlobResponse(
             id=str(r.id),
             tenant_id=str(r.tenant_id),
@@ -67,6 +67,10 @@ async def manual_ingest(
         )
         for r in records
     ]
+    # Committed before the response: the session dependency commits only after the
+    # response is sent, and the caller's next request must see the new blobs.
+    await db.commit()
+    return blobs
 
 
 @router.post("/{adapter_name}/ingest", response_model=list[BlobResponse], status_code=201)

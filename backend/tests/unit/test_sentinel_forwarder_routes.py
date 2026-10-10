@@ -29,7 +29,6 @@ from tests.conftest import (
     TEST_TENANT_ID,
     TestSessionLocal,
     auth_header,
-    ensure_tenant,
 )
 
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
@@ -63,9 +62,9 @@ def _encryption_key(monkeypatch: pytest.MonkeyPatch):
 
 
 @pytest_asyncio.fixture
-async def tenant(setup_database) -> None:
-    async with TestSessionLocal() as session:
-        await ensure_tenant(session, TEST_TENANT_ID, name="Test Tenant")
+async def tenant(seeded_principals) -> None:  # noqa: ARG001
+    """The test tenant and the users the tokens name, committed: `connect` records the
+    caller in `integrations.connected_by_user_id`, a FK Postgres checks."""
 
 
 async def stored_integration() -> Integration | None:

@@ -45,6 +45,7 @@ const navigation = [
   { key: 'aiSpend', href: '/dashboard/ai-spend', icon: '💵' },
   { key: 'developer', href: '/dashboard/developer', icon: '🛠️' },
   { key: 'promptActivity', href: '/dashboard/prompt-activity', icon: '💬' },
+  { key: 'pilotReport', href: '/dashboard/pilot-report', icon: '🧪' },
   { key: 'admin', href: '/dashboard/admin', icon: '🔧', roles: ['SUPER_ADMIN'] },
 ];
 

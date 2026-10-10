@@ -65,6 +65,9 @@ async def create_user(
         resource_id=str(new_user.id),
         correlation_id=getattr(request.state, "correlation_id", None),
     )
+    # Committed before the response: the session dependency commits only after the
+    # response is sent, and the caller's next request must see the new row.
+    await db.commit()
 
     result = await db.execute(
         select(User).where(User.id == new_user.id).options(selectinload(User.roles))

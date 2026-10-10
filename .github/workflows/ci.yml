@@ -167,7 +167,7 @@ jobs:
           DATABASE_URL: postgresql+asyncpg://aigrc:testpassword@localhost:5433/aigrc_test
           JWT_SECRET_KEY: test_jwt_secret_e2e
           APP_ENV: testing
-          SUPER_ADMIN_EMAIL: admin@test.local
+          SUPER_ADMIN_EMAIL: admin@example.com
           SUPER_ADMIN_PASSWORD: TestAdmin_P@ss1
         run: pytest tests/e2e/ -v -m "e2e"
 
