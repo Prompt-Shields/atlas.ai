@@ -279,3 +279,29 @@ class BudgetUpsert(BaseModel):
     warn_threshold_percent: Decimal = Field(default=DEFAULT_WARN_THRESHOLD_PERCENT, gt=0, le=100)
 
     alerts_enabled: bool = True
+
+
+class AnomalyPayload(BaseModel):
+    """A detected spend spike, with the comparison that produced it.
+
+    `baseline_usd` and `baseline_days` ship alongside the ratio rather than
+    being left server-side: "5x normal" invites the question "normal compared
+    with what?", and an alert or a card that cannot answer it reads as noise.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    provider: CostProvider | None
+    usage_date: date
+    observed_usd: Decimal
+    baseline_usd: Decimal
+    ratio: Decimal
+
+    # How many days the median was taken over. A ratio from 21 days and one
+    # from the 7-day floor are not equally trustworthy; the reader sees which.
+    baseline_days: int
+
+    detected_at: datetime
+    acknowledged_at: datetime | None
+    acknowledged_by_user_id: uuid.UUID | None
