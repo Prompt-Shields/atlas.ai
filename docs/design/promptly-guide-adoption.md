@@ -52,7 +52,8 @@ POST /api/v1/guide/adoption
 - **Only compiled-in identifiers.** Each kind has its own pattern:
   - topic: `<pack>/<entry>`;
   - app: a well-known tool's name;
-  - completion: a walkthrough ending.
+  - completion: a walkthrough ending;
+  - friction: `<pack>/<entry>/finished`, or `<pack>/<entry>/step-N` with N from 1 to 10 (promptly-guide #85).
 
   Free text is refused, and so is any field beyond these three (`extra="forbid"`).
 - **Only offered kinds.** A category of a kind the tenant does not offer rejects the whole contribution. Guide only sends what was offered, so a client that sends anything else is suspect.
@@ -80,7 +81,7 @@ A figures request that names a person, a user, an email or a device is refused w
 | Section | From | Through |
 | --- | --- | --- |
 | AI tools in use | Guide's `app` figures | The gate above: teams of 10 or more, bands, no totals |
-| Where people get stuck | Guide's `completion` figures (walkthroughs finished, and where they stopped) and `topic` figures (what people needed help with) | The same gate |
+| Where people get stuck | Guide's `completion` figures (walkthroughs finished, and where they stopped), `topic` figures (what people needed help with) and `friction` figures (for a topic's walkthrough, finished or the step it stopped at) | The same gate |
 | Risky behaviour | Atlas's own prompt telemetry from the Prompt Shields clients (`grc.prompt_events`): violations by kind of personal data, by AI tool, and by what was done about them | Counts for the whole tenant. **A row is shown only if at least 10 devices contributed to it**; the report says how many rows were left out, but not which |
 
 - **Months covered:** Guide's figures are monthly, so the report covers the finished months since connection, at most three.
@@ -128,3 +129,10 @@ Atlas hosts a SCIM 2.0 endpoint at `/api/v1/scim/v2`. The customer's Entra ID pr
 - **Team is client-sent.** Guide takes it from the organisation's configuration profile, so a person on a Mac they administer could name another team. The minimum group size and bands blunt the effect, but they do not prevent it.
 - **The request itself reveals the caller to Atlas for its duration.** The token is verified and then dropped. The audit middleware does not cover `/api/v1/guide/`, so no client IP is logged against a contribution. Keep it that way, and keep request logs free of `Authorization` headers.
 - **Differencing across months** can narrow a band for a team that changed size. The same limit is documented in Guide's `docs/adoption-analytics.md`.
+
+## Friction in the organisation's own apps (promptly-guide #85)
+
+`friction` is a kind like the others: offered by the tenant, agreed to by each person, counted by team and month through the same gate. A category is a pack topic and where its walkthrough ended, either `finished` or the step it stopped at, capped at 10, for example `nordlys-expenses/new-claim/step-3`. The topic can be one of Guide's own packs or one the organisation wrote for its own apps, which is what makes it friction analytics for business apps: "a third of finance stopped at step 3 of a new expense claim".
+
+A figure is still a share of the people who opted in, in a team of ten or more, banded, with a category suppressed below ten people. The pilot report shows it as its own section, "Where people get stuck in a task". Ids are at most 130 characters, which is why `category_id` is 140.
+

@@ -103,6 +103,16 @@ function RiskTable({ title, rows, label }: { title: string; rows: GuideRiskRow[]
   );
 }
 
+/** "expenses/new-claim/step-3" -> "expenses/new-claim: stopped at step 3". */
+function frictionLabel(id: string): string {
+  const cut = id.lastIndexOf('/');
+  const topic = id.slice(0, cut);
+  const outcome = id.slice(cut + 1);
+  return outcome === 'finished'
+    ? `${topic}: finished`
+    : `${topic}: stopped at step ${outcome.replace('step-', '')}`;
+}
+
 function MonthCard({ month, minimum }: { month: GuidePilotMonth; minimum: number }) {
   const left = Object.values(month.suppressed_categories).reduce((a, b) => a + b, 0);
   return (
@@ -131,6 +141,12 @@ function MonthCard({ month, minimum }: { month: GuidePilotMonth; minimum: number
         figures={month.topics}
         label={(f) => f.category_id}
         empty="No topic reached enough people to show."
+      />
+      <FigureTable
+        title="Where people get stuck in a task"
+        figures={month.friction ?? []}
+        label={(f) => frictionLabel(f.category_id)}
+        empty="No task reached enough people to show."
       />
       {(month.teams_too_small.length > 0 || left > 0) && (
         <p className="text-xs text-gray-500">

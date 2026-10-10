@@ -55,10 +55,16 @@ _PERIOD_RE = re.compile(r"^(\d{4})-(\d{2})$")
 #   topic       "<pack>/<entry>", lowercase ids        e.g. "chatgpt/model"
 #   app         a well-known AI tool's name            e.g. "Le Chat"
 #   completion  a walkthrough ending's raw value       e.g. "finished"
+#   friction    "<pack>/<entry>/" and where its walkthrough ended: "finished" or
+#               the step it stopped at, 1 to 10 (promptly-guide #85)
+#                                                     e.g. "expenses/new-claim/step-3"
 _CATEGORY_ID_RE = {
     "topic": re.compile(r"^[a-z0-9][a-z0-9-]{0,59}/[a-z0-9][a-z0-9-]{0,59}$"),
     "app": re.compile(r"^[A-Za-z0-9][A-Za-z0-9 .\-]{0,39}$"),
     "completion": re.compile(r"^[a-z][A-Za-z]{0,29}$"),
+    "friction": re.compile(
+        r"^[a-z0-9][a-z0-9-]{0,59}/[a-z0-9][a-z0-9-]{0,59}/(finished|step-([1-9]|10))$"
+    ),
 }
 
 

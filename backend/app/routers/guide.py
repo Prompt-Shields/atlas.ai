@@ -450,6 +450,7 @@ async def pilot_report(
                 finished=[_figure_out(f) for f in m.finished],
                 not_finished=[_figure_out(f) for f in m.not_finished],
                 topics=[_figure_out(f) for f in m.topics],
+                friction=[_figure_out(f) for f in m.friction],
                 teams_too_small=m.teams_too_small,
                 suppressed_categories=m.suppressed_categories,
             )

@@ -81,6 +81,9 @@ class MonthSection:
     finished: list[adoption.Figure]
     not_finished: list[adoption.Figure]
     topics: list[adoption.Figure]
+    # Where a topic's walkthrough ended (promptly-guide #85): the friction in the
+    # organisation's own apps, by team.
+    friction: list[adoption.Figure]
     teams_too_small: list[str]
     suppressed_categories: dict[str, int]
 
@@ -194,6 +197,7 @@ def month_section(tallies: list[adoption.Tally], period: str, offered: set[str])
         finished=[f for f in endings if f.category_id == "finished"],
         not_finished=[f for f in endings if f.category_id != "finished"],
         topics=[f for f in report.figures if f.category_kind == "topic"],
+        friction=[f for f in report.figures if f.category_kind == "friction"],
         teams_too_small=report.teams_too_small,
         suppressed_categories=report.suppressed_categories,
     )
@@ -250,6 +254,14 @@ _ENDINGS = {
 }
 
 
+def friction_label(category_id: str) -> str:
+    """ "expenses/new-claim/step-3" -> "expenses/new-claim: stopped at step 3"."""
+    topic, _, outcome = category_id.rpartition("/")
+    if outcome == "finished":
+        return f"{topic}: finished"
+    return f"{topic}: stopped at step {outcome.removeprefix('step-')}"
+
+
 def markdown(report: PilotReport, organisation: str) -> str:
     lines = [
         f"# Promptly Guide pilot report: {organisation}",
@@ -272,7 +284,15 @@ def markdown(report: PilotReport, organisation: str) -> str:
             lambda f: _ENDINGS.get(f.category_id, f.category_id),
         )
         _figures(lines, "What people asked Guide about", month.topics, lambda f: f.category_id)
-        if not (month.tools or month.finished or month.not_finished or month.topics):
+        _figures(
+            lines,
+            "Where people get stuck in a task",
+            month.friction,
+            lambda f: friction_label(f.category_id),
+        )
+        if not (
+            month.tools or month.finished or month.not_finished or month.topics or month.friction
+        ):
             lines += ["", "Not enough people for any figure this month."]
         if month.teams_too_small:
             lines += [

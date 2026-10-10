@@ -109,7 +109,7 @@ def upgrade() -> None:
         sa.Column("period", sa.String(7), nullable=False),
         sa.Column("team", sa.String(100), nullable=False),
         sa.Column("category_kind", sa.String(20), nullable=False),
-        sa.Column("category_id", sa.String(120), nullable=False),
+        sa.Column("category_id", sa.String(140), nullable=False),
         sa.Column("people", sa.Integer(), nullable=False),
         sa.UniqueConstraint(
             "tenant_id",

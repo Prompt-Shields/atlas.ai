@@ -29,6 +29,8 @@ export interface GuidePilotMonth {
   finished: GuideFigure[];
   not_finished: GuideFigure[];
   topics: GuideFigure[];
+  /** Where a topic's walkthrough ended (promptly-guide #85). */
+  friction: GuideFigure[];
   teams_too_small: string[];
   suppressed_categories: Record<string, number>;
 }

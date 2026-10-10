@@ -48,7 +48,10 @@ def _last_month(now: datetime) -> str:
 
 
 async def _connect(
-    days_ago: int, tenant_id: uuid.UUID = TEST_TENANT_ID, project: str = "p"
+    days_ago: int,
+    tenant_id: uuid.UUID = TEST_TENANT_ID,
+    project: str = "p",
+    kinds: tuple[str, ...] = ("app", "completion", "topic"),
 ) -> None:
     async with TestSessionLocal() as s:
         await ensure_tenant(s, tenant_id, name="Nordlys")
@@ -57,7 +60,7 @@ async def _connect(
                 tenant_id=tenant_id,
                 firebase_project_id=project,
                 firebase_tenant_id="",
-                offered_kinds=["app", "completion", "topic"],
+                offered_kinds=list(kinds),
                 created_at=datetime.now(UTC) - timedelta(days=days_ago),
             )
         )
@@ -152,6 +155,50 @@ async def test_guides_sections_are_its_gated_figures(client: AsyncClient) -> Non
     assert [f["category_id"] for f in month["topics"]] == ["chatgpt/model"]
     assert month["teams_too_small"] == ["legal"]
     assert month["suppressed_categories"] == {"sales": 1}
+
+
+async def test_where_people_get_stuck_in_a_task_is_its_own_section(client: AsyncClient) -> None:
+    # promptly-guide #85: where a topic's walkthrough ended, through the same gate.
+    await _connect(days_ago=40, kinds=("completion", "friction"))
+    period = _last_month(datetime.now(UTC))
+    await _team(
+        period,
+        "finance",
+        20,
+        {
+            ("friction", "nordlys-expenses/new-claim/step-3"): 11,
+            ("friction", "nordlys-expenses/new-claim/finished"): 4,  # too few: suppressed
+        },
+    )
+    r = await client.get("/api/v1/guide/pilot-report", headers=_admin())
+    assert r.status_code == 200, r.text
+    month = next(m for m in r.json()["months"] if m["period"] == period)
+    assert [(f["team"], f["category_id"], f["band"]) for f in month["friction"]] == [
+        ("finance", "nordlys-expenses/new-claim/step-3", "50\u201359%")
+    ]
+    assert month["suppressed_categories"] == {"finance": 1}
+
+    r = await client.get(
+        "/api/v1/guide/pilot-report", params={"format": "markdown"}, headers=_admin()
+    )
+    assert "Where people get stuck in a task" in r.text
+    assert "nordlys-expenses/new-claim: stopped at step 3" in r.text
+
+
+async def test_friction_is_not_shown_when_the_organisation_does_not_count_it(
+    client: AsyncClient,
+) -> None:
+    await _connect(days_ago=40)
+    period = _last_month(datetime.now(UTC))
+    await _team(period, "finance", 20, {("friction", "nordlys-expenses/new-claim/step-3"): 15})
+    r = await client.get("/api/v1/guide/pilot-report", headers=_admin())
+    month = next(m for m in r.json()["months"] if m["period"] == period)
+    assert month["friction"] == []
+
+
+async def test_a_friction_label_says_finished_or_the_step() -> None:
+    assert pilot.friction_label("a/b/finished") == "a/b: finished"
+    assert pilot.friction_label("a/b/step-10") == "a/b: stopped at step 10"
 
 
 async def test_risk_rows_from_too_few_devices_are_left_out(client: AsyncClient) -> None:

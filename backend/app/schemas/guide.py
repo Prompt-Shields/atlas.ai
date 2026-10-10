@@ -4,7 +4,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-AdoptionKind = Literal["topic", "app", "completion"]
+AdoptionKind = Literal["topic", "app", "completion", "friction"]
 
 
 class GuideConnectionIn(BaseModel):
@@ -32,7 +32,7 @@ class GuideOfferOut(BaseModel):
 class GuideReachedIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     kind: str = Field(..., max_length=20)
-    id: str = Field(..., max_length=120)
+    id: str = Field(..., max_length=140)
 
 
 class GuidePeriodIn(BaseModel):
@@ -97,6 +97,7 @@ class GuidePilotMonthOut(BaseModel):
     finished: list[GuideFigureOut]
     not_finished: list[GuideFigureOut]
     topics: list[GuideFigureOut]
+    friction: list[GuideFigureOut]
     teams_too_small: list[str]
     suppressed_categories: dict[str, int]
 

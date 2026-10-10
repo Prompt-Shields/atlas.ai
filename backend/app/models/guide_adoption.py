@@ -34,7 +34,7 @@ from app.database import Base
 from app.models.base import GRCBase, TenantScopedMixin, UUIDPrimaryKeyMixin
 
 # The three things Guide's adoption figures may be about (Guide's `AdoptionKind`).
-ADOPTION_KINDS = ("topic", "app", "completion")
+ADOPTION_KINDS = ("topic", "app", "completion", "friction")
 
 
 class GuideConnection(GRCBase, TenantScopedMixin):
@@ -100,7 +100,7 @@ class GuideAdoptionCount(_Untimed):
     period: Mapped[str] = mapped_column(String(7), nullable=False)
     team: Mapped[str] = mapped_column(String(100), nullable=False)
     category_kind: Mapped[str] = mapped_column(String(20), nullable=False)
-    category_id: Mapped[str] = mapped_column(String(120), nullable=False)
+    category_id: Mapped[str] = mapped_column(String(140), nullable=False)
     people: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
 

@@ -144,3 +144,52 @@ def test_the_receipt_is_per_person_per_month_and_keyed() -> None:
     assert a != svc.receipt("secret-two", tenant, "uid-1", "2026-09")
     assert "uid-1" not in a
     assert len(a) == 64
+
+
+# ── Friction (promptly-guide #85) ─────────────────────────────────────────
+
+FRICTION = {"friction"}
+
+
+@pytest.mark.parametrize(
+    "category_id",
+    [
+        "nordlys-expenses/new-claim/finished",
+        "nordlys-expenses/new-claim/step-1",
+        "nordlys-expenses/new-claim/step-10",
+        f"{'a' * 60}/{'b' * 60}/finished",
+    ],
+)
+def test_friction_is_a_topic_and_where_its_walkthrough_ended(category_id: str) -> None:
+    c = svc.validate_contribution(
+        "finance", "2026-09", [("friction", category_id)], FRICTION, OCTOBER
+    )
+    assert c.categories == frozenset({("friction", category_id)})
+
+
+@pytest.mark.parametrize(
+    "category_id",
+    [
+        "nordlys-expenses/new-claim",
+        "nordlys-expenses/new-claim/step-0",
+        "nordlys-expenses/new-claim/step-11",
+        "nordlys-expenses/new-claim/step-03",
+        "nordlys-expenses/new-claim/stopped",
+        "nordlys-expenses/new-claim/finished/again",
+        "Nordlys/new-claim/finished",
+        "how do I quit/my job/finished",
+    ],
+)
+def test_friction_that_is_not_that_shape_is_refused(category_id: str) -> None:
+    with pytest.raises(ContributionRejected):
+        svc.validate_contribution(
+            "finance", "2026-09", [("friction", category_id)], FRICTION, OCTOBER
+        )
+
+
+def test_friction_goes_through_the_same_gate() -> None:
+    stopped = ("friction", "nordlys-expenses/new-claim/step-3")
+    finished = ("friction", "nordlys-expenses/new-claim/finished")
+    report = svc.gate([Tally("finance", 30, {stopped: 12, finished: 9})], "2026-09", FRICTION)
+    assert [(f.category_kind, f.category_id) for f in report.figures] == [stopped]
+    assert report.suppressed_categories == {"finance": 1}
