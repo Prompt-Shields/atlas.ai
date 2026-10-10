@@ -53,7 +53,7 @@ services:
       BACKEND_CORS_ORIGINS: "*"
       OTEL_SERVICE_NAME: aigrc-test
       RESEARCH_ALL_DATA: "false"
-      SUPER_ADMIN_EMAIL: admin@test.local
+      SUPER_ADMIN_EMAIL: admin@example.com
       SUPER_ADMIN_PASSWORD: TestAdmin_P@ss1
     depends_on:
       postgres:
