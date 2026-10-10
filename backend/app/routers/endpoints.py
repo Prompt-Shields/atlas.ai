@@ -31,13 +31,13 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Literal
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Query
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import AuthUser
-from app.database import get_db_session
+from app.database import DB_SESSION
 from app.models.extension_heartbeat import ExtensionDeviceHeartbeat
 from app.models.integration import (
     Integration,
@@ -153,7 +153,7 @@ def _is_extension_installed(
 @router.get("/compliance", response_model=EndpointComplianceResponse)
 async def list_compliance(
     user: AuthUser,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> EndpointComplianceResponse:
     """Per-MDM aggregates for the caller's tenant.
 
@@ -253,7 +253,7 @@ async def list_devices(
     ),
     page: int = Query(1, ge=1),
     page_size: int = Query(100, ge=1, le=500),
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> EndpointDevicesResponse:
     """Per-MDM device detail list for the dashboard's drill-down table."""
 

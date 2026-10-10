@@ -16,14 +16,14 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, Path, status
+from fastapi import APIRouter, Path, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import OrgAdmin
-from app.database import get_db_session
+from app.database import DB_SESSION
 from app.errors import ConflictError, ForbiddenError, NotFoundError
 from app.models.drift_signal import (
     TenantDriftSignal,
@@ -93,7 +93,7 @@ def _serialise(row: TenantDriftSignal) -> DriftSignalResponse:
 @router.get("", response_model=DriftSignalListResponse)
 async def list_signals(
     user: OrgAdmin,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> DriftSignalListResponse:
     if user.tenant_id is None:
         raise ForbiddenError("User has no tenant.")
@@ -122,7 +122,7 @@ async def list_signals(
 async def create_signal(
     payload: DriftSignalCreate,
     user: OrgAdmin,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> DriftSignalResponse:
     if user.tenant_id is None:
         raise ForbiddenError("User has no tenant.")
@@ -154,7 +154,7 @@ async def update_signal(
     payload: DriftSignalUpdate,
     user: OrgAdmin,
     signal_id: uuid.UUID = Path(...),
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> DriftSignalResponse:
     row = await _load(db, signal_id, user.tenant_id)
 
@@ -178,7 +178,7 @@ async def update_signal(
 async def delete_signal(
     user: OrgAdmin,
     signal_id: uuid.UUID = Path(...),
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> None:
     row = await _load(db, signal_id, user.tenant_id)
     await db.delete(row)

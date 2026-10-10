@@ -6,7 +6,7 @@ import secrets
 import uuid
 
 import httpx
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Request
 from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,7 +15,7 @@ from app.auth.dependencies import AuthUser, TenantAdmin
 from app.auth.rate_limit import check_login_rate_limit
 from app.auth.token_store import consume_sso_code, revoke_all_for_user, store_sso_code
 from app.config import get_settings
-from app.database import get_db_session
+from app.database import DB_SESSION
 from app.errors import AppException, UnauthorizedError
 from app.models.user import APIKey
 from app.schemas.auth import (
@@ -39,7 +39,7 @@ router = APIRouter(prefix="/auth", tags=["Auth"])
 async def login(
     body: LoginRequest,
     request: Request,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> TokenResponse:
     """Authenticate and return a token pair. Rate limited per IP and email."""
     await check_login_rate_limit(request, body.email)
@@ -62,7 +62,7 @@ async def login(
 async def refresh(
     body: RefreshRequest,
     request: Request,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> TokenResponse:
     """Rotate token pair using a valid refresh token.
 
@@ -82,7 +82,7 @@ async def refresh(
 async def logout(
     request: Request,
     user: AuthUser,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> None:
     """Revoke all refresh tokens for the current user (logout everywhere)."""
     await revoke_all_for_user(user.user_id)
@@ -103,7 +103,7 @@ async def change_password(
     body: PasswordChangeRequest,
     request: Request,
     user: AuthUser,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> None:
     """Change the current user's password. Revokes all sessions afterwards."""
     from app.auth.passwords import hash_password, verify_password
@@ -147,7 +147,7 @@ async def create_api_key(
     body: APIKeyCreateRequest,
     request: Request,
     user: TenantAdmin,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> APIKeyCreateResponse:
     """Create an API key scoped to the user's tenant."""
     raw_key, api_key = await auth_service.create_api_key_for_user(
@@ -183,7 +183,7 @@ async def create_api_key(
 @router.get("/api-keys", response_model=list[APIKeyResponse])
 async def list_api_keys(
     user: AuthUser,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> list[APIKeyResponse]:
     """List the current user's API keys (secrets are never returned)."""
     result = await db.execute(
@@ -208,7 +208,7 @@ async def revoke_api_key(
     key_id: str,
     request: Request,
     user: AuthUser,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> None:
     """Revoke (deactivate) an API key. Only the owner or a super admin can revoke."""
     kid = uuid.UUID(key_id)
@@ -288,7 +288,7 @@ async def sso_microsoft_callback(
     code: str,
     state: str,
     request: Request,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> RedirectResponse:
     """Complete SSO login, then hand off to the SPA via a one-time code.
 

@@ -8,11 +8,11 @@ import secrets
 import uuid
 from dataclasses import dataclass
 
-from fastapi import Depends, Header
+from fastapi import Header
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database import get_db_session, set_tenant_guc
+from app.database import DB_SESSION, set_tenant_guc
 from app.errors import UnauthorizedError
 from app.models.enrolled_device import EnrolledDevice
 
@@ -37,7 +37,7 @@ class DeviceContext:
 
 
 async def require_device_token(
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
     x_device_token: str | None = Header(None),
 ) -> DeviceContext:
     """Resolve the calling device from its bound token via the SECURITY DEFINER

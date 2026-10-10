@@ -16,11 +16,11 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import AuthUser, OrgAdmin
-from app.database import get_db_session
+from app.database import DB_SESSION
 from app.errors import ForbiddenError, NotFoundError
 from app.schemas.mcp_discovery import (
     DiscoveredMcpServerResponse,
@@ -42,7 +42,7 @@ def _tenant_scope(user: AuthUser) -> uuid.UUID | None:
 @router.get("", response_model=McpDiscoveryListResponse)
 async def list_mcp_servers(
     user: AuthUser,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> McpDiscoveryListResponse:
     """List the tenant's discovered MCP servers, highest-confidence first."""
     return await mcp_discovery_service.list_servers(db, _tenant_scope(user))
@@ -51,7 +51,7 @@ async def list_mcp_servers(
 @router.post("/scan", response_model=McpDiscoveryScanResponse)
 async def scan_mcp_servers(
     user: OrgAdmin,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> McpDiscoveryScanResponse:
     """Run every collector; correlate + score; upsert by canonical name+host."""
     if user.tenant_id is None:
@@ -63,7 +63,7 @@ async def scan_mcp_servers(
 async def promote_mcp_server(
     server_id: uuid.UUID,
     user: OrgAdmin,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> McpServerPromoteResponse:
     """Create an AI-inventory asset for a discovered MCP server."""
     if user.tenant_id is None or user.org_id is None:
@@ -79,7 +79,7 @@ async def update_mcp_server_status(
     server_id: uuid.UUID,
     payload: McpServerStatusUpdate,
     user: OrgAdmin,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> DiscoveredMcpServerResponse:
     """Dismiss (or reset) a discovered MCP server."""
     server = await mcp_discovery_service.update_status(db, _tenant_scope(user), server_id, payload)
