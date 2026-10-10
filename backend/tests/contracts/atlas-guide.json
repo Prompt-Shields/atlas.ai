@@ -1,0 +1,125 @@
+{
+  "about": [
+    "What Promptly Guide sends to Atlas.AI and what it reads back, as both sides test it.",
+    "The canonical copy is promptly-guide's contracts/atlas-guide.json. atlas.ai keeps an identical copy at backend/tests/contracts/atlas-guide.json; Scripts/check-atlas-contract.py compares the two.",
+    "Guide's side (Tests/GuideAdoptionTests/AtlasContractTests.swift): each request is exactly what Guide builds, and each response reads as guide_reads.",
+    "Atlas's side (backend/tests/unit/test_guide_contract.py): with what given describes set up, each request gets a response with the status, and a body that holds the one here (objects may have more keys, lists are exact).",
+    "Atlas takes only the last finished month, so its side replaces the request's period with that month."
+  ],
+  "version": 1,
+  "interactions": [
+    {
+      "name": "the offer",
+      "given": {"offered_kinds": ["topic", "app", "completion", "friction"]},
+      "request": {"method": "GET", "path": "api/v1/guide/offer"},
+      "response": {
+        "status": 200,
+        "body": {"offered_kinds": ["topic", "app", "completion", "friction"], "minimum_group_size": 10}
+      },
+      "guide_reads": ["app", "completion", "friction", "topic"]
+    },
+    {
+      "name": "an organisation that has not connected Guide",
+      "given": {"connected": false},
+      "request": {"method": "GET", "path": "api/v1/guide/offer"},
+      "response": {"status": 401},
+      "guide_reads": null
+    },
+    {
+      "name": "a month's contribution, counted",
+      "given": {"offered_kinds": ["topic", "app", "completion", "friction"]},
+      "request": {
+        "method": "POST",
+        "path": "api/v1/guide/adoption",
+        "body": {
+          "team": "Sales",
+          "period": {"year": 2026, "month": 9},
+          "reached": [
+            {"kind": "app", "id": "Claude"},
+            {"kind": "completion", "id": "finished"},
+            {"kind": "friction", "id": "nordlys-expenses/new-claim/step-3"},
+            {"kind": "topic", "id": "chatgpt/model"}
+          ]
+        }
+      },
+      "response": {"status": 200, "body": {"counted": true}},
+      "guide_reads": "counted"
+    },
+    {
+      "name": "the same month again",
+      "given": {"offered_kinds": ["topic", "app", "completion", "friction"], "already_counted": true},
+      "request": {
+        "method": "POST",
+        "path": "api/v1/guide/adoption",
+        "body": {
+          "team": "Sales",
+          "period": {"year": 2026, "month": 9},
+          "reached": [
+            {"kind": "app", "id": "Claude"},
+            {"kind": "completion", "id": "finished"},
+            {"kind": "friction", "id": "nordlys-expenses/new-claim/step-3"},
+            {"kind": "topic", "id": "chatgpt/model"}
+          ]
+        }
+      },
+      "response": {"status": 200, "body": {"counted": false}},
+      "guide_reads": "alreadyCounted"
+    },
+    {
+      "name": "a kind the organisation no longer offers",
+      "given": {"offered_kinds": ["completion"]},
+      "request": {
+        "method": "POST",
+        "path": "api/v1/guide/adoption",
+        "body": {
+          "team": "Sales",
+          "period": {"year": 2026, "month": 9},
+          "reached": [
+            {"kind": "app", "id": "Claude"},
+            {"kind": "completion", "id": "finished"},
+            {"kind": "friction", "id": "nordlys-expenses/new-claim/step-3"},
+            {"kind": "topic", "id": "chatgpt/model"}
+          ]
+        }
+      },
+      "response": {"status": 422, "body": {"error": {"code": "CONTRIBUTION_REJECTED"}}},
+      "guide_reads": "refused"
+    },
+    {
+      "name": "the approved tools",
+      "given": {
+        "offered_kinds": ["app"],
+        "use_cases": [
+          {"tool": "Microsoft Copilot", "status": "active", "data_classes": ["customer_pii"]},
+          {"tool": "Gemini", "status": "active", "data_classes": []},
+          {"tool": "ChatGPT", "status": "draft", "data_classes": []}
+        ]
+      },
+      "request": {"method": "GET", "path": "api/v1/guide/approved-tools"},
+      "response": {
+        "status": 200,
+        "body": {
+          "tools": [
+            {"name": "Gemini", "data_classes": []},
+            {"name": "Microsoft Copilot", "data_classes": ["customer data"]}
+          ]
+        }
+      },
+      "guide_reads": [
+        {"name": "Gemini", "data_classes": []},
+        {"name": "Microsoft Copilot", "data_classes": ["customer data"]}
+      ]
+    },
+    {
+      "name": "the person's directory groups",
+      "given": {
+        "offered_kinds": ["app"],
+        "email": "kari@nordlys.example",
+        "scim_groups": {"Sales": ["kari@nordlys.example"], "Finance": ["kari@nordlys.example"], "Legal": []}
+      },
+      "request": {"method": "GET", "path": "api/v1/guide/groups"},
+      "response": {"status": 200, "body": {"groups": ["Finance", "Sales"]}},
+      "guide_reads": ["Finance", "Sales"]
+    }
+  ]
+}
