@@ -14,7 +14,7 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import bearer_scheme
-from app.database import get_db_session, set_tenant_guc
+from app.database import DB_SESSION, set_tenant_guc
 from app.errors import UnauthorizedError
 from app.models.guide_scim import GuideScimToken
 
@@ -34,7 +34,7 @@ def hash_scim_token(token: str) -> str:
 
 async def require_scim_tenant(
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> uuid.UUID:
     """The tenant whose identity provider is calling. Sets the tenant GUC."""
     if credentials is None or not credentials.credentials.startswith(_PREFIX):

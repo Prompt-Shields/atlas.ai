@@ -37,7 +37,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.scim_token import require_scim_tenant
-from app.database import get_db_session
+from app.database import DB_SESSION
 from app.models.guide_scim import GuideScimGroup, GuideScimMember, GuideScimUser
 
 router = APIRouter(prefix="/scim/v2", tags=["SCIM"])
@@ -171,7 +171,7 @@ def _apply_user(user: GuideScimUser, values: dict[str, Any]) -> None:
 @router.get("/Users")
 async def list_users(
     tenant_id: uuid.UUID = Depends(require_scim_tenant),
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
     filter: str | None = Query(None),  # noqa: A002 — SCIM's parameter name
     startIndex: int = Query(1, ge=1),  # noqa: N803
     count: int = Query(100, ge=0),
@@ -216,7 +216,7 @@ async def list_users(
 async def create_user(
     payload: dict[str, Any] = Body(...),
     tenant_id: uuid.UUID = Depends(require_scim_tenant),
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> Response:
     try:
         user = GuideScimUser(tenant_id=tenant_id, active=True)
@@ -237,7 +237,7 @@ async def create_user(
 async def get_user(
     user_id: str,
     tenant_id: uuid.UUID = Depends(require_scim_tenant),
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> Response:
     try:
         return _scim(_user_json(await _user(db, tenant_id, user_id)))
@@ -250,7 +250,7 @@ async def replace_user(
     user_id: str,
     payload: dict[str, Any] = Body(...),
     tenant_id: uuid.UUID = Depends(require_scim_tenant),
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> Response:
     try:
         user = await _user(db, tenant_id, user_id)
@@ -274,7 +274,7 @@ async def patch_user(
     user_id: str,
     payload: dict[str, Any] = Body(...),
     tenant_id: uuid.UUID = Depends(require_scim_tenant),
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> Response:
     try:
         user = await _user(db, tenant_id, user_id)
@@ -303,7 +303,7 @@ async def patch_user(
 async def delete_user(
     user_id: str,
     tenant_id: uuid.UUID = Depends(require_scim_tenant),
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> Response:
     try:
         user = await _user(db, tenant_id, user_id)
@@ -411,7 +411,7 @@ async def _display_name_taken(
 async def list_groups(
     request: Request,
     tenant_id: uuid.UUID = Depends(require_scim_tenant),
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
     filter: str | None = Query(None),  # noqa: A002
     startIndex: int = Query(1, ge=1),  # noqa: N803
     count: int = Query(100, ge=0),
@@ -457,7 +457,7 @@ async def list_groups(
 async def create_group(
     payload: dict[str, Any] = Body(...),
     tenant_id: uuid.UUID = Depends(require_scim_tenant),
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> Response:
     try:
         name = _text(payload.get("displayName"), "displayName", 255)
@@ -486,7 +486,7 @@ async def get_group(
     group_id: str,
     request: Request,
     tenant_id: uuid.UUID = Depends(require_scim_tenant),
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> Response:
     excluded = (request.query_params.get("excludedAttributes") or "").lower()
     try:
@@ -501,7 +501,7 @@ async def patch_group(
     group_id: str,
     payload: dict[str, Any] = Body(...),
     tenant_id: uuid.UUID = Depends(require_scim_tenant),
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> Response:
     try:
         group = await _group(db, tenant_id, group_id)
@@ -546,7 +546,7 @@ async def patch_group(
 async def delete_group(
     group_id: str,
     tenant_id: uuid.UUID = Depends(require_scim_tenant),
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> Response:
     try:
         group = await _group(db, tenant_id, group_id)

@@ -51,7 +51,7 @@ from app.auth.firebase_token import (
 )
 from app.auth.scim_token import generate_scim_token
 from app.config import get_settings
-from app.database import get_db_session, set_tenant_guc
+from app.database import DB_SESSION, set_tenant_guc
 from app.errors import AppException, ConflictError, ForbiddenError, NotFoundError, UnauthorizedError
 from app.models.guide_adoption import ADOPTION_KINDS, GuideConnection
 from app.models.guide_scim import GuideScimGroup, GuideScimMember, GuideScimToken, GuideScimUser
@@ -136,7 +136,7 @@ async def _connection_for(
 
 async def require_guide_caller(
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
     verifier: FirebaseTokenVerifier = Depends(get_firebase_verifier),
 ) -> GuideCaller:
     if credentials is None:
@@ -221,7 +221,7 @@ def approved_tools(use_cases: list[tuple[str, str | None]]) -> list[GuideApprove
 @router.get("/approved-tools", response_model=GuideApprovedToolsOut)
 async def guide_approved_tools(
     caller: GuideCaller = Depends(require_guide_caller),
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> GuideApprovedToolsOut:
     """The organisation's sanctioned AI tools, from its AI use-case registry: every tool
     an ACTIVE use case names. Organisation configuration only -- tool names and data
@@ -242,7 +242,7 @@ async def guide_approved_tools(
 async def contribute(
     payload: GuideContributionIn,
     caller: GuideCaller = Depends(require_guide_caller),
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> GuideContributionOut:
     try:
         contribution = adoption.validate_contribution(
@@ -486,7 +486,7 @@ async def pilot_report(
 @router.get("/groups", response_model=GuideGroupsOut)
 async def guide_groups(
     caller: GuideCaller = Depends(require_guide_caller),
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> GuideGroupsOut:
     """The SCIM groups the signed-in person is in, by name, for group-based enablement:
     which of the organisation's documents Guide answers from. Found by the sign-in's
