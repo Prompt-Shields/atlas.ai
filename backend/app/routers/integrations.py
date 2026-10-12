@@ -24,14 +24,14 @@ from typing import Any
 
 import httpx
 import structlog
-from fastapi import APIRouter, Depends, Path, Query
+from fastapi import APIRouter, Path, Query
 from fastapi.responses import HTMLResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import AuthUser, OrgAdmin
 from app.config import get_settings
-from app.database import get_db_session
+from app.database import DB_SESSION
 from app.errors import ConflictError, ForbiddenError, NotFoundError, UnauthorizedError
 from app.models.integration import (
     Integration,
@@ -179,7 +179,7 @@ def _to_card(
 @router.get("", response_model=IntegrationListResponse)
 async def list_integrations(
     user: AuthUser,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> IntegrationListResponse:
     """List every provider + the caller's tenant's status.
 
@@ -222,7 +222,7 @@ async def list_integrations(
 async def get_integration(
     user: AuthUser,
     integration_id: uuid.UUID = Path(...),
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> IntegrationCard:
     record = (
         await db.execute(select(Integration).where(Integration.id == integration_id))
@@ -243,7 +243,7 @@ async def update_integration(
     payload: IntegrationUpdate,
     user: OrgAdmin,
     integration_id: uuid.UUID = Path(...),
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> IntegrationCard:
     record = (
         await db.execute(select(Integration).where(Integration.id == integration_id))
@@ -280,7 +280,7 @@ async def update_integration(
 async def disconnect_integration(
     user: OrgAdmin,
     integration_id: uuid.UUID = Path(...),
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> IntegrationDisconnectResponse:
     """Soft disconnect — flips status to DISABLED, clears tokens.
 
@@ -319,7 +319,7 @@ async def disconnect_integration(
 async def install_integration(
     user: OrgAdmin,
     provider: IntegrationProvider = Path(...),
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> InstallStartResponse:
     """Return the authorize URL for the given provider.
 
@@ -400,7 +400,7 @@ async def install_integration(
 async def microsoft_callback(
     code: str = Query(...),
     state: str = Query(...),
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> HTMLResponse:
     """Single callback for all Microsoft providers.
 

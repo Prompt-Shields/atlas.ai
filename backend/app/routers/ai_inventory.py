@@ -28,14 +28,14 @@ from __future__ import annotations
 import json
 import uuid
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, File, HTTPException, UploadFile, status
 from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import AuthUser, OrgAdmin
-from app.database import get_db_session
+from app.database import DB_SESSION
 from app.errors import ForbiddenError
 from app.models.use_case import UseCase
 from app.models.user import User
@@ -106,7 +106,7 @@ class ImportResponse(BaseModel):
 @router.get("/aggregate", response_model=InventoryAggregateResponse)
 async def get_inventory_aggregate(
     user: AuthUser,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> InventoryAggregateResponse:
     """Multi-dim aggregate of the AI use-case registry. Tenant-scoped."""
     tenant_id = None if user.is_super_admin() else user.tenant_id
@@ -151,7 +151,7 @@ async def get_import_template(user: AuthUser) -> Response:
 async def import_inventory_csv(
     user: OrgAdmin,
     file: UploadFile = File(..., description="CSV file matching the import template"),
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> ImportResponse:
     """Bulk-create use cases from a CSV upload.
 

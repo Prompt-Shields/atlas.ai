@@ -10,6 +10,7 @@ import uuid
 from datetime import UTC, datetime
 
 import pytest
+import pytest_asyncio
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
@@ -19,10 +20,18 @@ from app.models.directory import (
     DirectoryUser,
 )
 from app.services.microsoft_graph import normalise_member
-from tests.conftest import TestSessionLocal
+from tests.conftest import TestSessionLocal, ensure_integration
 
 TENANT = uuid.uuid4()
 INTEGRATION = uuid.uuid4()
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _integration(setup_database) -> None:  # noqa: ANN001, ARG001
+    """The tenant and integration the rows below hang off: Postgres checks both FKs."""
+    async with TestSessionLocal() as session:
+        await ensure_integration(session, TENANT, INTEGRATION)
+        await session.commit()
 
 
 def test_membership_table_and_constraint() -> None:

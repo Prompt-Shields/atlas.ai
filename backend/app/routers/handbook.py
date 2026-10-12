@@ -23,13 +23,13 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import AuthUser, OrgAdmin
-from app.database import get_db_session
+from app.database import DB_SESSION
 from app.errors import ForbiddenError
 from app.models.handbook import HandbookAcknowledgement, TenantHandbookOverride
 from app.models.user import User
@@ -106,7 +106,7 @@ class HandbookTenantStats(BaseModel):
 @router.get("/status", response_model=HandbookStatusResponse)
 async def get_handbook_status(
     user: AuthUser,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> HandbookStatusResponse:
     """Return whether the caller has acknowledged the current version."""
     effective_version = await resolve_handbook_version(db, user.tenant_id)
@@ -133,7 +133,7 @@ async def get_handbook_status(
 async def acknowledge_handbook(
     user: AuthUser,
     payload: HandbookAckRequest | None = None,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> HandbookAckResponse:
     """Idempotent — re-calling returns the existing row."""
     if user.tenant_id is None:
@@ -174,7 +174,7 @@ async def acknowledge_handbook(
 @router.get("/tenant-stats", response_model=HandbookTenantStats)
 async def get_tenant_stats(
     user: OrgAdmin,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> HandbookTenantStats:
     """OrgAdmin+ — return coverage for the caller's tenant."""
     if user.tenant_id is None:
@@ -256,7 +256,7 @@ class HandbookOverrideUpsert(BaseModel):
 @router.get("/content", response_model=HandbookContentResponse)
 async def get_handbook_content(
     user: AuthUser,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> HandbookContentResponse:
     """Return the tenant's handbook Markdown (or null if using stock)."""
     if user.tenant_id is None:
@@ -293,7 +293,7 @@ async def get_handbook_content(
 async def upsert_handbook_content(
     payload: HandbookOverrideUpsert,
     user: OrgAdmin,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> HandbookContentResponse:
     """OrgAdmin+ — upsert this tenant's handbook content + version.
 
@@ -337,7 +337,7 @@ async def upsert_handbook_content(
 @router.delete("/content", status_code=204)
 async def revert_to_stock_handbook(
     user: OrgAdmin,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> None:
     """OrgAdmin+ — drop the tenant override; frontend reverts to stock.
 

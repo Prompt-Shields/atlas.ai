@@ -20,7 +20,7 @@ from app.auth.dependencies import (
     require_api_key,
 )
 from app.config import get_settings
-from app.database import get_db_session, get_standalone_session, set_tenant_guc
+from app.database import DB_SESSION, get_standalone_session, set_tenant_guc
 from app.errors import AppException, NotFoundError
 from app.models.ai_cost_record import (
     AICostRecord,
@@ -436,7 +436,7 @@ async def cost_breakdown(
 async def ingest_self_hosted_usage(
     payload: SelfHostedUsageBatch,
     api_key_record: Annotated[APIKey, Depends(require_api_key)],
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> SelfHostedUsageIngestResponse:
     """Report token usage from a self-hosted AI app (cost-ledger slice 2).
 

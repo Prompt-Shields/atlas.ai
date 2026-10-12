@@ -326,6 +326,37 @@ async def ensure_tenant(
     return tenant
 
 
+async def ensure_integration(
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    integration_id: uuid.UUID,
+    *,
+    provider: str = "MICROSOFT_ENTRA_ID",
+) -> None:
+    """Insert the tenant and an `integrations` row with `integration_id`, unless present.
+
+    The directory tables (`directory_users`, `directory_groups`, ...) carry a FK to
+    `grc.integrations`, so a test that seeds them under an integration id it never
+    created passes on SQLite and fails on Postgres, like `ensure_tenant`'s case.
+    An integration is unique per (tenant, provider).
+    """
+    from app.models.integration import Integration, IntegrationProvider, IntegrationStatus
+
+    await ensure_tenant(session, tenant_id)
+    if await session.get(Integration, integration_id) is not None:
+        return
+    session.add(
+        Integration(
+            id=integration_id,
+            tenant_id=tenant_id,
+            provider=IntegrationProvider(provider),
+            status=IntegrationStatus.NOT_CONNECTED,
+            display_name=f"{provider} (test)",
+        )
+    )
+    await session.flush()
+
+
 # ---------------------------------------------------------------------------
 # Mock LLM client
 # ---------------------------------------------------------------------------

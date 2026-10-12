@@ -33,12 +33,12 @@ import json
 
 import httpx
 import structlog
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter
 from pydantic import BaseModel, Field, HttpUrl
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import OrgAdmin
-from app.database import get_db_session
+from app.database import DB_SESSION
 from app.errors import ConflictError, ForbiddenError, UnauthorizedError
 from app.models.integration import IntegrationProvider
 from app.schemas.integration import IntegrationCard
@@ -103,7 +103,7 @@ class JumpCloudConnectRequest(BaseModel):
 async def jamf_connect(
     payload: JamfConnectRequest,
     user: OrgAdmin,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> IntegrationCard:
     """Verify Jamf credentials by acquiring a one-shot bearer, then
     encrypt + persist them. Returns the IntegrationCard.
@@ -168,7 +168,7 @@ async def jamf_connect(
 async def kandji_connect(
     payload: KandjiConnectRequest,
     user: OrgAdmin,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> IntegrationCard:
     """Verify Kandji API token by listing the first page of devices."""
     if user.tenant_id is None:
@@ -218,7 +218,7 @@ async def kandji_connect(
 async def jumpcloud_connect(
     payload: JumpCloudConnectRequest,
     user: OrgAdmin,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> IntegrationCard:
     """Verify JumpCloud API key by reading the systems list."""
     if user.tenant_id is None:

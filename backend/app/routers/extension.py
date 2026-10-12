@@ -36,7 +36,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import require_api_key
-from app.database import get_db_session
+from app.database import DB_SESSION
 from app.errors import UnauthorizedError
 from app.models.extension_heartbeat import ExtensionDeviceHeartbeat
 from app.models.user import APIKey
@@ -87,7 +87,7 @@ async def post_heartbeat(
     payload: HeartbeatRequest,
     request: Request,
     api_key_record: Annotated[APIKey, Depends(require_api_key)],
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> HeartbeatResponse:
     """Upsert a device heartbeat. Auth: X-API-Key.
 
@@ -192,7 +192,7 @@ class HeartbeatListResponse(BaseModel):
 async def list_devices(
     request: Request,
     api_key_record: Annotated[APIKey, Depends(require_api_key)],
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> HeartbeatListResponse:
     """List all extension heartbeats for the caller's tenant.
 

@@ -6,30 +6,14 @@ Ensures that data from one tenant is not accessible to another.
 
 from __future__ import annotations
 
-import os
 import uuid
 
 import httpx
 import pytest
 
+from tests.e2e.stack import BASE_URL, auth, ingest, tenant_user
+
 pytestmark = [pytest.mark.e2e, pytest.mark.asyncio]
-
-BASE_URL = os.environ.get("E2E_API_URL", "http://localhost:8001/api/v1")
-SUPER_EMAIL = os.environ.get("SUPER_ADMIN_EMAIL", "admin@test.local")
-SUPER_PASS = os.environ.get("SUPER_ADMIN_PASSWORD", "TestAdmin_P@ss1")
-
-
-async def _login(client: httpx.AsyncClient, email: str, password: str) -> str:
-    resp = await client.post(
-        f"{BASE_URL}/auth/login",
-        json={"email": email, "password": password},
-    )
-    resp.raise_for_status()
-    return resp.json()["access_token"]
-
-
-def _auth(token: str) -> dict[str, str]:
-    return {"Authorization": f"Bearer {token}"}
 
 
 class TestTenantIsolation:
@@ -41,39 +25,27 @@ class TestTenantIsolation:
         self.run_id = str(uuid.uuid4())[:8]
 
     async def test_create_two_tenants_data_isolated(self) -> None:
-        """
-        Create two tenants, ingest data for each, confirm cross-tenant
-        queries return zero results.
-        """
-        token = await _login(self.client, SUPER_EMAIL, SUPER_PASS)
-
-        # Create tenant A
-        resp_a = await self.client.post(
-            f"{BASE_URL}/tenants",
-            headers=_auth(token),
-            json={"name": f"Tenant A {self.run_id}", "slug": f"tenant-a-{self.run_id}"},
+        """Two tenants each ingest a blob, and each sees only its own."""
+        a = await tenant_user(self.client, f"iso-a-{self.run_id}")
+        b = await tenant_user(self.client, f"iso-b-{self.run_id}")
+        blob_a = await ingest(
+            self.client, a, f"[TEST:{self.run_id}] Tenant A secret.", f"iso-a-{self.run_id}"
         )
-        assert resp_a.status_code in (200, 201), resp_a.text
-
-        # Create tenant B
-        resp_b = await self.client.post(
-            f"{BASE_URL}/tenants",
-            headers=_auth(token),
-            json={"name": f"Tenant B {self.run_id}", "slug": f"tenant-b-{self.run_id}"},
+        blob_b = await ingest(
+            self.client, b, f"[TEST:{self.run_id}] Tenant B secret.", f"iso-b-{self.run_id}"
         )
-        assert resp_b.status_code in (200, 201), resp_b.text
 
-        # Ingest blob for tenant A context (super admin can specify)
-        resp_blob = await self.client.post(
-            f"{BASE_URL}/adapters/manual/ingest",
-            headers=_auth(token),
-            json={
-                "content": f"[TEST:{self.run_id}] Tenant A secret compliance data.",
-                "source_type": "manual",
-                "source_id": f"iso-test-a-{self.run_id}",
-            },
-        )
-        assert resp_blob.status_code in (200, 201), resp_blob.text
+        for user, own, other in ((a, blob_a, blob_b), (b, blob_b, blob_a)):
+            resp = await self.client.get(
+                f"{BASE_URL}/adapters/blobs",
+                headers=auth(user.token),
+                params={"page_size": 100},
+            )
+            assert resp.status_code == 200, resp.text
+            seen = {blob["id"] for blob in resp.json()["blobs"]}
+            assert own["id"] in seen
+            assert other["id"] not in seen
+            assert all(blob["tenant_id"] == user.tenant_id for blob in resp.json()["blobs"])
 
     async def test_unauthenticated_cannot_access_data(self) -> None:
         """Unauthenticated requests should be rejected."""

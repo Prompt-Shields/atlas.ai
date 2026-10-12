@@ -13,11 +13,11 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import AuthUser, OrgAdmin
-from app.database import get_db_session
+from app.database import DB_SESSION
 from app.errors import ForbiddenError, NotFoundError
 from app.schemas.defender_import import (
     DefenderAppAcceptRequest,
@@ -41,7 +41,7 @@ def _tenant_scope(user: AuthUser) -> uuid.UUID | None:
 @router.get("", response_model=DefenderImportListResponse)
 async def list_defender_apps(
     user: AuthUser,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> DefenderImportListResponse:
     """List the tenant's imported app candidates, highest-risk first."""
     return await defender_import_service.list_apps(db, _tenant_scope(user))
@@ -51,7 +51,7 @@ async def list_defender_apps(
 async def import_defender_export(
     payload: DefenderImportRequest,
     user: OrgAdmin,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> DefenderImportResponse:
     """Extract known apps from a pasted export; upsert enriched candidate rows."""
     if user.tenant_id is None:
@@ -64,7 +64,7 @@ async def accept_defender_app(
     app_id: uuid.UUID,
     payload: DefenderAppAcceptRequest,
     user: OrgAdmin,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> DefenderAppAcceptResponse:
     """Promote a discovered app candidate into the AI inventory as a SaaS vendor."""
     if user.tenant_id is None:
@@ -80,7 +80,7 @@ async def update_defender_app_status(
     app_id: uuid.UUID,
     payload: DefenderAppStatusUpdate,
     user: OrgAdmin,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> DiscoveredDefenderAppResponse:
     """Dismiss (or reset) a discovered app candidate."""
     app = await defender_import_service.update_status(db, _tenant_scope(user), app_id, payload)
