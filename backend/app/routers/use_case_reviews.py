@@ -10,13 +10,13 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, Path, Query
+from fastapi import APIRouter, Path, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import AuthUser, OrgAdmin
-from app.database import get_db_session
+from app.database import DB_SESSION
 from app.errors import ForbiddenError, NotFoundError
 from app.models.use_case import UseCase
 from app.models.use_case_review import ReviewStatus, UseCaseReview
@@ -118,7 +118,7 @@ async def list_reviews(
     ),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> UseCaseReviewListResponse:
     base = select(UseCaseReview, UseCase).join(UseCase, UseCaseReview.use_case_id == UseCase.id)
     count_base = select(func.count(UseCaseReview.id)).join(
@@ -157,7 +157,7 @@ async def list_reviews(
 @router.get("/counts", response_model=UseCaseReviewCounts)
 async def get_counts(
     user: AuthUser,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> UseCaseReviewCounts:
     base = select(UseCaseReview.status, func.count(UseCaseReview.id)).group_by(UseCaseReview.status)
     drift_q = select(func.count(UseCaseReview.id)).where(UseCaseReview.drift_observed.is_(True))
@@ -185,7 +185,7 @@ async def mark_reviewed(
     payload: MarkReviewedRequest,
     user: AuthUser,
     review_id: uuid.UUID = Path(...),
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> UseCaseReviewResponse:
     """Attest the use case is still accurate. Idempotent — re-calling
     overwrites notes / drift_observed on the existing REVIEWED row.
@@ -225,7 +225,7 @@ async def dismiss_review(
     payload: DismissReviewRequest,
     user: OrgAdmin,
     review_id: uuid.UUID = Path(...),
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> UseCaseReviewResponse:
     """OrgAdmin-only — dismiss a review with a reason (e.g.
     'use case retired pending cleanup').
@@ -255,7 +255,7 @@ async def dismiss_review(
 @router.post("/enqueue", response_model=dict)
 async def enqueue_now(
     user: OrgAdmin,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> dict:
     """OrgAdmin escape hatch — trigger the enqueue job on-demand.
 

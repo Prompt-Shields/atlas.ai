@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Query, Request
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.auth.dependencies import AuthUser, OrgAdmin, TenantAdmin
-from app.database import get_db_session
+from app.database import DB_SESSION
 from app.errors import ForbiddenError
 from app.models.user import Role, User, UserRole
 from app.schemas.user import UserCreate, UserListResponse, UserResponse, UserUpdate
@@ -42,7 +42,7 @@ async def create_user(
     body: UserCreate,
     request: Request,
     user: TenantAdmin,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> UserResponse:
     """Create a user within the caller's tenant."""
     new_user = await auth_service.create_user(
@@ -89,7 +89,7 @@ async def list_users(
     source: str | None = Query(
         None, pattern=r"^(sso|local)$", description="sso = Entra-linked, local = password"
     ),
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> UserListResponse:
     """List users in the caller's tenant (org-scoped unless super admin).
 
@@ -139,7 +139,7 @@ async def list_users(
 @router.get("/me", response_model=UserResponse)
 async def get_current_user(
     user: AuthUser,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> UserResponse:
     """Get the current authenticated user's profile."""
     result = await db.execute(
@@ -155,7 +155,7 @@ async def update_user(
     body: UserUpdate,
     request: Request,
     current_user: TenantAdmin,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> UserResponse:
     """Update a user (tenant admin+ only). Can change role, name, active status."""
     target_id = uuid.UUID(user_id)

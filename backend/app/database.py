@@ -6,6 +6,7 @@ import uuid
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
+from fastapi import Depends
 from sqlalchemy import MetaData, text
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -72,6 +73,18 @@ async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
         except Exception:
             await session.rollback()
             raise
+
+
+# How every route and auth dependency asks for the request's session. The "function"
+# scope runs `get_db_session`'s commit when the endpoint has returned and its response
+# is built, but before the response is sent. With FastAPI's default ("request") the
+# commit came after the response had gone out, so a client acting at once on a 201
+# (sign up, then create an organisation) could find nothing there.
+#
+# The scope is part of the dependency's cache key: one route mixing this with a bare
+# `Depends(get_db_session)` would get two sessions. tests/unit/test_session_dependency.py
+# checks that every route uses this one.
+DB_SESSION = Depends(get_db_session, scope="function")
 
 
 async def set_tenant_guc(session: AsyncSession, tenant_id: uuid.UUID) -> None:

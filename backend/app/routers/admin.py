@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import SuperAdmin
-from app.database import get_db_session
+from app.database import DB_SESSION
 from app.services.testing_service import purge_test_data, run_e2e_test_pipeline
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
@@ -20,7 +20,7 @@ async def run_test_pipeline(
     user: SuperAdmin,
     tenant_id: str | None = None,
     org_id: str | None = None,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> dict:
     """Run E2E test pipeline (super admin only).
 
@@ -56,7 +56,7 @@ async def purge_test(
     user: SuperAdmin,
     tenant_id: str | None = None,
     confirm: bool = False,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> dict:
     """Purge test data (super admin only).
 

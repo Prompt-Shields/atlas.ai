@@ -31,7 +31,7 @@ from app.auth.dependencies import (
 )
 from app.auth.device_token import DeviceContext, generate_device_token, require_device_token
 from app.config import get_settings
-from app.database import get_db_session, set_tenant_guc
+from app.database import DB_SESSION, set_tenant_guc
 from app.errors import ForbiddenError, NotFoundError, UnauthorizedError
 from app.models.device_directive import DeviceDirective
 from app.models.directive_ack import DirectiveAck
@@ -59,7 +59,7 @@ router = APIRouter(prefix="/devices", tags=["Devices"])
 async def register_device(
     payload: DeviceRegisterIn,
     user: CurrentUser = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> DeviceRegisterOut:
     # Widget is Bearer-only (Auth0); the JWT already carries tenant_id.
     if not user.is_super_admin() and not user.tenant_id:
@@ -87,7 +87,7 @@ async def register_device(
 @router.post("/heartbeat", response_model=DeviceHeartbeatOut)
 async def heartbeat(
     device: DeviceContext = Depends(require_device_token),
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> DeviceHeartbeatOut:
     # RLS is active (GUC set inside require_device_token); scope by device_id.
     await db.execute(
@@ -102,7 +102,7 @@ async def heartbeat(
 @router.get("/directives", response_model=list[DirectiveOut])
 async def poll_directives(
     device: DeviceContext = Depends(require_device_token),  # sets tenant GUC
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> list[DirectiveOut]:
     now = datetime.now(UTC)
     rows = (
@@ -232,7 +232,7 @@ async def ack_directive(
     directive_id: uuid.UUID,
     payload: DirectiveAckIn,
     device: DeviceContext = Depends(require_device_token),  # sets tenant GUC
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> DirectiveAckOut:
     directive = (
         await db.execute(
