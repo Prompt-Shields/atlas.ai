@@ -101,6 +101,9 @@ async def create_organisation(
     org = await tenant_service.create_organisation(
         db, tenant_id=tid, name=body.name, slug=body.slug
     )
+    # Committed before the response: the session dependency commits only after the
+    # response is sent, and the caller's next request must see the new row.
+    await db.commit()
     return OrgResponse(
         id=str(org.id),
         tenant_id=str(org.tenant_id),

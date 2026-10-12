@@ -170,6 +170,9 @@ async def create_api_key(
         details={"key_prefix": api_key.key_prefix, "name": body.name},
         correlation_id=getattr(request.state, "correlation_id", None),
     )
+    # Committed before the response: the session dependency commits only after the
+    # response is sent, and the caller's next request must see the new row.
+    await db.commit()
 
     return APIKeyCreateResponse(
         id=str(api_key.id),
