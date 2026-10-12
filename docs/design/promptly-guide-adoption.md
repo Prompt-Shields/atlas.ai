@@ -87,6 +87,11 @@ A figures request that names a person, a user, an email or a device is refused w
 - **Months covered:** Guide's figures are monthly, so the report covers the finished months since connection, at most three.
 - **Risk window:** the risk section covers the same days.
 - **Prompt tips:** Guide's prompt tips are not counted (promptly-guide #34), so nothing in the risk section comes from Guide.
+- **For a demo:** `python -m scripts.seed_guide_pilot --tenant-slug demo` gives a demo tenant a pilot that began 45 days ago. It seeds:
+  - adoption counts for three teams, in the tables Guide's contributions fold into, with one team too small to show and a few categories under ten;
+  - telemetry violations across twelve demo devices.
+
+  The report then has something to show, through the same gate and the same 30-day rule. The script refuses a tenant with a real Guide connection and seeds nothing twice.
 
 ## Approved tools for steering (promptly-guide #57)
 
