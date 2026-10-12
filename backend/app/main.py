@@ -34,6 +34,7 @@ from app.routers import (
     compliance,
     correlations,
     cost,
+    cost_connect,
     defender_import,
     developer,
     devices,
@@ -164,6 +165,7 @@ def create_app() -> FastAPI:
     app.include_router(slack.integrations_router, prefix=api_v1)
     app.include_router(slack.slack_router, prefix=api_v1)
     app.include_router(mdm_connect.router, prefix=api_v1)
+    app.include_router(cost_connect.router, prefix=api_v1)
     app.include_router(sentinel_connect.router, prefix=api_v1)
     app.include_router(endpoints.router, prefix=api_v1)
     app.include_router(handbook.router, prefix=api_v1)
