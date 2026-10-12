@@ -9,13 +9,13 @@ from __future__ import annotations
 
 import math
 
-from fastapi import APIRouter, Depends, Request, Response
+from fastapi import APIRouter, Request, Response
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import AuthUser
 from app.config import get_settings
-from app.database import get_db_session
+from app.database import DB_SESSION
 from app.errors import AppException, ForbiddenError, NotFoundError
 from app.models.tenant import Tenant
 from app.models.user import User
@@ -64,7 +64,7 @@ async def _is_email_verified(db: AsyncSession, user: AuthUser) -> bool:
 async def checkout_session(
     body: CheckoutSessionRequest,
     user: AuthUser,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> CheckoutSessionResponse:
     """Create a Stripe Checkout Session for the tenant to subscribe."""
     if not await _is_email_verified(db, user):
@@ -110,7 +110,7 @@ async def checkout_session(
 @router.post("/portal-session", response_model=PortalSessionResponse)
 async def portal_session(
     user: AuthUser,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> PortalSessionResponse:
     """Create a Stripe Customer Portal session for the tenant."""
     tenant = await _load_tenant(db, user)
@@ -130,7 +130,7 @@ async def portal_session(
 @router.get("/entitlements", response_model=EntitlementsResponse)
 async def get_entitlements(
     user: AuthUser,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> EntitlementsResponse:
     """Return the tenant's current plan entitlements and lock state."""
     tenant = await _load_tenant(db, user)
@@ -159,7 +159,7 @@ async def get_entitlements(
 @webhooks_router.post("/stripe", include_in_schema=True)
 async def stripe_webhook(
     request: Request,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> Response:
     """Receive and process Stripe webhook events.
 

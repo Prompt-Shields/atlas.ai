@@ -16,11 +16,11 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import AuthUser, OrgAdmin
-from app.database import get_db_session
+from app.database import DB_SESSION
 from app.errors import ForbiddenError, NotFoundError
 from app.schemas.agent_discovery import (
     AgentDiscoveryListResponse,
@@ -41,7 +41,7 @@ def _tenant_scope(user: AuthUser) -> uuid.UUID | None:
 @router.get("", response_model=AgentDiscoveryListResponse)
 async def list_agents(
     user: AuthUser,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> AgentDiscoveryListResponse:
     """List the tenant's discovered agents, grouped by status."""
     return await agent_discovery_service.list_agents(db, _tenant_scope(user))
@@ -50,7 +50,7 @@ async def list_agents(
 @router.post("/scan", response_model=AgentDiscoveryScanResponse)
 async def scan_agents(
     user: OrgAdmin,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> AgentDiscoveryScanResponse:
     """Run every enabled collector; upsert by (provider, external id)."""
     if user.tenant_id is None:
@@ -63,7 +63,7 @@ async def update_agent_status(
     agent_id: uuid.UUID,
     payload: AgentStatusUpdate,
     user: OrgAdmin,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> DiscoveredAgentResponse:
     """Approve / dismiss (or reset) a discovered agent."""
     agent = await agent_discovery_service.update_status(db, _tenant_scope(user), agent_id, payload)

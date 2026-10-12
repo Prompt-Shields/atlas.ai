@@ -28,7 +28,7 @@ from app.auth.dependencies import (
     get_tenant_db_session,
     require_api_key,
 )
-from app.database import get_db_session, set_tenant_guc
+from app.database import DB_SESSION, set_tenant_guc
 from app.errors import UnauthorizedError
 from app.models.prompt_event import PromptEvent
 from app.models.user import APIKey
@@ -65,7 +65,7 @@ def _as_utc(dt: datetime) -> datetime:
 async def ingest_prompt_events(
     payload: PromptEventBatch,
     api_key_record: Annotated[APIKey, Depends(require_api_key)],
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> PromptEventIngestResponse:
     if api_key_record.tenant_id is None:
         raise UnauthorizedError("Prompt telemetry requires a tenant-scoped API key.")

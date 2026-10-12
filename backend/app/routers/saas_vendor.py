@@ -21,12 +21,12 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, status
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import AuthUser, OrgAdmin
-from app.database import get_db_session
+from app.database import DB_SESSION
 from app.errors import ForbiddenError, NotFoundError
 from app.schemas.saas_vendor import (
     AssessmentImportCreate,
@@ -56,7 +56,7 @@ def _tenant_scope(user: AuthUser) -> uuid.UUID | None:
 @router.get("", response_model=list[SaaSVendorResponse])
 async def list_vendors(
     user: AuthUser,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> list[SaaSVendorResponse]:
     """List the tenant's SaaS AI vendors."""
     return await saas_vendor_service.list_vendors(db, _tenant_scope(user))
@@ -65,7 +65,7 @@ async def list_vendors(
 @router.get("/kpi", response_model=VendorKpiResponse)
 async def vendor_kpi(
     user: AuthUser,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> VendorKpiResponse:
     """KPI aggregate: total, high-risk, trains-on-data, no-DPA."""
     return await saas_vendor_service.compute_kpi(db, _tenant_scope(user))
@@ -74,7 +74,7 @@ async def vendor_kpi(
 @router.get("/export.csv")
 async def export_vendors_csv(
     user: AuthUser,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> Response:
     """Download all vendors as CSV."""
     vendors = await saas_vendor_service.list_vendors(db, _tenant_scope(user))
@@ -90,7 +90,7 @@ async def export_vendors_csv(
 async def get_vendor(
     vendor_id: uuid.UUID,
     user: AuthUser,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> SaaSVendorResponse:
     """Fetch one vendor by its use-case id."""
     vendor = await saas_vendor_service.get_vendor(db, _tenant_scope(user), vendor_id)
@@ -106,7 +106,7 @@ async def get_vendor(
 async def create_vendor(
     payload: SaaSVendorCreate,
     user: OrgAdmin,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> SaaSVendorResponse:
     """Register a vendor (creates a use-case row + its profile)."""
     if user.tenant_id is None:
@@ -119,7 +119,7 @@ async def update_vendor(
     vendor_id: uuid.UUID,
     payload: SaaSVendorUpdate,
     user: OrgAdmin,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> SaaSVendorResponse:
     """Update a vendor's use-case and profile fields."""
     vendor = await saas_vendor_service.update_vendor(db, _tenant_scope(user), vendor_id, payload)
@@ -140,7 +140,7 @@ async def request_assessment(
     vendor_id: uuid.UUID,
     payload: AssessmentRequestCreate,
     user: OrgAdmin,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> AssessmentRequestResponse:
     """Outbound: request an assessment from the vendor (simulated send)."""
     if user.tenant_id is None:
@@ -162,7 +162,7 @@ async def import_assessment(
     vendor_id: uuid.UUID,
     payload: AssessmentImportCreate,
     user: OrgAdmin,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> AssessmentImportResponse:
     """Inbound: record an imported assessment (peer-shared / trust-center / upload)."""
     if user.tenant_id is None:

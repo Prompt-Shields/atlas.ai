@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.rate_limit import check_rate_limit
-from app.database import get_db_session
+from app.database import DB_SESSION
 from app.schemas.signup import SignupRequest, SignupResponse
 from app.services import signup_service
 
@@ -17,7 +17,7 @@ router = APIRouter(prefix="/signup", tags=["Signup"])
 async def signup(
     body: SignupRequest,
     request: Request,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> SignupResponse:
     client_ip = request.client.host if request.client else "unknown"
     await check_rate_limit(f"signup:{client_ip}", max_attempts=5, window_seconds=300)

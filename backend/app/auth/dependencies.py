@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.api_keys import validate_api_key
 from app.auth.jwt import verify_access_token
-from app.database import get_db_session, set_tenant_guc
+from app.database import DB_SESSION, set_tenant_guc
 from app.errors import ForbiddenError, UnauthorizedError
 from app.models.user import APIKey, Role
 
@@ -80,7 +80,7 @@ async def get_current_user(
 
 async def require_api_key(
     request: Request,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
     x_api_key: str | None = Header(None),
 ) -> APIKey | None:
     """Validate API key header. Required for sensitive/adapter endpoints.
@@ -116,7 +116,7 @@ async def require_jwt_and_api_key(
 
 async def get_tenant_db_session(
     user: CurrentUser = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> AsyncSession:
     """Yield the request DB session with tenant GUC set (RLS enforcement).
 

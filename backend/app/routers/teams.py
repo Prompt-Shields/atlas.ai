@@ -10,12 +10,12 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import OrgAdmin
-from app.database import get_db_session
+from app.database import DB_SESSION
 from app.errors import NotFoundError
 from app.models.directory import (
     DirectoryGroup,
@@ -35,7 +35,7 @@ router = APIRouter(prefix="/teams", tags=["Teams"])
 @router.get("", response_model=TeamListResponse)
 async def list_teams(
     user: OrgAdmin,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> TeamListResponse:
     """List the caller tenant's directory groups (teams)."""
     query = select(DirectoryGroup)
@@ -63,7 +63,7 @@ async def list_teams(
 async def list_team_members(
     team_id: str,
     user: OrgAdmin,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> TeamMemberListResponse:
     """List the directory users who belong to a team."""
     gid = uuid.UUID(team_id)

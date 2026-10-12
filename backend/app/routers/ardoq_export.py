@@ -15,12 +15,12 @@ import io
 import uuid
 import zipfile
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import OrgAdmin
-from app.database import get_db_session
+from app.database import DB_SESSION
 from app.schemas.ardoq_export import ArdoqManifestResponse
 from app.services.ardoq_export_query import build_ardoq_bundle
 
@@ -35,7 +35,7 @@ def _tenant_scope(user: OrgAdmin) -> uuid.UUID | None:
 @router.get("/manifest", response_model=ArdoqManifestResponse)
 async def get_manifest(
     user: OrgAdmin,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> ArdoqManifestResponse:
     """Row counts per entity — drives the frontend manifest table."""
     bundle = await build_ardoq_bundle(db, _tenant_scope(user))
@@ -45,7 +45,7 @@ async def get_manifest(
 @router.get("/export")
 async def export_zip(
     user: OrgAdmin,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> Response:
     """Download the 9-CSV Ardoq AI-Lens bundle as a ZIP."""
     bundle = await build_ardoq_bundle(db, _tenant_scope(user))
