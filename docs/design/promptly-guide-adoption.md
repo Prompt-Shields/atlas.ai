@@ -118,6 +118,12 @@ Atlas hosts a SCIM 2.0 endpoint at `/api/v1/scim/v2`. The customer's Entra ID pr
 
   Entra also sends names, emails, titles, managers and phone numbers. Atlas accepts them and stores none of them.
 - **What Guide reads.** `GET /api/v1/guide/groups` uses the Guide caller's Firebase token. Atlas reads the token's email for this endpoint only, matches it, case-insensitively, against a provisioned, active `userName`, and returns that person's group names. Someone deprovisioned (`active` false) or never provisioned gets no groups. Nothing about what Guide does is joined to these tables.
+- **Checking it end to end.** `backend/scripts/scim_entra_lifecycle.py` replays Entra's provisioning pattern for two test people, in this order:
+  - look up, create, and add to groups;
+  - move between groups, rename a group, and change an email;
+  - disable with a string `"False"`, then enable again.
+
+  After each step it checks the groups SCIM holds each person in. `tests/unit/test_guide_scim_lifecycle.py` runs it with Guide sign-ins minted locally, so Guide's `GET /api/v1/guide/groups` is checked at every step too. Before a pilot, run it against the deployed Atlas with the tenant's SCIM token: `python -m scripts.scim_entra_lifecycle --base https://… --scim-token … --domain …`. Everything it creates is deleted at the end. Against a deployed Atlas it checks the SCIM side only, and it does not replace one run of the customer's own Entra provisioning job.
 - **Kept apart from the Graph pull.** These are separate tables from `directory_*`: the push is its own, thinner store, under its own token.
 
 ## Setting it up
