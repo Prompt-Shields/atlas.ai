@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
+from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import OrgAdmin, SuperAdmin
-from app.database import get_db_session
+from app.database import DB_SESSION
 from app.errors import ConflictError, ForbiddenError
 from app.schemas.invite import InviteConfirm, InviteCreate, InviteListResponse, InviteResponse
 from app.services import invite_service
@@ -29,7 +29,7 @@ async def create_invite(
     body: InviteCreate,
     request: Request,
     user: SuperAdmin,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> InviteResponse:
     """Create a tenant invite (super admin only).
 
@@ -82,7 +82,7 @@ async def create_invite(
 async def confirm_invite(
     body: InviteConfirm,
     request: Request,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> dict:
     """Confirm an invite with token, set password, and activate tenant.
 
@@ -119,7 +119,7 @@ async def list_invites(
     tenant_id: str | None = None,
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> InviteListResponse:
     """List invites (super admin only)."""
     import uuid
@@ -193,7 +193,7 @@ async def import_invites_csv(
     request: Request,
     user: OrgAdmin,
     file: UploadFile = File(..., description="CSV file matching the template"),
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> InviteImportResponse:
     """OrgAdmin bulk-creates invites for their own tenant.
 

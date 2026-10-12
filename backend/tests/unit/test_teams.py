@@ -23,7 +23,7 @@ from app.models.directory import (
     DirectoryUser,
 )
 from app.models.user import Role
-from tests.conftest import TestSessionLocal, auth_header
+from tests.conftest import TestSessionLocal, auth_header, ensure_integration
 
 
 def _admin_token(tenant_id: uuid.UUID) -> str:
@@ -52,10 +52,14 @@ async def team_ctx() -> dict:
     tenant = uuid.uuid4()
     other = uuid.uuid4()
     integ = uuid.uuid4()
+    other_integ = uuid.uuid4()
     now = datetime.now(UTC)
     g1, g2 = uuid.uuid4(), uuid.uuid4()
     u1, u2 = uuid.uuid4(), uuid.uuid4()
     async with TestSessionLocal() as s:
+        # Postgres checks the tenant and integration FKs that SQLite lets slide.
+        await ensure_integration(s, tenant, integ)
+        await ensure_integration(s, other, other_integ)
         s.add_all(
             [
                 DirectoryGroup(
@@ -83,7 +87,7 @@ async def team_ctx() -> dict:
                 DirectoryGroup(
                     id=uuid.uuid4(),
                     tenant_id=other,
-                    integration_id=integ,
+                    integration_id=other_integ,
                     external_group_id="grp-x",
                     display_name="OtherTenantTeam",
                     last_synced_at=now,

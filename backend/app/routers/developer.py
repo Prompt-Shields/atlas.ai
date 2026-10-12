@@ -15,7 +15,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import desc, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -28,7 +28,7 @@ from app.auth.developer_scope import (
     EventTypeWriter,
     EventWriter,
 )
-from app.database import get_db_session
+from app.database import DB_SESSION
 from app.errors import ForbiddenError, NotFoundError
 from app.models.developer import (
     DeveloperAPIKeyScope,
@@ -81,7 +81,7 @@ async def _load_key_scopes(db: AsyncSession, api_key_id: uuid.UUID) -> list[Deve
 async def create_api_key(
     body: DeveloperAPIKeyCreate,
     current_user: AuthUser,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> DeveloperAPIKeyCreateResponse:
     if current_user.tenant_id is None:
         raise ForbiddenError("Cannot issue developer API keys without a tenant")
@@ -125,7 +125,7 @@ async def create_api_key(
 )
 async def list_api_keys(
     current_user: AuthUser,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
     include_inactive: bool = Query(default=False),
 ) -> DeveloperAPIKeyListResponse:
     if current_user.tenant_id is None and not current_user.is_super_admin():
@@ -172,7 +172,7 @@ async def list_api_keys(
 async def revoke_api_key(
     key_id: uuid.UUID,
     current_user: AuthUser,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> None:
     stmt = select(APIKey).where(APIKey.id == key_id)
     result = await db.execute(stmt)
@@ -195,7 +195,7 @@ async def update_api_key_scopes(
     key_id: uuid.UUID,
     body: DeveloperAPIKeyScopesUpdate,
     current_user: AuthUser,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> DeveloperAPIKeyResponse:
     stmt = select(APIKey).where(APIKey.id == key_id)
     result = await db.execute(stmt)
@@ -241,7 +241,7 @@ async def update_api_key_scopes(
 async def create_event_type(
     body: EventDefinitionCreate,
     principal: EventTypeWriter,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> EventDefinitionResponse:
     definition = DeveloperEventDefinition(
         tenant_id=principal.tenant_id,
@@ -281,7 +281,7 @@ async def create_event_type(
 )
 async def list_event_types(
     principal: EventTypeReader,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
     include_disabled: bool = Query(default=False),
 ) -> EventDefinitionListResponse:
     conditions = [DeveloperEventDefinition.tenant_id == principal.tenant_id]
@@ -321,7 +321,7 @@ async def update_event_type(
     definition_id: uuid.UUID,
     body: EventDefinitionUpdate,
     principal: EventTypeWriter,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> EventDefinitionResponse:
     stmt = select(DeveloperEventDefinition).where(
         DeveloperEventDefinition.id == definition_id,
@@ -364,7 +364,7 @@ async def update_event_type(
 async def delete_event_type(
     definition_id: uuid.UUID,
     principal: EventTypeWriter,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> None:
     stmt = select(DeveloperEventDefinition).where(
         DeveloperEventDefinition.id == definition_id,
@@ -398,7 +398,7 @@ async def delete_event_type(
 async def ingest_events(
     body: EventIngestRequest,
     principal: EventWriter,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> EventIngestResponse:
     # Load enabled definitions for this tenant so we can validate event types
     stmt = select(
@@ -462,7 +462,7 @@ async def ingest_events(
 )
 async def list_events(
     principal: EventReader,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
     event_type: str | None = Query(default=None),
     severity: EventSeverity | None = Query(default=None),
     source: str | None = Query(default=None),
@@ -540,7 +540,7 @@ async def list_events(
 async def get_event(
     event_id: uuid.UUID,
     principal: EventReader,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> EventResponse:
     stmt = select(DeveloperEvent).where(
         DeveloperEvent.id == event_id,

@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.api_keys import validate_api_key
 from app.auth.dependencies import CurrentUser, bearer_scheme, get_current_user
-from app.database import get_db_session
+from app.database import DB_SESSION
 from app.errors import ForbiddenError, UnauthorizedError
 from app.models.developer import DeveloperAPIKeyScope, DeveloperScope
 
@@ -97,7 +97,7 @@ def require_developer_scope(required: DeveloperScope):
         request: Request,
         x_api_key: str | None = Header(default=None),
         credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
-        db: AsyncSession = Depends(get_db_session),
+        db: AsyncSession = DB_SESSION,
     ) -> DeveloperPrincipal:
         if x_api_key:
             principal = await _resolve_via_api_key(db, x_api_key)

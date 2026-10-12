@@ -34,14 +34,14 @@ from typing import Any
 
 import httpx
 import structlog
-from fastapi import APIRouter, Depends, Header, Query, Request
+from fastapi import APIRouter, Header, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import OrgAdmin
 from app.config import get_settings
-from app.database import get_db_session
+from app.database import DB_SESSION
 from app.errors import ConflictError, ForbiddenError, NotFoundError, UnauthorizedError
 from app.models.slack_workspace import SlackWorkspace
 from app.models.survey import (
@@ -120,7 +120,7 @@ async def slack_callback(
     request: Request,
     code: str = Query(...),
     state: str = Query(...),
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> HTMLResponse:
     """Slack redirects here after the admin approves.
 
@@ -230,7 +230,7 @@ async def slack_events(
     request: Request,
     x_slack_request_timestamp: str | None = Header(None),
     x_slack_signature: str | None = Header(None),
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> dict[str, Any]:
     """Slack Events API entry.
 
@@ -283,7 +283,7 @@ async def slack_interactions(
     request: Request,
     x_slack_request_timestamp: str | None = Header(None),
     x_slack_signature: str | None = Header(None),
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> dict[str, Any]:
     """Slack Block Kit interactive component submissions.
 

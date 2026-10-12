@@ -13,11 +13,11 @@ that lands each hit directly in the use-case registry as a pending
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import OrgAdmin
-from app.database import get_db_session
+from app.database import DB_SESSION
 from app.errors import ForbiddenError
 from app.schemas.voice_interview import (
     VoiceInterviewExtractRequest,
@@ -32,7 +32,7 @@ router = APIRouter(prefix="/discover/voice-interview", tags=["Voice interview in
 async def extract_voice_interview(
     payload: VoiceInterviewExtractRequest,
     user: OrgAdmin,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> VoiceInterviewExtractResponse:
     """Extract use-case drafts from a played-back interview transcript."""
     if user.tenant_id is None:

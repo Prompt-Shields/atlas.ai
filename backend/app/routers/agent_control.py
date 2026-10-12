@@ -15,11 +15,11 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import AuthUser, OrgAdmin
-from app.database import get_db_session
+from app.database import DB_SESSION
 from app.errors import ForbiddenError, NotFoundError
 from app.schemas.agent_control import (
     AgentControlActionRequest,
@@ -39,7 +39,7 @@ def _tenant_scope(user: AuthUser) -> uuid.UUID | None:
 @router.get("", response_model=AgentControlListResponse)
 async def list_control_states(
     user: AuthUser,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> AgentControlListResponse:
     """List the tenant's governed agents with derived health/lifecycle + guardrail state."""
     return await agent_control_service.list_control_states(db, _tenant_scope(user))
@@ -50,7 +50,7 @@ async def apply_action(
     agent_id: uuid.UUID,
     payload: AgentControlActionRequest,
     user: OrgAdmin,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> AgentControlStateResponse:
     """Pause / quarantine / toggle-guardrail on a governed agent."""
     if user.tenant_id is None:

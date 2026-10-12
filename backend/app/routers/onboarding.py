@@ -13,13 +13,13 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Body, Depends
+from fastapi import APIRouter, Body
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import AuthUser, OrgAdmin
-from app.database import get_db_session
+from app.database import DB_SESSION
 from app.errors import ForbiddenError, NotFoundError
 from app.models.tenant import Tenant
 
@@ -57,7 +57,7 @@ async def _load_tenant(db: AsyncSession, tenant_id: uuid.UUID) -> Tenant:
 @router.get("/status", response_model=OnboardingStatusResponse)
 async def get_onboarding_status(
     user: AuthUser,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> OnboardingStatusResponse:
     """Return whether the caller's tenant has completed onboarding.
 
@@ -80,7 +80,7 @@ async def get_onboarding_status(
 async def mark_onboarding_complete(
     user: OrgAdmin,
     payload: OnboardingCompleteRequest = Body(default_factory=OnboardingCompleteRequest),
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> OnboardingStatusResponse:
     """Mark the caller's tenant as onboarded.
 
@@ -107,7 +107,7 @@ async def mark_onboarding_complete(
 @router.post("/reset", response_model=OnboardingStatusResponse)
 async def reset_onboarding(
     user: OrgAdmin,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> OnboardingStatusResponse:
     """Admin escape hatch — re-trigger the wizard.
 

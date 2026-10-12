@@ -29,7 +29,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import AuthUser, OrgAdmin, get_tenant_db_session
-from app.database import get_db_session
+from app.database import DB_SESSION
 from app.errors import ForbiddenError, NotFoundError
 from app.models.saas_vendor import SaaSVendorProfile
 from app.models.use_case import (
@@ -117,7 +117,7 @@ async def list_use_cases(
     risk_tier_filter: UseCaseRiskTier | None = Query(None, alias="risk_tier"),
     tool: str | None = Query(None, max_length=100),
     department: str | None = Query(None, max_length=255),
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> UseCaseListResponse:
     """List registered use cases for the caller's tenant (paginated)."""
     base = select(UseCase).where(_not_vendor())
@@ -165,7 +165,7 @@ async def list_use_cases(
 @router.get("/counts", response_model=UseCaseCounts)
 async def counts_use_cases(
     user: AuthUser,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> UseCaseCounts:
     """Counts grouped by status. Used for the registry header summary."""
     query = (
@@ -200,7 +200,7 @@ async def counts_use_cases(
 async def owner_suggestions(
     user: AuthUser,
     limit: int = Query(50, ge=1, le=200),
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> OwnerSuggestionsListResponse:
     """Ranked business + IT owner candidates for the tenant's unowned use cases.
 
@@ -293,7 +293,7 @@ async def promote_use_case(
 async def get_use_case(
     user: AuthUser,
     use_case_id: uuid.UUID = Path(...),
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> UseCaseResponse:
     result = await db.execute(select(UseCase).where(UseCase.id == use_case_id))
     record = result.scalar_one_or_none()
@@ -317,7 +317,7 @@ async def get_use_case(
 async def create_use_case(
     payload: UseCaseCreate,
     user: OrgAdmin,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> UseCaseResponse:
     if user.tenant_id is None:
         raise ForbiddenError("User has no tenant — cannot register a use case")
@@ -350,7 +350,7 @@ async def update_use_case(
     payload: UseCaseUpdate,
     user: OrgAdmin,
     use_case_id: uuid.UUID = Path(...),
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> UseCaseResponse:
     result = await db.execute(select(UseCase).where(UseCase.id == use_case_id))
     record = result.scalar_one_or_none()
@@ -398,7 +398,7 @@ async def update_use_case(
 async def delete_use_case(
     user: OrgAdmin,
     use_case_id: uuid.UUID = Path(...),
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> None:
     """Soft delete — transitions status to RETIRED rather than DELETE.
 

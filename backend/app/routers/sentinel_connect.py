@@ -32,7 +32,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import AuthUser, OrgAdmin, get_tenant_db_session
-from app.database import get_db_session
+from app.database import DB_SESSION
 from app.errors import AppException, ForbiddenError, NotFoundError
 from app.models.integration import (
     Integration,
@@ -130,7 +130,7 @@ def _to_card(integration: Integration) -> IntegrationCard:
 async def sentinel_connect(
     payload: SentinelConnectRequest,
     user: OrgAdmin,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> IntegrationCard:
     """Store the workspace/table mapping and, when supplied, the Azure config.
 
@@ -205,7 +205,7 @@ async def sentinel_connect(
 @router.get("/events", response_model=SentinelEventStreamResponse)
 async def sentinel_events(
     user: AuthUser,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> SentinelEventStreamResponse:
     """Seeded AI-relevant event stream, filtered to the tenant's mapping.
 

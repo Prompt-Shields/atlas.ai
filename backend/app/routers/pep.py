@@ -28,13 +28,13 @@ import uuid
 from datetime import UTC, datetime
 
 import structlog
-from fastapi import APIRouter, Depends, Header, status
+from fastapi import APIRouter, Header, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import AuthUser, OrgAdmin
 from app.config import get_settings
-from app.database import get_db_session, get_standalone_session, set_tenant_guc
+from app.database import DB_SESSION, get_standalone_session, set_tenant_guc
 from app.errors import AppException, ForbiddenError, NotFoundError
 from app.models.tenant import Tenant
 from app.schemas.policy_enforcement import (
@@ -69,7 +69,7 @@ def _tenant_scope(user: AuthUser) -> uuid.UUID | None:
 @router.get("/templates", response_model=list[PolicyTemplateResponse])
 async def list_templates(
     user: AuthUser,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> list[PolicyTemplateResponse]:
     """The shared, read-only template catalog — same for every tenant."""
     return await service.list_templates(db)
@@ -79,7 +79,7 @@ async def list_templates(
 async def get_template(
     template_id: uuid.UUID,
     user: AuthUser,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> PolicyTemplateResponse:
     template = await service.get_template_response(db, template_id)
     if template is None:
@@ -93,7 +93,7 @@ async def get_template(
 @router.get("/policies", response_model=list[PolicyInstanceResponse])
 async def list_policies(
     user: AuthUser,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> list[PolicyInstanceResponse]:
     """List the tenant's policy instances."""
     return await service.list_instances(db, _tenant_scope(user))
@@ -103,7 +103,7 @@ async def list_policies(
 async def get_policy(
     instance_id: uuid.UUID,
     user: AuthUser,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> PolicyInstanceResponse:
     instance = await service.get_instance(db, _tenant_scope(user), instance_id)
     if instance is None:
@@ -117,7 +117,7 @@ async def get_policy(
 async def create_policy(
     payload: PolicyInstanceCreate,
     user: OrgAdmin,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> PolicyInstanceResponse:
     if user.tenant_id is None:
         raise ForbiddenError("User has no tenant — cannot create a policy")
@@ -138,7 +138,7 @@ async def clone_policy(
     template_id: uuid.UUID,
     payload: PolicyInstanceCloneRequest,
     user: OrgAdmin,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> PolicyInstanceResponse:
     """Clone a template into a new tenant instance (Guideline mode by default)."""
     if user.tenant_id is None:
@@ -159,7 +159,7 @@ async def evaluate_policy_instance(
     instance_id: uuid.UUID,
     payload: PolicyEvaluateRequest,
     user: OrgAdmin,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> PolicyEvaluateResponse:
     """Run the instance's detectors against a sample prompt (Test Console).
 
@@ -178,7 +178,7 @@ async def evaluate_policy_instance(
 async def get_policy_eligibility(
     instance_id: uuid.UUID,
     user: AuthUser,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> PolicyEligibilityResponse:
     """Whether this Guideline instance may promote to Strict right now."""
     result = await service.get_eligibility(db, _tenant_scope(user), instance_id)
@@ -192,7 +192,7 @@ async def approve_policy_promotion(
     instance_id: uuid.UUID,
     payload: PolicyApproveRequest,
     user: OrgAdmin,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> PolicyEligibilityResponse:
     """Sign off as one of the template's required-approver roles."""
     try:
@@ -211,7 +211,7 @@ async def promote_policy_instance(
     instance_id: uuid.UUID,
     payload: PolicyPromoteRequest,
     user: OrgAdmin,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> PolicyInstanceResponse:
     """Guideline → Strict. 400 if eligibility gates (time/FP-rate/approvers) aren't met."""
     try:
@@ -230,7 +230,7 @@ async def demote_policy_instance(
     instance_id: uuid.UUID,
     payload: PolicyDemoteRequest,
     user: OrgAdmin,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> PolicyInstanceResponse:
     """Strict → Guideline. Always permitted while currently Strict — the safety valve."""
     try:

@@ -28,12 +28,12 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, Path, Query, status
+from fastapi import APIRouter, Path, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import AuthUser, OrgAdmin
-from app.database import get_db_session
+from app.database import DB_SESSION
 from app.errors import ConflictError, ForbiddenError, NotFoundError
 from app.models.survey import (
     DeliveryStatus,
@@ -181,7 +181,7 @@ def _count_applicable(questions: list, answers: dict[str, Any]) -> int:
 @router.get("/templates", response_model=SurveyTemplateListResponse)
 async def list_templates(
     user: AuthUser,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> SurveyTemplateListResponse:
     """List active templates available to the caller's tenant."""
     query = select(SurveyTemplate).where(SurveyTemplate.is_active.is_(True))
@@ -203,7 +203,7 @@ async def list_templates(
 )
 async def seed_default_templates(
     user: OrgAdmin,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> SurveyTemplateResponse:
     """Idempotent: create the foundation v1 template for the caller's tenant.
 
@@ -249,7 +249,7 @@ async def seed_default_templates(
 async def create_dispatch(
     payload: DispatchCreate,
     user: OrgAdmin,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> DispatchResponse:
     """Create a survey dispatch.
 
@@ -334,7 +334,7 @@ async def list_dispatches(
     user: AuthUser,
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> DispatchListResponse:
     """List dispatches for the tenant, newest first."""
     base = select(SurveyDelivery)
@@ -376,7 +376,7 @@ async def list_dispatches(
 async def get_dispatch(
     user: AuthUser,
     dispatch_id: uuid.UUID = Path(...),
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> DispatchResponse:
     result = await db.execute(select(SurveyDelivery).where(SurveyDelivery.id == dispatch_id))
     record = result.scalar_one_or_none()
@@ -402,7 +402,7 @@ async def list_responses(
     response_status: ResponseStatus | None = Query(None, alias="status"),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> SurveyResponseListResponse:
     base = select(SurveyResponse)
     base_count = select(func.count(SurveyResponse.id))
@@ -440,7 +440,7 @@ async def list_responses(
 async def get_response(
     user: AuthUser,
     response_id: uuid.UUID = Path(...),
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> SurveyResponseRecord:
     result = await db.execute(select(SurveyResponse).where(SurveyResponse.id == response_id))
     record = result.scalar_one_or_none()
@@ -455,7 +455,7 @@ async def get_response(
 async def peek_next_question(
     user: AuthUser,
     response_id: uuid.UUID = Path(...),
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> NextQuestionResponse:
     """Inspect what question would be asked next, without mutating state.
 
@@ -483,7 +483,7 @@ async def submit_answer(
     payload: AnswerSubmit,
     user: AuthUser,
     response_id: uuid.UUID = Path(...),
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> NextQuestionResponse:
     """Submit an answer to the current question. Advances the flow.
 
@@ -582,7 +582,7 @@ async def submit_answer(
 async def delete_response(
     user: OrgAdmin,
     response_id: uuid.UUID = Path(...),
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> None:
     """GDPR right-to-erasure.
 
