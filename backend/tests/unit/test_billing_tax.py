@@ -48,10 +48,11 @@ def test_never_sets_tax_exempt_or_rates():
             assert not {"tax_exempt", "tax_rates", "default_tax_rates"} & set(p)
 
 
-def test_config_flag_defaults_off():
+def test_config_flag_defaults_on():
+    # main sent automatic_tax on every Team checkout; the default keeps that.
     from app.config import get_settings
 
-    assert get_settings().stripe_automatic_tax is False
+    assert get_settings().stripe_automatic_tax is True
 
 
 # ---------------------------------------------------------------------------
