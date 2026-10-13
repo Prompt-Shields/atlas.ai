@@ -153,7 +153,8 @@ async def test_guides_sections_are_its_gated_figures(client: AsyncClient) -> Non
     assert [f["band"] for f in month["finished"]] == ["80% or more"]
     assert month["not_finished"] == []
     assert [f["category_id"] for f in month["topics"]] == ["chatgpt/model"]
-    assert month["teams_too_small"] == ["legal"]
+    assert month["teams_too_small_count"] == 1
+    assert "legal" not in r.text  # counted, never named (#28)
     assert month["suppressed_categories"] == {"sales": 1}
 
 
