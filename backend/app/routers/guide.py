@@ -10,16 +10,18 @@ Guide (Firebase ID token as Bearer, no device row, no Atlas user):
   GET  /guide/offer                which kinds the organisation offers to count
   GET  /guide/approved-tools       the organisation's sanctioned AI tools, for steering (F14)
   GET  /guide/groups               the signed-in person's SCIM groups, by name (#58)
+  POST /guide/adoption             one opted-in person's month: team, month, categories
 
 Admin, SCIM (#58):
   POST   /guide/scim-token         TenantAdmin  make (or replace) the tenant's SCIM token
   DELETE /guide/scim-token         TenantAdmin  revoke it
-  POST /guide/adoption             one opted-in person's month: team, month, categories
 
 A Guide Mac is never enrolled as a device here. `devices/register` records
 `user_external_id` on every device, and a per-person row is what Guide's E4
 promise rules out. The Firebase token is verified on each call to find the tenant
-and is then dropped: its email, name and groups are not read, logged or stored.
+and is then dropped: its name and groups are not read, and nothing from it is logged
+or stored. Its email is read by `GET /guide/groups` only, to find the person's SCIM
+groups.
 """
 
 from __future__ import annotations

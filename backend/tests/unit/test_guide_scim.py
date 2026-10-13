@@ -198,6 +198,40 @@ async def test_one_tenants_token_never_reaches_anothers_users(client: AsyncClien
     assert r.json()["totalResults"] == 0
 
 
+async def test_another_tenants_user_cannot_join_a_group(client: AsyncClient) -> None:
+    mine = await _scim_token(client)
+    theirs = await _scim_token(client, OTHER_TENANT_ID)
+    kari = await _user(client, mine, "kari@nordlys.example")
+    r = await client.post(
+        f"{SCIM}/Groups",
+        json={"displayName": "Board", "members": [{"value": kari}]},
+        headers=theirs,
+    )
+    assert r.status_code == 404
+    r = await client.post(f"{SCIM}/Groups", json={"displayName": "Board"}, headers=theirs)
+    assert r.status_code == 201, r.text
+    group = r.json()["id"]
+    add = {
+        "schemas": [PATCH_OP],
+        "Operations": [{"op": "Add", "path": "members", "value": [{"value": kari}]}],
+    }
+    assert (
+        await client.patch(f"{SCIM}/Groups/{group}", json=add, headers=theirs)
+    ).status_code == 404
+    # Nor can one tenant's token read or remove the other's group.
+    assert (await client.get(f"{SCIM}/Groups/{group}", headers=mine)).status_code == 404
+    assert (await client.delete(f"{SCIM}/Groups/{group}", headers=mine)).status_code == 404
+    assert (await client.get(f"{SCIM}/Groups/{group}", headers=theirs)).json()["members"] == []
+
+
+async def test_only_an_admin_makes_or_revokes_the_scim_token(
+    client: AsyncClient, viewer_token: str
+) -> None:
+    viewer = auth_header(viewer_token)
+    assert (await client.post("/api/v1/guide/scim-token", headers=viewer)).status_code == 403
+    assert (await client.delete("/api/v1/guide/scim-token", headers=viewer)).status_code == 403
+
+
 async def _connect(client: AsyncClient) -> None:
     r = await client.put(
         "/api/v1/guide/connection",

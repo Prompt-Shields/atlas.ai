@@ -23,7 +23,7 @@ Guide signs people in through the organisation's identity provider, by way of a 
    - has a sign-in time and a non-empty `sub`.
 3. It sets the tenant GUC. From here on, RLS applies.
 
-From the token, Atlas uses only the project, the tenant and `sub`. It never reads, logs or stores the email, name or groups. An unknown project gets the same `401` as a bad token, so nobody can find out which projects are connected by asking.
+From the token, Atlas uses only the project, the tenant and `sub`, plus the email on one route: `GET /api/v1/guide/groups` reads it to find the person's SCIM groups (see SCIM below). Atlas never logs or stores the email, and never reads the name or the token's own group claims. An unknown project gets the same `401` as a bad token, so nobody can find out which projects are connected by asking.
 
 ## What is stored
 
@@ -140,6 +140,7 @@ Atlas hosts a SCIM 2.0 endpoint at `/api/v1/scim/v2`. The customer's Entra ID pr
 - **Team is client-sent.** Guide takes it from the organisation's configuration profile, so a person on a Mac they administer could name another team. The minimum group size and bands blunt the effect, but they do not prevent it.
 - **The request itself reveals the caller to Atlas for its duration.** The token is verified and then dropped. The audit middleware does not cover `/api/v1/guide/`, so no client IP is logged against a contribution. Keep it that way, and keep request logs free of `Authorization` headers.
 - **Differencing across months** can narrow a band for a team that changed size. The same limit is documented in Guide's `docs/adoption-analytics.md`.
+- **Differencing over time within a month.** A finished month keeps taking contributions for up to three months, and the report is computed when asked. Someone who reads a month's report before and after one person's Mac sends can see what that one contribution changed: a team crossing ten and appearing, or a category crossing ten and appearing. Closing a month's intake before its report is released would remove this; that is an open decision, since Guide sends late for Macs that were offline.
 
 ## Friction in the organisation's own apps (promptly-guide #85)
 
