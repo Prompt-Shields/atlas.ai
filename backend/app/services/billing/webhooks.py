@@ -66,16 +66,30 @@ def _fetch_subscription_item_id(subscription_id: str) -> str | None:
     return items[0]["id"] if items else None
 
 
-async def _tenant_by_id(db: AsyncSession, tenant_id: str) -> Tenant | None:
+def _select_tenant(*where, lock: bool):
+    stmt = select(Tenant).where(*where)
+    if lock:
+        # Module-subscription handlers read-modify-write the whole
+        # stripe_subscriptions JSON. Two events for one tenant in flight at
+        # once would otherwise both read the old value, and the later commit
+        # would drop the other's entry. The row lock serialises them;
+        # populate_existing makes sure the locked read is the one we use.
+        stmt = stmt.with_for_update().execution_options(populate_existing=True)
+    return stmt
+
+
+async def _tenant_by_id(db: AsyncSession, tenant_id: str, *, lock: bool = False) -> Tenant | None:
     try:
         tid = _uuid.UUID(str(tenant_id))
     except (ValueError, AttributeError):
         return None
-    return await db.scalar(select(Tenant).where(Tenant.id == tid))
+    return await db.scalar(_select_tenant(Tenant.id == tid, lock=lock))
 
 
-async def _tenant_by_customer(db: AsyncSession, customer_id: str) -> Tenant | None:
-    return await db.scalar(select(Tenant).where(Tenant.stripe_customer_id == customer_id))
+async def _tenant_by_customer(
+    db: AsyncSession, customer_id: str, *, lock: bool = False
+) -> Tenant | None:
+    return await db.scalar(_select_tenant(Tenant.stripe_customer_id == customer_id, lock=lock))
 
 
 # ---------------------------------------------------------------------------
@@ -132,17 +146,57 @@ def _invoice_subscription(obj: dict) -> tuple[str | None, dict]:
     return sub, details.get("metadata") or parent.get("metadata") or {}
 
 
-def _set_module_subscription(tenant: Tenant, sub_id: str, **changes) -> None:
-    """Update one entry of ``tenant.stripe_subscriptions``.
+# Stripe statuses a subscription never leaves.
+_TERMINAL_STATUSES = frozenset({"canceled", "incomplete_expired"})
+
+
+def _set_module_subscription(
+    tenant: Tenant, sub_id: str, *, created: int | None, **changes
+) -> bool:
+    """Update one entry of ``tenant.stripe_subscriptions``; False if ignored.
+
+    Stripe does not deliver events in order, so an event is ignored when:
+
+    * it is older (by ``event.created``) than the last one applied to this
+      subscription. A delayed ``subscription.updated`` would otherwise bring
+      back items removed since, until the next event, which for an annual
+      subscription may be a year away;
+    * the subscription has already ended. A canceled subscription is never
+      reopened, so no later ``updated``, ``invoice.paid`` or
+      ``invoice.payment_failed`` (which would hand back the free Work
+      client) may revive it.
 
     Assigns a new dict rather than mutating in place: the column is plain
     JSON, so SQLAlchemy only sees a change when the attribute is reassigned.
     """
     subs = dict(tenant.stripe_subscriptions or {})
     entry = dict(subs.get(sub_id) or {"items": {}})
+    last = entry.get("event_created")
+    if created is not None and last is not None and created < last:
+        log.info(
+            "webhook_module_event_out_of_order",
+            tenant_id=str(tenant.id),
+            subscription=sub_id,
+            created=created,
+            last_applied=last,
+        )
+        return False
+    if entry.get("status") in _TERMINAL_STATUSES and changes.get("status") not in (
+        _TERMINAL_STATUSES
+    ):
+        log.info(
+            "webhook_module_subscription_already_ended",
+            tenant_id=str(tenant.id),
+            subscription=sub_id,
+            status=changes.get("status"),
+        )
+        return False
     entry.update(changes)
+    if created is not None:
+        entry["event_created"] = created
     subs[sub_id] = entry
     tenant.stripe_subscriptions = subs
+    return True
 
 
 async def _tenant_for_module_subscription(db: AsyncSession, obj: dict) -> Tenant | None:
@@ -154,11 +208,11 @@ async def _tenant_for_module_subscription(db: AsyncSession, obj: dict) -> Tenant
     re-pointed from metadata.
     """
     customer = obj.get("customer") or ""
-    tenant = await _tenant_by_customer(db, customer)
+    tenant = await _tenant_by_customer(db, customer, lock=True)
     if tenant:
         return tenant
     tenant_id = (obj.get("metadata") or {}).get("tenant_id")
-    tenant = await _tenant_by_id(db, tenant_id) if tenant_id else None
+    tenant = await _tenant_by_id(db, tenant_id, lock=True) if tenant_id else None
     if tenant is None:
         return None
     if tenant.stripe_customer_id and tenant.stripe_customer_id != customer:
@@ -172,7 +226,9 @@ async def _tenant_for_module_subscription(db: AsyncSession, obj: dict) -> Tenant
     return tenant
 
 
-async def _sync_module_subscription(db: AsyncSession, obj: dict, kind: str) -> None:
+async def _sync_module_subscription(
+    db: AsyncSession, obj: dict, kind: str, created: int | None
+) -> None:
     """customer.subscription.created/updated/deleted for a module subscription.
 
     Stores the subscription's status and items. The event carries the full
@@ -184,13 +240,16 @@ async def _sync_module_subscription(db: AsyncSession, obj: dict, kind: str) -> N
         log.warning("webhook_tenant_not_found_by_customer", customer=obj.get("customer"))
         return
     items = (obj.get("items") or {}).get("data") or []
-    _set_module_subscription(
+    applied = _set_module_subscription(
         tenant,
         obj["id"],
+        created=created,
         kind=kind,
         status=obj.get("status"),
         items=subscription_items_from_stripe(items),
     )
+    if not applied:
+        return
     log.info(
         "webhook_module_subscription_synced",
         tenant_id=str(tenant.id),
@@ -205,12 +264,25 @@ async def _module_invoice_target(db: AsyncSession, obj: dict) -> tuple[Tenant, s
     sub_id, metadata = _invoice_subscription(obj)
     if not sub_id:
         return None
-    tenant = await _tenant_by_customer(db, obj.get("customer", ""))
+    tenant = await _tenant_by_customer(db, obj.get("customer", ""), lock=True)
     if not tenant or sub_id == tenant.stripe_subscription_id:
         return None
     if _module_marker(metadata) or sub_id in (tenant.stripe_subscriptions or {}):
         return tenant, sub_id
     return None
+
+
+def _is_other_subscription(tenant: Tenant, obj: dict) -> bool:
+    """True if the invoice names a subscription other than the tenant's Team one.
+
+    Such an invoice belongs to a module subscription whose
+    ``subscription.created`` has not arrived yet (Stripe does not deliver in
+    order), and must not change the Team status.
+    """
+    sub_id, _ = _invoice_subscription(obj)
+    return bool(
+        sub_id and tenant.stripe_subscription_id and sub_id != tenant.stripe_subscription_id
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -251,7 +323,7 @@ async def process_event(db: AsyncSession, event: dict) -> None:
         # set below so we can audit it.
     else:
         try:
-            await handler(db, obj)
+            await handler(db, obj, created=event.get("created"))
         except Exception:  # pragma: no cover
             log.exception("webhook_handler_error", event_id=event_id, event_type=event_type)
             # Re-raise so the endpoint returns 500 → Stripe retries.
@@ -268,7 +340,9 @@ async def process_event(db: AsyncSession, event: dict) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def _on_checkout_completed(db: AsyncSession, obj: dict) -> None:
+async def _on_checkout_completed(
+    db: AsyncSession, obj: dict, *, created: int | None = None
+) -> None:
     """checkout.session.completed — the "cutover" event.
 
     Sets plan=team, stores Stripe IDs, marks subscription_status=active.
@@ -316,7 +390,9 @@ async def _on_checkout_completed(db: AsyncSession, obj: dict) -> None:
     )
 
 
-async def _on_subscription_created(db: AsyncSession, obj: dict) -> None:
+async def _on_subscription_created(
+    db: AsyncSession, obj: dict, *, created: int | None = None
+) -> None:
     """customer.subscription.created — records a new module subscription.
 
     A Team subscription is created by Checkout and handled by
@@ -324,17 +400,19 @@ async def _on_subscription_created(db: AsyncSession, obj: dict) -> None:
     """
     kind = _subscription_module_kind(obj)
     if kind:
-        await _sync_module_subscription(db, obj, kind)
+        await _sync_module_subscription(db, obj, kind, created)
 
 
-async def _on_subscription_updated(db: AsyncSession, obj: dict) -> None:
+async def _on_subscription_updated(
+    db: AsyncSession, obj: dict, *, created: int | None = None
+) -> None:
     """customer.subscription.updated — syncs status and seat quantity.
 
     A module subscription updates module entitlements only.
     """
     kind = _subscription_module_kind(obj)
     if kind:
-        await _sync_module_subscription(db, obj, kind)
+        await _sync_module_subscription(db, obj, kind, created)
         return
 
     tenant = await _tenant_by_customer(db, obj.get("customer", ""))
@@ -365,7 +443,9 @@ async def _on_subscription_updated(db: AsyncSession, obj: dict) -> None:
     )
 
 
-async def _on_subscription_deleted(db: AsyncSession, obj: dict) -> None:
+async def _on_subscription_deleted(
+    db: AsyncSession, obj: dict, *, created: int | None = None
+) -> None:
     """customer.subscription.deleted — marks subscription as canceled.
 
     Deleting a module subscription switches off its modules only; the Team
@@ -373,7 +453,7 @@ async def _on_subscription_deleted(db: AsyncSession, obj: dict) -> None:
     """
     kind = _subscription_module_kind(obj)
     if kind:
-        await _sync_module_subscription(db, {**obj, "status": "canceled"}, kind)
+        await _sync_module_subscription(db, {**obj, "status": "canceled"}, kind, created)
         return
 
     tenant = await _tenant_by_customer(db, obj.get("customer", ""))
@@ -387,7 +467,9 @@ async def _on_subscription_deleted(db: AsyncSession, obj: dict) -> None:
     log.info("webhook_subscription_deleted", tenant_id=str(tenant.id))
 
 
-async def _on_invoice_payment_failed(db: AsyncSession, obj: dict) -> None:
+async def _on_invoice_payment_failed(
+    db: AsyncSession, obj: dict, *, created: int | None = None
+) -> None:
     """invoice.payment_failed — sets subscription_status=past_due.
 
     For a module subscription, marks that subscription past_due instead, which
@@ -396,20 +478,23 @@ async def _on_invoice_payment_failed(db: AsyncSession, obj: dict) -> None:
     target = await _module_invoice_target(db, obj)
     if target:
         tenant, sub_id = target
-        _set_module_subscription(tenant, sub_id, status="past_due")
-        log.info("webhook_module_invoice_payment_failed", tenant_id=str(tenant.id))
+        if _set_module_subscription(tenant, sub_id, created=created, status="past_due"):
+            log.info("webhook_module_invoice_payment_failed", tenant_id=str(tenant.id))
         return
 
     tenant = await _tenant_by_customer(db, obj.get("customer", ""))
     if not tenant:
         log.warning("webhook_tenant_not_found_by_customer", customer=obj.get("customer"))
         return
+    if _is_other_subscription(tenant, obj):
+        log.info("webhook_invoice_for_unknown_subscription", tenant_id=str(tenant.id))
+        return
 
     tenant.subscription_status = SubscriptionStatus.PAST_DUE
     log.info("webhook_invoice_payment_failed", tenant_id=str(tenant.id))
 
 
-async def _on_invoice_paid(db: AsyncSession, obj: dict) -> None:
+async def _on_invoice_paid(db: AsyncSession, obj: dict, *, created: int | None = None) -> None:
     """invoice.paid — clears past_due / confirms active subscription.
 
     For a module subscription, does the same to that subscription only.
@@ -418,15 +503,17 @@ async def _on_invoice_paid(db: AsyncSession, obj: dict) -> None:
     if target:
         tenant, sub_id = target
         # A final invoice (step overage in arrears, say) can be paid after the
-        # subscription ended. Paying it must not reopen the subscription.
-        if (tenant.stripe_subscriptions or {}).get(sub_id, {}).get("status") != "canceled":
-            _set_module_subscription(tenant, sub_id, status="active")
-        log.info("webhook_module_invoice_paid", tenant_id=str(tenant.id))
+        # subscription ended. _set_module_subscription refuses to reopen it.
+        if _set_module_subscription(tenant, sub_id, created=created, status="active"):
+            log.info("webhook_module_invoice_paid", tenant_id=str(tenant.id))
         return
 
     tenant = await _tenant_by_customer(db, obj.get("customer", ""))
     if not tenant:
         log.warning("webhook_tenant_not_found_by_customer", customer=obj.get("customer"))
+        return
+    if _is_other_subscription(tenant, obj):
+        log.info("webhook_invoice_for_unknown_subscription", tenant_id=str(tenant.id))
         return
 
     tenant.subscription_status = SubscriptionStatus.ACTIVE

@@ -11,6 +11,7 @@ Tests cover:
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -20,6 +21,7 @@ from sqlalchemy import func, select
 from app.models.billing import StripeWebhookEvent
 from app.models.tenant import Plan, SubscriptionStatus, Tenant
 from app.models.user import User
+from app.services.billing import webhooks as wh
 from app.services.entitlements import Module, modules
 from tests.conftest import TestSessionLocal
 
@@ -527,10 +529,12 @@ def _sub_event(
     metadata: dict,
     event_id: str,
     status: str = "active",
+    created: int | None = None,
 ):
     return {
         "id": event_id,
         "type": event_type,
+        **({"created": created} if created is not None else {}),
         "data": {
             "object": {
                 "id": sub_id,
@@ -543,11 +547,19 @@ def _sub_event(
     }
 
 
-def _module_invoice_event(event_type: str, *, customer_id: str, sub_id: str, event_id: str):
+def _module_invoice_event(
+    event_type: str,
+    *,
+    customer_id: str,
+    sub_id: str,
+    event_id: str,
+    created: int | None = None,
+):
     # Current API shape: the subscription sits under parent.subscription_details.
     return {
         "id": event_id,
         "type": event_type,
+        **({"created": created} if created is not None else {}),
         "data": {
             "object": {
                 "customer": customer_id,
@@ -910,3 +922,175 @@ async def test_replayed_module_event_does_not_revert_items(client, monkeypatch):
     await _post(client, monkeypatch, first)  # Stripe retries the first delivery
 
     assert modules(await _load(tid)) == {Module.WORK_CLIENT}
+
+
+# ---------------------------------------------------------------------------
+# Ordering and concurrency
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_older_subscription_update_arriving_late_is_ignored(client, monkeypatch):
+    """Stripe does not deliver in order: an older update must not restore removed items."""
+    tid = await _seed_enterprise(client, monkeypatch, "cus_order")
+    newer = _sub_event(
+        "customer.subscription.updated",
+        sub_id="sub_ent_cus_order",
+        customer_id="cus_order",
+        items=[_item("promptly_work_client", 200)],
+        metadata=_ENTERPRISE,
+        event_id="evt_order_new",
+        created=2_000,
+    )
+    older = _sub_event(
+        "customer.subscription.updated",
+        sub_id="sub_ent_cus_order",
+        customer_id="cus_order",
+        items=[_item("promptly_work_client", 200), _item("promptly_suite_annual", 50)],
+        metadata=_ENTERPRISE,
+        event_id="evt_order_old",
+        created=1_000,
+    )
+    await _post(client, monkeypatch, newer)
+    await _post(client, monkeypatch, older)
+
+    t = await _load(tid)
+    assert modules(t) == {Module.WORK_CLIENT}
+    assert t.stripe_subscriptions["sub_ent_cus_order"]["event_created"] == 2_000
+
+
+@pytest.mark.asyncio
+async def test_older_invoice_paid_after_payment_failed_is_ignored(client, monkeypatch):
+    tid = await _seed_enterprise(client, monkeypatch, "cus_inv_order")
+    for event_type, event_id, created in [
+        ("invoice.payment_failed", "evt_io_fail", 2_000),
+        ("invoice.paid", "evt_io_paid_old", 1_000),
+    ]:
+        await _post(
+            client,
+            monkeypatch,
+            _module_invoice_event(
+                event_type,
+                customer_id="cus_inv_order",
+                sub_id="sub_ent_cus_inv_order",
+                event_id=event_id,
+                created=created,
+            ),
+        )
+    assert modules(await _load(tid)) == {Module.WORK_CLIENT}
+
+
+@pytest.mark.asyncio
+async def test_nothing_revives_a_cancelled_module_subscription(client, monkeypatch):
+    """After deletion, a late update or a failed invoice must not grant anything.
+
+    A failed invoice would set past_due, which keeps the free Work client.
+    """
+    tid = await _seed_enterprise(client, monkeypatch, "cus_dead")
+    items = [_item("promptly_work_client", 200), _item("promptly_atlas_annual", 50)]
+    await _post(
+        client,
+        monkeypatch,
+        _sub_event(
+            "customer.subscription.deleted",
+            sub_id="sub_ent_cus_dead",
+            customer_id="cus_dead",
+            status="canceled",
+            items=items,
+            metadata=_ENTERPRISE,
+            event_id="evt_dead_del",
+            created=1_000,
+        ),
+    )
+    await _post(
+        client,
+        monkeypatch,
+        _module_invoice_event(
+            "invoice.payment_failed",
+            customer_id="cus_dead",
+            sub_id="sub_ent_cus_dead",
+            event_id="evt_dead_fail",
+            created=1_100,
+        ),
+    )
+    assert modules(await _load(tid)) == set()
+
+    await _post(
+        client,
+        monkeypatch,
+        _sub_event(
+            "customer.subscription.updated",
+            sub_id="sub_ent_cus_dead",
+            customer_id="cus_dead",
+            status="active",
+            items=items,
+            metadata=_ENTERPRISE,
+            event_id="evt_dead_upd",
+            created=1_200,
+        ),
+    )
+    t = await _load(tid)
+    assert modules(t) == set()
+    assert t.stripe_subscriptions["sub_ent_cus_dead"]["status"] == "canceled"
+
+
+@pytest.mark.asyncio
+async def test_invoice_for_a_not_yet_known_subscription_leaves_team_alone(client, monkeypatch):
+    """An unmarked module invoice that beats its subscription.created event."""
+    tid = await _seed_active(customer_id="cus_early_inv")
+    await _post(
+        client,
+        monkeypatch,
+        _module_invoice_event(
+            "invoice.payment_failed",
+            customer_id="cus_early_inv",
+            sub_id="sub_overage_new",
+            event_id="evt_early_inv",
+        ),
+    )
+    t = await _load(tid)
+    assert t.subscription_status == SubscriptionStatus.ACTIVE
+    assert t.stripe_subscriptions == {}
+
+
+@pytest.mark.asyncio
+async def test_concurrent_module_events_do_not_lose_an_entry(client, monkeypatch):
+    """Two events for one tenant in flight at once both land in stripe_subscriptions.
+
+    Without the row lock, both transactions read the same JSON and the later
+    commit drops the other's entry.
+    """
+    tid = await _seed_active(customer_id="cus_race")
+    ent = _sub_event(
+        "customer.subscription.created",
+        sub_id="sub_race_ent",
+        customer_id="cus_race",
+        items=[_item("promptly_work_client", 200)],
+        metadata=_ENTERPRISE,
+        event_id="evt_race_ent",
+    )
+    quote = _sub_event(
+        "customer.subscription.created",
+        sub_id="sub_race_quote",
+        customer_id="cus_race",
+        items=[_item("promptly_learn_annual", 50)],
+        metadata=_QUOTE,
+        event_id="evt_race_quote",
+    )
+
+    async def second() -> None:
+        async with TestSessionLocal() as db:
+            await wh.process_event(db, quote)
+            await db.commit()
+
+    async with TestSessionLocal() as first:
+        await wh.process_event(first, ent)
+        task = asyncio.create_task(second())
+        await asyncio.sleep(0.5)
+        assert not task.done(), "second event should wait for the tenant row lock"
+        await first.commit()
+    await asyncio.wait_for(task, timeout=10)
+
+    t = await _load(tid)
+    assert set(t.stripe_subscriptions) == {"sub_race_ent", "sub_race_quote"}
+    assert modules(t) == {Module.WORK_CLIENT, Module.LEARN}
