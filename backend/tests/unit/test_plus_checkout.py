@@ -48,3 +48,22 @@ def test_missing_price_fails_loudly() -> None:
 def test_yearly_is_promoted_and_saves_24() -> None:
     opts = interval_options()
     assert opts[0]["interval"] == "yearly" and opts[0]["saves_eur"] == 24
+
+
+def test_automatic_tax_off_by_default_and_no_vat_id_for_consumers() -> None:
+    p = _params()
+    assert "automatic_tax" not in p and "tax_id_collection" not in p
+
+
+def test_automatic_tax_when_switched_on() -> None:
+    p = plus_checkout_params(
+        prices=PRICES,
+        interval="yearly",
+        user_id="u",
+        email="e",
+        success_url="s",
+        cancel_url="c",
+        automatic_tax=True,
+    )
+    assert p["automatic_tax"] == {"enabled": True}
+    assert "tax_id_collection" not in p

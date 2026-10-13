@@ -128,6 +128,11 @@ class Settings(BaseSettings):
     billing_portal_return_url: str = "http://localhost:3000/dashboard/billing"
     billing_checkout_success_url: str = "http://localhost:3000/dashboard/billing?upgraded=1"
     billing_checkout_cancel_url: str = "http://localhost:3000/dashboard/billing"
+    # Stripe Tax (promptly-guide#50). Off by default: Stripe rejects
+    # `automatic_tax` on an account with no head-office address and no tax
+    # registration, so dev and test accounts would fail at Checkout. Turn it
+    # on only where the dashboard set-up listed in the PR has been done.
+    stripe_automatic_tax: bool = False
 
     # ── Feature Flags ─────────────────────────────────────────────────
     research_all_data: bool = False
