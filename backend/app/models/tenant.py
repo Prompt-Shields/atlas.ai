@@ -99,7 +99,8 @@ class Tenant(GRCBase, TestDataMixin):
     # keyed by Stripe subscription id (added by 049_stripe_subscriptions):
     #   {"sub_…": {"kind": "enterprise" | "enterprise_modules" | "unmarked",
     #              "status": "<Stripe status>",
-    #              "items": {"<price lookup_key>": <quantity or null>}}}
+    #              "items": {"<price lookup_key>": <quantity or null>},
+    #              "event_created": <Stripe event.created of the last event applied>}}
     # These are the enterprise Work client subscription and one per accepted
     # module Quote; the Team subscription above is not among them. Items are
     # kept raw, not as a module list, so a subscription whose invoice is paid
