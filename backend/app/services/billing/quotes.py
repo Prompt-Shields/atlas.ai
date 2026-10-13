@@ -51,6 +51,9 @@ DAYS_UNTIL_DUE = 30
 # apart from the self-serve Team subscription stored on the tenant.
 BILLING_KIND = "enterprise_modules"
 
+# Countries Stripe can issue the virtual IBAN in for eu_bank_transfer.
+EU_BANK_TRANSFER_COUNTRIES = frozenset({"BE", "DE", "ES", "FR", "IE", "NL"})
+
 # A subscription in one of these states still carries the platform fee.
 _LIVE_STATUSES = {"active", "trialing", "past_due", "unpaid", "incomplete"}
 
@@ -66,6 +69,13 @@ def _get(obj, key: str, default=None):
     except (KeyError, TypeError):
         return default
     return default if value is None else value
+
+
+def _data(listing) -> list:
+    """Items of a Stripe list: a ListObject (``.data``) or an already-built list."""
+    if isinstance(listing, list):
+        return listing
+    return _get(listing, "data", [])
 
 
 def _bank_transfer_payment_settings(country: str) -> dict:
@@ -105,7 +115,7 @@ def resolve_prices(lookup_keys: Iterable[str]) -> dict[str, str]:
     """Map each lookup key to its active price id. Raise if any is missing."""
     keys = list(dict.fromkeys(lookup_keys))
     prices = stripe_client.list_prices(lookup_keys=keys, active=True, limit=len(keys))
-    found = {_get(p, "lookup_key"): _get(p, "id") for p in _get(prices, "data", [])}
+    found = {_get(p, "lookup_key"): _get(p, "id") for p in _data(prices)}
     missing = [k for k in keys if k not in found]
     if missing:
         raise QuoteError(f"No active Stripe price for lookup key(s): {', '.join(missing)}")
@@ -115,10 +125,10 @@ def resolve_prices(lookup_keys: Iterable[str]) -> dict[str, str]:
 def has_platform_fee(customer_id: str) -> bool:
     """True when a live subscription of this customer already bills the platform fee."""
     subs = stripe_client.list_subscriptions(customer=customer_id, status="all", limit=100)
-    for sub in _get(subs, "data", []):
+    for sub in _data(subs):
         if _get(sub, "status") not in _LIVE_STATUSES:
             continue
-        for item in _get(_get(sub, "items", {}), "data", []):
+        for item in _data(_get(sub, "items", {})):
             if _get(_get(item, "price", {}), "lookup_key") == PLATFORM_FEE_LOOKUP_KEY:
                 return True
     return False
@@ -218,11 +228,25 @@ def accept_quote(quote_id: str, *, bank_transfer_country: str | None = None):
     which Stripe creates at once and leaves as a draft for about an hour.
     Reconciliation of the customer's cash balance is pinned to automatic so a
     transfer is applied to the matching open invoice without manual work.
+
+    Safe to run again: if the quote is already accepted, for example because a
+    step after acceptance failed, the settings are applied again without a
+    second acceptance. The country is checked before anything is accepted, so
+    a typo cannot leave an accepted quote whose invoice has no bank details.
     """
-    country = bank_transfer_country or get_settings().stripe_bank_transfer_country
+    country = (bank_transfer_country or get_settings().stripe_bank_transfer_country).upper()
+    if country not in EU_BANK_TRANSFER_COUNTRIES:
+        raise QuoteError(
+            f"Bank-transfer country {country!r} is not one Stripe issues EU IBANs in; "
+            f"expected one of {', '.join(sorted(EU_BANK_TRANSFER_COUNTRIES))}"
+        )
     payment_settings = _bank_transfer_payment_settings(country)
 
-    quote = stripe_client.accept_quote(quote_id)
+    quote = stripe_client.retrieve_quote(quote_id)
+    if _get(quote, "status") == "accepted":
+        log.info("stripe_quote_already_accepted", quote=quote_id)
+    else:
+        quote = stripe_client.accept_quote(quote_id)
     subscription_id = _get(quote, "subscription")
     customer_id = _get(quote, "customer")
     if not subscription_id:

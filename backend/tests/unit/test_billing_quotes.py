@@ -72,6 +72,7 @@ def fake_stripe(monkeypatch):
     record("create_customer", {"id": "cus_new"})
     record("create_quote", lambda **kw: {"id": "qt_1", **kw})
     record("finalize_quote", {"id": "qt_1", "status": "open"})
+    record("retrieve_quote", {"id": "qt_1", "status": "open"})
     record(
         "accept_quote",
         {"id": "qt_1", "status": "accepted", "customer": "cus_1", "subscription": "sub_1"},
@@ -274,6 +275,61 @@ def test_accept_without_subscription_raises(fake_stripe, monkeypatch):
     with pytest.raises(quotes.QuoteError):
         quotes.accept_quote("qt_1", bank_transfer_country="IE")
     assert "modify_subscription" not in fake_stripe
+
+
+def test_accept_rerun_on_accepted_quote_reapplies_settings(fake_stripe, monkeypatch):
+    """A retry after a failed step must not accept twice, but must finish the job."""
+    monkeypatch.setattr(
+        "app.services.billing.stripe_client.retrieve_quote",
+        lambda qid: {"id": qid, "status": "accepted", "customer": "cus_1", "subscription": "sub_1"},
+    )
+    quotes.accept_quote("qt_1", bank_transfer_country="IE")
+    assert "accept_quote" not in fake_stripe
+    assert fake_stripe["modify_subscription"][0][0] == ("sub_1",)
+    assert fake_stripe["modify_invoice"][0][0] == ("in_1",)
+    assert fake_stripe["modify_cash_balance"][0][0] == ("cus_1",)
+
+
+@pytest.mark.parametrize("country", ["NO", "GB", "XX", ""])
+def test_accept_rejects_unsupported_country_before_accepting(fake_stripe, monkeypatch, country):
+    settings = MagicMock(stripe_bank_transfer_country=country)
+    monkeypatch.setattr("app.services.billing.quotes.get_settings", lambda: settings)
+    with pytest.raises(quotes.QuoteError, match="country"):
+        quotes.accept_quote("qt_1")
+    assert "accept_quote" not in fake_stripe
+    assert "retrieve_quote" not in fake_stripe
+
+
+def test_accept_normalises_country_case(fake_stripe):
+    quotes.accept_quote("qt_1", bank_transfer_country="nl")
+    _, kw = fake_stripe["modify_subscription"][0]
+    bt = kw["payment_settings"]["payment_method_options"]["customer_balance"]["bank_transfer"]
+    assert bt["eu_bank_transfer"] == {"country": "NL"}
+
+
+def test_plain_list_wrappers_are_understood(fake_stripe, monkeypatch):
+    """atlas.ai#16 adds list_prices/list_subscriptions wrappers that return lists.
+
+    If both PRs land, the fee check must still see the fee; reading ``data``
+    off a list would silently find nothing and bill the fee twice.
+    """
+    monkeypatch.setattr(
+        "app.services.billing.stripe_client.list_subscriptions",
+        lambda **kw: [
+            {
+                "status": "active",
+                "items": {"data": [{"price": {"lookup_key": quotes.PLATFORM_FEE_LOOKUP_KEY}}]},
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        "app.services.billing.stripe_client.list_prices",
+        lambda **kw: [{"id": PRICES[k], "lookup_key": k} for k in kw["lookup_keys"]],
+    )
+    assert quotes.has_platform_fee("cus_1") is True
+    assert quotes.resolve_prices(["promptly_atlas_annual"]) == {
+        "promptly_atlas_annual": "price_atlas"
+    }
 
 
 def test_accept_with_expanded_invoice(fake_stripe, monkeypatch):
