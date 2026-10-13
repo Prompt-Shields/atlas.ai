@@ -31,7 +31,8 @@ export interface GuidePilotMonth {
   topics: GuideFigure[];
   /** Where a topic's walkthrough ended (promptly-guide #85). */
   friction: GuideFigure[];
-  teams_too_small: string[];
+  /** How many teams were under the minimum group size; never which (promptly-guide #28). */
+  teams_too_small_count: number;
   suppressed_categories: Record<string, number>;
 }
 

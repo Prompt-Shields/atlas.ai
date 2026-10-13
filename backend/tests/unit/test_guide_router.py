@@ -182,7 +182,8 @@ async def test_ten_people_make_a_figure_and_nine_do_not(client: AsyncClient) -> 
             "band_lower": 80,
         }
     ]
-    assert body["teams_too_small"] == ["legal"]
+    assert body["teams_too_small_count"] == 1
+    assert "legal" not in r.text  # a team too small is counted, never named (#28)
     assert "chose to be counted" in body["note"]
 
 
@@ -197,7 +198,7 @@ async def test_one_tenant_never_sees_anothers_figures(client: AsyncClient) -> No
         headers=_admin(OTHER_TENANT_ID),
     )
     assert r.json()["figures"] == []
-    assert r.json()["teams_too_small"] == []
+    assert r.json()["teams_too_small_count"] == 0
 
 
 async def test_a_project_belongs_to_one_tenant(client: AsyncClient) -> None:

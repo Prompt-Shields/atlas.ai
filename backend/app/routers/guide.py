@@ -394,7 +394,7 @@ async def adoption_report(
             )
             for f in report.figures
         ],
-        teams_too_small=report.teams_too_small,
+        teams_too_small_count=len(report.teams_too_small),
         suppressed_categories=report.suppressed_categories,
         minimum_group_size=adoption.MINIMUM_GROUP_SIZE,
         note=OPT_IN_NOTE,
@@ -451,7 +451,7 @@ async def pilot_report(
                 not_finished=[_figure_out(f) for f in m.not_finished],
                 topics=[_figure_out(f) for f in m.topics],
                 friction=[_figure_out(f) for f in m.friction],
-                teams_too_small=m.teams_too_small,
+                teams_too_small_count=len(m.teams_too_small),
                 suppressed_categories=m.suppressed_categories,
             )
             for m in report.months

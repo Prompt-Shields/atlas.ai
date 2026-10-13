@@ -148,10 +148,10 @@ function MonthCard({ month, minimum }: { month: GuidePilotMonth; minimum: number
         label={(f) => frictionLabel(f.category_id)}
         empty="No task reached enough people to show."
       />
-      {(month.teams_too_small.length > 0 || left > 0) && (
+      {(month.teams_too_small_count > 0 || left > 0) && (
         <p className="text-xs text-gray-500">
-          {month.teams_too_small.length > 0 &&
-            `${month.teams_too_small.length} team(s) had fewer than ${minimum} people counted and are not shown. `}
+          {month.teams_too_small_count > 0 &&
+            `${month.teams_too_small_count} team(s) had fewer than ${minimum} people counted and are not shown. `}
           {left > 0 && `${left} figure(s) were left out for being about too few people.`}
         </p>
       )}

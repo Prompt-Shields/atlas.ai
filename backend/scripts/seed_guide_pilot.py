@@ -72,7 +72,7 @@ TEAMS: dict[str, tuple[int, dict[tuple[str, str], int]]] = {
             ("friction", "nordlys-expenses/new-claim/step-3"): 10,
         },
     ),
-    # Under the minimum group size: named in the report, without figures.
+    # Under the minimum group size: counted in the report, never named or shown.
     "legal": (6, {("app", "Claude"): 5, ("completion", "finished"): 4}),
 }
 

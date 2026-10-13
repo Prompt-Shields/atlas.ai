@@ -63,7 +63,7 @@ POST /api/v1/guide/adoption
 
 `GET /api/v1/guide/adoption/report?period=2026-09` (Analyst and above) runs the counts through the gate. The gate is a port of Guide's `AdoptionGate`, and the two must keep the same rules:
 
-- A team with **fewer than 10** contributors that month reports **nothing**, not even which categories it touched. Its name is listed under `teams_too_small`.
+- A team with **fewer than 10** contributors that month reports **nothing**, not even which categories it touched. Not even its name: the report says only how many teams were too small (`teams_too_small_count`). A team named beside "too small" would say that one to nine people in it took part that month, and an organisation names its own teams, so it could make one a team of one (promptly-guide #28, E4).
 - Within a team that reports, a category that reached fewer than 10 people is **suppressed, not rounded**. The report says how many were left out per team, but never which ones.
 - Figures are **bands** (`under 20%`, `20–29%` … `80% or more`), and there is **no team total**. No figure can be recovered by subtraction, and none can say "all of the team" or "none of them".
 - Only kinds the tenant offers right now are shown.

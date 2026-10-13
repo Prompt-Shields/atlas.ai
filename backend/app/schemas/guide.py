@@ -67,7 +67,10 @@ class GuideFigureOut(BaseModel):
 class GuideAdoptionReportOut(BaseModel):
     period: str
     figures: list[GuideFigureOut]
-    teams_too_small: list[str]
+    # How many teams were under the minimum group size, never which: a team's name
+    # beside "too small" says that one to nine people in it took part that month,
+    # and an organisation names its own teams (promptly-guide #28, E4).
+    teams_too_small_count: int
     suppressed_categories: dict[str, int]
     minimum_group_size: int
     # Said beside every figure: only people who opted in are counted (#38), so a
@@ -98,7 +101,10 @@ class GuidePilotMonthOut(BaseModel):
     not_finished: list[GuideFigureOut]
     topics: list[GuideFigureOut]
     friction: list[GuideFigureOut]
-    teams_too_small: list[str]
+    # How many teams were under the minimum group size, never which: a team's name
+    # beside "too small" says that one to nine people in it took part that month,
+    # and an organisation names its own teams (promptly-guide #28, E4).
+    teams_too_small_count: int
     suppressed_categories: dict[str, int]
 
 
