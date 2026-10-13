@@ -21,7 +21,7 @@ A Guide Mac is never enrolled as a device here. `devices/register` records
 promise rules out. The Firebase token is verified on each call to find the tenant
 and is then dropped: its name and groups are not read, and nothing from it is logged
 or stored. Its email is read by `GET /guide/groups` only, to find the person's SCIM
-groups.
+groups, and only when the token says Firebase verified it (`email_verified`).
 """
 
 from __future__ import annotations
@@ -106,6 +106,7 @@ class GuideCaller:
     subject: str
     # Read only by `GET /guide/groups`; never stored.
     email: str | None = None
+    email_verified: bool = False
 
 
 async def _connection_for(
@@ -166,6 +167,7 @@ async def require_guide_caller(
         offered=frozenset(offered),
         subject=identity.subject,
         email=identity.email,
+        email_verified=identity.email_verified,
     )
 
 
@@ -493,8 +495,13 @@ async def guide_groups(
     """The SCIM groups the signed-in person is in, by name, for group-based enablement:
     which of the organisation's documents Guide answers from. Found by the sign-in's
     email against the provisioned userName; none when the person is not provisioned,
-    or is deprovisioned (`active` false)."""
-    if not caller.email:
+    or is deprovisioned (`active` false).
+
+    An email the token does not mark verified (`email_verified` false or missing) is
+    not looked up, so nobody gets another person's groups by signing in with their
+    address unchecked. The answer is then no groups, not a 403: Guide drops its groups
+    on an empty list at once, but on a refusal it keeps the last ones until they lapse."""
+    if not caller.email or not caller.email_verified:
         return GuideGroupsOut(groups=[])
     rows = (
         await db.execute(

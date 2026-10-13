@@ -53,6 +53,7 @@ def token(
     kid: str = KID,
     key: str = PRIVATE_PEM,
     overrides: dict[str, Any] | None = None,
+    omit: tuple[str, ...] = (),
 ) -> str:
     now = int(time.time())
     claims: dict[str, Any] = {
@@ -63,11 +64,14 @@ def token(
         "exp": now + 3600,
         "auth_time": now - 10,
         "email": "kari@example.com",
+        "email_verified": True,
         "firebase": {"sign_in_provider": "saml.entra"},
     }
     if firebase_tenant is not None:
         claims["firebase"]["tenant"] = firebase_tenant
     claims.update(overrides or {})
+    for name in omit:
+        claims.pop(name, None)
     return jwt.encode(claims, key, algorithm="RS256", headers={"kid": kid})
 
 

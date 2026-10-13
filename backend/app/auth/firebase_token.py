@@ -16,7 +16,8 @@ token's unverified `aud` and then verifies against exactly that project.
 What a verified token is used for, and nothing more: the project and the Identity
 Platform tenant (to find the Atlas tenant), `sub` (to stop one person contributing
 twice in a month, see `guide_adoption_service.receipt`), and -- for `GET
-/guide/groups` only -- the email, to find the person's SCIM groups (#58). The name
+/guide/groups` only -- the email and whether Firebase verified it, to find the
+person's SCIM groups (#58). The name
 and the token's own group claims are never read, and nothing from the token is
 logged or stored.
 """
@@ -57,6 +58,10 @@ class FirebaseIdentity:
     # The sign-in's email, as the identity provider gave it to Firebase. Read only by
     # `GET /guide/groups`, to find the person's SCIM groups (#58); never stored.
     email: str | None = None
+    # The token's `email_verified`, true only when the claim is the JSON `true`. A
+    # project that lets people sign in with an email nobody checked would otherwise let
+    # them claim someone else's groups.
+    email_verified: bool = False
 
 
 def unverified_target(token: str) -> tuple[str, str]:
@@ -153,6 +158,7 @@ class FirebaseTokenVerifier:
             firebase_tenant=tenant,
             subject=subject,
             email=email.strip() if isinstance(email, str) and email.strip() else None,
+            email_verified=claims.get("email_verified") is True,
         )
 
 

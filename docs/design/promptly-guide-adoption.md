@@ -23,7 +23,7 @@ Guide signs people in through the organisation's identity provider, by way of a 
    - has a sign-in time and a non-empty `sub`.
 3. It sets the tenant GUC. From here on, RLS applies.
 
-From the token, Atlas uses only the project, the tenant and `sub`, plus the email on one route: `GET /api/v1/guide/groups` reads it to find the person's SCIM groups (see SCIM below). Atlas never logs or stores the email, and never reads the name or the token's own group claims. An unknown project gets the same `401` as a bad token, so nobody can find out which projects are connected by asking.
+From the token, Atlas uses only the project, the tenant and `sub`, plus the email on one route: `GET /api/v1/guide/groups` reads it, when the token marks it verified, to find the person's SCIM groups (see SCIM below). Atlas never logs or stores the email, and never reads the name or the token's own group claims. An unknown project gets the same `401` as a bad token, so nobody can find out which projects are connected by asking.
 
 ## What is stored
 
@@ -122,7 +122,7 @@ Atlas hosts a SCIM 2.0 endpoint at `/api/v1/scim/v2`. The customer's Entra ID pr
   - a group is a `displayName`, an `externalId` and its members.
 
   Entra also sends names, emails, titles, managers and phone numbers. Atlas accepts them and stores none of them.
-- **What Guide reads.** `GET /api/v1/guide/groups` uses the Guide caller's Firebase token. Atlas reads the token's email for this endpoint only, matches it, case-insensitively, against a provisioned, active `userName`, and returns that person's group names. Someone deprovisioned (`active` false) or never provisioned gets no groups. Nothing about what Guide does is joined to these tables.
+- **What Guide reads.** `GET /api/v1/guide/groups` uses the Guide caller's Firebase token. Atlas reads the token's email for this endpoint only, matches it, case-insensitively, against a provisioned, active `userName`, and returns that person's group names. Someone deprovisioned (`active` false) or never provisioned gets no groups. So does a sign-in whose token does not say `email_verified: true`: a Firebase project may let people sign in with an address nobody checked, and that must not get them another person's groups. The answer is an empty list rather than a `403`, because Guide drops its groups at once on an empty list but keeps the last ones, until they lapse, on any refusal. Nothing about what Guide does is joined to these tables.
 - **Checking it end to end.** `backend/scripts/scim_entra_lifecycle.py` replays Entra's provisioning pattern for two test people, in this order:
   - look up, create, and add to groups;
   - move between groups, rename a group, and change an email;

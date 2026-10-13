@@ -34,6 +34,24 @@ async def test_no_tenant_reads_as_empty() -> None:
 
 
 @pytest.mark.parametrize(
+    ("overrides", "omit", "verified"),
+    [
+        pytest.param({"email_verified": True}, (), True, id="true"),
+        pytest.param({"email_verified": False}, (), False, id="false"),
+        pytest.param({"email_verified": "true"}, (), False, id="the-string-true"),
+        pytest.param({}, ("email_verified",), False, id="missing"),
+    ],
+)
+async def test_an_email_counts_as_verified_only_when_the_claim_is_true(
+    overrides, omit, verified
+) -> None:
+    token = keys.token(overrides=overrides, omit=omit)
+    identity = await keys.verifier().verify(token, keys.PROJECT)
+    assert identity.email == "kari@example.com"
+    assert identity.email_verified is verified
+
+
+@pytest.mark.parametrize(
     "bad",
     [
         pytest.param({"aud": "someone-else"}, id="other-audience"),

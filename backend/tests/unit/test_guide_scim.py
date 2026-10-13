@@ -3,7 +3,8 @@
 What these defend: only the tenant's SCIM token gets in, and only to its own tenant;
 the calls Entra's provisioning makes work as RFC 7644 says; nothing but userName,
 externalId, active and group membership is kept; and Guide finds a person's groups by
-their sign-in, and none once they are deprovisioned.
+their sign-in, and none once they are deprovisioned or when the sign-in's email is not
+verified.
 """
 
 from __future__ import annotations
@@ -269,3 +270,29 @@ async def test_someone_not_provisioned_has_no_groups(client: AsyncClient) -> Non
     token = keys.token(overrides={"email": "nobody@nordlys.example"})
     r = await client.get("/api/v1/guide/groups", headers=auth_header(token))
     assert r.json() == {"groups": []}
+
+
+@pytest.mark.parametrize(
+    ("overrides", "omit", "expected"),
+    [
+        pytest.param({"email_verified": True}, (), ["Sales"], id="verified"),
+        pytest.param({"email_verified": False}, (), [], id="not-verified"),
+        pytest.param({}, ("email_verified",), [], id="claim-missing"),
+    ],
+)
+async def test_an_email_firebase_did_not_verify_gets_no_groups(
+    client: AsyncClient, overrides, omit, expected
+) -> None:
+    # A Firebase project may let people sign in with an address nobody checked.
+    # Such a sign-in must not get the groups, and with them the documents, of the
+    # person whose address it claims.
+    await _connect(client)
+    h = await _scim_token(client)
+    kari = await _user(client, h, "kari@nordlys.example")
+    await client.post(
+        f"{SCIM}/Groups", json={"displayName": "Sales", "members": [{"value": kari}]}, headers=h
+    )
+    token = keys.token(overrides={"email": "kari@nordlys.example", **overrides}, omit=omit)
+    r = await client.get("/api/v1/guide/groups", headers=auth_header(token))
+    assert r.status_code == 200, r.text
+    assert r.json() == {"groups": expected}
