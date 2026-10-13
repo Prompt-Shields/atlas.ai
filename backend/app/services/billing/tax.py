@@ -20,15 +20,59 @@ import re
 
 from app.services.billing import stripe_client
 
-# EU VAT number prefixes. Greece uses EL, not GR, and Northern Ireland
-# traders keep an XI number for goods; both are `eu_vat` in Stripe.
-EU_VAT_PREFIXES = frozenset(
-    "AT BE BG CY CZ DE DK EE EL ES FI FR HR HU IE IT LT LU LV MT NL PL PT RO SE SI SK XI".split()
-)
+# EU VAT number formats after the country prefix, as published for VIES.
+# Greece uses EL, not GR, and Northern Ireland traders keep an XI number for
+# goods; both are `eu_vat` in Stripe. Only the shape is checked here: Stripe
+# checks EU numbers against VIES itself, after the fact.
+_EU_VAT_FORMATS = {
+    "AT": r"U\d{8}",
+    "BE": r"[01]\d{9}",
+    "BG": r"\d{9,10}",
+    "CY": r"\d{8}[A-Z]",
+    "CZ": r"\d{8,10}",
+    "DE": r"\d{9}",
+    "DK": r"\d{8}",
+    "EE": r"\d{9}",
+    "EL": r"\d{9}",
+    "ES": r"[A-Z0-9]\d{7}[A-Z0-9]",
+    "FI": r"\d{8}",
+    "FR": r"[A-HJ-NP-Z0-9]{2}\d{9}",
+    "HR": r"\d{11}",
+    "HU": r"\d{8}",
+    "IE": r"\d{7}[A-W][A-IW]?|\d[A-Z+*]\d{5}[A-W]",
+    "IT": r"\d{11}",
+    "LT": r"\d{9}|\d{12}",
+    "LU": r"\d{8}",
+    "LV": r"\d{11}",
+    "MT": r"\d{8}",
+    "NL": r"\d{9}B\d{2}",
+    "PL": r"\d{10}",
+    "PT": r"\d{9}",
+    "RO": r"[1-9]\d{1,9}",
+    "SE": r"\d{10}01",
+    "SI": r"\d{8}",
+    "SK": r"\d{10}",
+    "XI": r"\d{9}|\d{12}|GD\d{3}|HA\d{3}",
+}
+EU_VAT_PREFIXES = frozenset(_EU_VAT_FORMATS)
+_EU_VAT = {cc: re.compile(rf"(?:{fmt})", re.ASCII) for cc, fmt in _EU_VAT_FORMATS.items()}
+
+# Buyers often write their ISO country code; VIES and Stripe want EL for Greece.
+_PREFIX_ALIASES = {"GR": "EL"}
 
 # Norwegian VAT number as Stripe wants it: nine-digit organisation number
 # followed by "MVA". Buyers often write "NO" in front, so we accept that.
-_NO_VAT = re.compile(r"^(?:NO)?(\d{9})MVA$")
+_NO_VAT = re.compile(r"(?:NO)?([89]\d{8})MVA", re.ASCII)
+_NO_ORG_WEIGHTS = (3, 2, 7, 6, 5, 4, 3, 2)
+
+
+def _valid_no_org_number(digits: str) -> bool:
+    """MOD11 check digit of a Norwegian organisation number (Brønnøysund)."""
+    total = sum(int(d) * w for d, w in zip(digits[:8], _NO_ORG_WEIGHTS, strict=True))
+    check = 11 - total % 11
+    if check == 11:
+        check = 0
+    return check != 10 and check == int(digits[8])
 
 
 def checkout_tax_params(*, enabled: bool, business: bool) -> dict:
@@ -43,6 +87,12 @@ def checkout_tax_params(*, enabled: bool, business: bool) -> dict:
     business should carry its address. Neither needs Stripe Tax, so they do
     not wait for ``enabled``; VAT IDs collected now are in place when it is
     switched on.
+
+    All three params are valid in both ``payment`` and ``subscription``
+    mode. Both callers pass ``customer_email``, not an existing
+    ``customer``; a caller that passes ``customer`` must also send
+    ``customer_update={"address": "auto", "name": "auto"}``, or Stripe
+    rejects ``automatic_tax`` and ``tax_id_collection``.
     """
     params: dict = {}
     if enabled:
@@ -56,16 +106,20 @@ def checkout_tax_params(*, enabled: bool, business: bool) -> dict:
 def tax_id_for(vat_id: str) -> tuple[str, str]:
     """Return Stripe's ``(type, value)`` for a Norwegian or EU VAT number.
 
-    Only the shape is checked here. Stripe checks EU numbers against VIES
-    itself, after the fact, and reports the result on the tax ID's
-    ``verification.status``.
+    Spaces, dots and dashes are dropped and letters upper-cased. A Norwegian
+    number must carry "MVA" and a valid organisation-number check digit; an
+    EU number must match its country's format, with ``GR`` read as ``EL``.
+    Stripe checks EU numbers against VIES itself, after the fact, and reports
+    the result on the tax ID's ``verification.status``.
     """
     value = re.sub(r"[\s.\-]", "", vat_id).upper()
-    no = _NO_VAT.match(value)
-    if no:
+    no = _NO_VAT.fullmatch(value)
+    if no and _valid_no_org_number(no.group(1)):
         return "no_vat", f"{no.group(1)}MVA"
-    if len(value) > 2 and value[:2] in EU_VAT_PREFIXES and value[2:].isalnum():
-        return "eu_vat", value
+    prefix = _PREFIX_ALIASES.get(value[:2], value[:2])
+    fmt = _EU_VAT.get(prefix)
+    if fmt is not None and fmt.fullmatch(value[2:]):
+        return "eu_vat", prefix + value[2:]
     raise ValueError(f"not a Norwegian or EU VAT number: {vat_id!r}")
 
 

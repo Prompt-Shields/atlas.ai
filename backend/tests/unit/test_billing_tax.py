@@ -63,13 +63,21 @@ def test_config_flag_defaults_on():
 @pytest.mark.parametrize(
     ("raw", "expected"),
     [
-        ("123456789MVA", ("no_vat", "123456789MVA")),
-        ("NO 123 456 789 MVA", ("no_vat", "123456789MVA")),
-        ("no123456789mva", ("no_vat", "123456789MVA")),
+        ("923609016MVA", ("no_vat", "923609016MVA")),
+        ("NO 923 609 016 MVA", ("no_vat", "923609016MVA")),
+        ("no923609016mva", ("no_vat", "923609016MVA")),
+        ("NO-974.760.673-MVA", ("no_vat", "974760673MVA")),
         ("DE123456789", ("eu_vat", "DE123456789")),
         ("se 5560000000 01", ("eu_vat", "SE556000000001")),
         ("EL123456789", ("eu_vat", "EL123456789")),
+        # Greek buyers often write the ISO code; VIES and Stripe want EL.
+        ("GR123456789", ("eu_vat", "EL123456789")),
         ("NL.123456789.B01", ("eu_vat", "NL123456789B01")),
+        ("ATU12345678", ("eu_vat", "ATU12345678")),
+        ("FR AB 123456789", ("eu_vat", "FRAB123456789")),
+        ("ESX1234567Z", ("eu_vat", "ESX1234567Z")),
+        ("IE1234567FA", ("eu_vat", "IE1234567FA")),
+        ("XI123456789", ("eu_vat", "XI123456789")),
     ],
 )
 def test_tax_id_for_classifies(raw, expected):
@@ -78,7 +86,31 @@ def test_tax_id_for_classifies(raw, expected):
 
 @pytest.mark.parametrize(
     "raw",
-    ["", "123456789", "GR123456789", "GB123456789", "US12-3456789", "NO12345678MVA", "DE"],
+    [
+        "",
+        "123456789",
+        "GB123456789",
+        "US12-3456789",
+        "DE",
+        # Norway: missing MVA, wrong length, bad MOD11 check digit, not 8/9.
+        "NO923609016",
+        "NO92360901MVA",
+        "123456789MVA",
+        "923609017MVA",
+        "123456785MVA",
+        # NO is not an EU prefix, so a Norwegian number cannot slip in as eu_vat.
+        "NO923609016MV",
+        # EU: wrong length or shape for the country.
+        "DE12345678",
+        "DE1234567890",
+        "DEABCDEFGHI",
+        "AT12345678",
+        "NL123456789",
+        "SE5560000000",
+        "BE212345678",
+        # Non-ASCII digits are not VAT digits.
+        "DE１２３４５６７８９",
+    ],
 )
 def test_tax_id_for_rejects(raw):
     with pytest.raises(ValueError, match="not a Norwegian or EU VAT number"):
@@ -112,8 +144,8 @@ def fake_stripe(monkeypatch):
 
 
 def test_attach_norwegian_vat_id(fake_stripe):
-    result = tax.attach_vat_id("cus_1", "NO 999 888 777 MVA")
-    assert fake_stripe.created == [("cus_1", {"type": "no_vat", "value": "999888777MVA"})]
+    result = tax.attach_vat_id("cus_1", "NO 974 760 673 MVA")
+    assert fake_stripe.created == [("cus_1", {"type": "no_vat", "value": "974760673MVA"})]
     assert result["id"] == "txi_new"
 
 
@@ -131,8 +163,8 @@ def test_attach_is_idempotent(fake_stripe):
 
 def test_attach_adds_alongside_a_different_id(fake_stripe):
     fake_stripe.existing = [{"id": "txi_old", "type": "eu_vat", "value": "DE123456789"}]
-    tax.attach_vat_id("cus_4", "123456789MVA")
-    assert fake_stripe.created == [("cus_4", {"type": "no_vat", "value": "123456789MVA"})]
+    tax.attach_vat_id("cus_4", "923609016MVA")
+    assert fake_stripe.created == [("cus_4", {"type": "no_vat", "value": "923609016MVA"})]
 
 
 def test_attach_rejects_bad_number_without_calling_stripe(fake_stripe):
