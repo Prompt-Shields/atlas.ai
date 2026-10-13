@@ -178,6 +178,36 @@
   --color-primary-950: #0e2360;
 }
 
+/* Likewise the neutrals: gray and slate (about 1,800 uses, often page and card
+   backgrounds, borders and secondary text) are redrawn on the theme's snow and
+   ink, so 50 is --background, 100 --muted, 200 --border, 500 --muted-foreground
+   and 900 --foreground. Text contrast on white is the same as Tailwind's or
+   higher at every step (500: 5.9:1). */
+@theme {
+  --color-gray-50: #fafaf9;
+  --color-gray-100: #f3f4f5;
+  --color-gray-200: #e4e6e8;
+  --color-gray-300: #cdd1d5;
+  --color-gray-400: #98a1ae;
+  --color-gray-500: #5c6670;
+  --color-gray-600: #4a535c;
+  --color-gray-700: #343b43;
+  --color-gray-800: #1e232c;
+  --color-gray-900: #101418;
+  --color-gray-950: #0a0d10;
+  --color-slate-50: #fafaf9;
+  --color-slate-100: #f3f4f5;
+  --color-slate-200: #e4e6e8;
+  --color-slate-300: #cdd1d5;
+  --color-slate-400: #98a1ae;
+  --color-slate-500: #5c6670;
+  --color-slate-600: #4a535c;
+  --color-slate-700: #343b43;
+  --color-slate-800: #1e232c;
+  --color-slate-900: #101418;
+  --color-slate-950: #0a0d10;
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;
