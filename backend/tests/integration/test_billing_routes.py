@@ -6,6 +6,7 @@ Tests:
   - checkout-session: trial_period_days included when trial days remain (remaining >= 1)
   - checkout-session: client_reference_id + metadata present in Stripe call args
   - checkout-session: quantity = max(5, activated_users)
+  - checkout-session: VAT ID always collected; automatic_tax only with the flag
   - portal-session: requires stripe_customer_id
   - entitlements: shape + hard_locked=True when trial expired without subscription
   - entitlements: hard_locked=False when subscription present
@@ -216,6 +217,35 @@ async def test_checkout_quantity_uses_max5_or_activated(client, monkeypatch):
     )
     assert resp.status_code == 200
     assert captured_calls[-1]["line_items"][0]["quantity"] == 8
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("flag", [False, True])
+async def test_checkout_tax_follows_flag(client, monkeypatch, flag):
+    """automatic_tax follows stripe_automatic_tax; VAT ID collection does not."""
+    from app.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "stripe_automatic_tax", flag)
+    captured = {}
+    monkeypatch.setattr(
+        "app.services.billing.stripe_client.create_checkout_session",
+        lambda **kw: captured.update(kw) or type("S", (), {"url": "u"})(),
+    )
+
+    _, token = await _seed_tenant_admin(email_verified=True, trial_delta_days=5)
+    resp = await client.post(
+        "/api/v1/billing/checkout-session",
+        json={"interval": "annual"},
+        headers=auth_header(token),
+    )
+    assert resp.status_code == 200
+    assert ("automatic_tax" in captured) is flag
+    if flag:
+        assert captured["automatic_tax"] == {"enabled": True}
+    assert captured["tax_id_collection"] == {"enabled": True}
+    assert captured["billing_address_collection"] == "required"
+    # Reverse charge is Stripe Tax's call; we never mark a customer exempt.
+    assert "tax_exempt" not in str(captured)
 
 
 # ---------------------------------------------------------------------------

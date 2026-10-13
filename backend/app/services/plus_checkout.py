@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from typing import Literal
 
+from app.services.billing.tax import checkout_tax_params
+
 Interval = Literal["monthly", "yearly"]
 
 PLUS_MONTHLY_EUR = 9
@@ -27,8 +29,14 @@ def plus_checkout_params(
     email: str,
     success_url: str,
     cancel_url: str,
+    automatic_tax: bool = False,
 ) -> dict:
-    """Params for `stripe.checkout.Session.create` upgrading a Free user to Plus."""
+    """Params for `stripe.checkout.Session.create` upgrading a Free user to Plus.
+
+    ``automatic_tax`` is `Settings.stripe_automatic_tax`. Plus buyers are
+    consumers, so no VAT ID is collected; Stripe Tax charges them where the
+    account is registered.
+    """
     price = prices.get(interval, "")
     if not price:
         raise ValueError(f"no Stripe price configured for Plus {interval}")
@@ -42,6 +50,7 @@ def plus_checkout_params(
         "metadata": {"user_id": user_id, "plan": "plus", "interval": interval},
         "success_url": success_url,
         "cancel_url": cancel_url,
+        **checkout_tax_params(enabled=automatic_tax, business=False),
     }
 
 
