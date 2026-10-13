@@ -77,10 +77,14 @@ async def test_start_creates_customer_and_free_subscription(stripe_mock):
     t = _tenant()
     db = AsyncMock()
 
-    await enterprise.start_work_client(db, t, provisioned_users=1000)
+    await enterprise.start_work_client(
+        db, t, provisioned_users=1000, billing_email="ap@acme.example"
+    )
 
     assert t.stripe_customer_id == "cus_new"
     assert stripe_mock.create_customer.call_args.kwargs["metadata"] == {"tenant_id": str(t.id)}
+    # send_invoice needs an email on the customer.
+    assert stripe_mock.create_customer.call_args.kwargs["email"] == "ap@acme.example"
     kw = stripe_mock.create_subscription.call_args.kwargs
     assert kw["customer"] == "cus_new"
     assert kw["items"] == [{"price": PRICE_IDS[catalog.WORK_CLIENT], "quantity": 1000}]
@@ -88,6 +92,16 @@ async def test_start_creates_customer_and_free_subscription(stripe_mock):
     assert kw["metadata"][enterprise.KIND_KEY] == enterprise.KIND_ENTERPRISE
     assert kw["metadata"][enterprise.PILOT_KEY] == "false"
     assert kw["idempotency_key"] == f"promptly-work-client-{t.id}"
+
+
+@pytest.mark.asyncio
+async def test_start_without_customer_needs_billing_email(stripe_mock):
+    t = _tenant()
+    with pytest.raises(enterprise.MissingBillingEmail):
+        await enterprise.start_work_client(AsyncMock(), t, provisioned_users=10)
+    stripe_mock.create_customer.assert_not_called()
+    stripe_mock.create_subscription.assert_not_called()
+    assert t.stripe_customer_id is None
 
 
 @pytest.mark.asyncio

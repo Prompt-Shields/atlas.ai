@@ -2,11 +2,11 @@
 
 Business plan, "Stripe setup" (Prompt-Shields/promptly-guide#45, #46, #47):
 
-* Every enterprise gets one subscription from day one, holding the €0 Work
+* Every enterprise gets one subscription from day one, holding the free Work
   client price with ``quantity`` = provisioned users.
 * Each paid module (Atlas.AI, Learn, Adopt, Suite) is a subscription item on
   that same subscription, with ``quantity`` = licensed users.
-* The €10,000 platform fee is added once, with the first paid module, and is
+* The annual platform fee is added once, with the first paid module, and is
   waived while the customer is a pilot.
 
 Stripe is the source of truth. The subscription is found by listing the
@@ -86,12 +86,29 @@ def _module_key(module: str) -> str:
         ) from None
 
 
-async def ensure_customer(db: AsyncSession, tenant: Tenant) -> str:
-    """Return the tenant's Stripe customer id, creating the customer if needed."""
+class MissingBillingEmail(EnterpriseBillingError):
+    pass
+
+
+async def ensure_customer(
+    db: AsyncSession, tenant: Tenant, *, billing_email: str | None = None
+) -> str:
+    """Return the tenant's Stripe customer id, creating the customer if needed.
+
+    The subscription is invoiced with ``collection_method=send_invoice``, and
+    Stripe refuses to send an invoice to a customer without an email. So a
+    new customer needs ``billing_email``. An existing customer is left as it
+    is.
+    """
     if tenant.stripe_customer_id:
         return tenant.stripe_customer_id
+    if not billing_email:
+        raise MissingBillingEmail(
+            f"Tenant {tenant.id} has no Stripe customer; pass billing_email to create one"
+        )
     customer = stripe_client.create_customer(
         name=tenant.name,
+        email=billing_email,
         metadata={"tenant_id": str(tenant.id)},
         # Two concurrent calls create one customer, not two.
         idempotency_key=f"promptly-customer-{tenant.id}",
@@ -123,17 +140,23 @@ def _require_subscription(tenant: Tenant):
 
 
 async def start_work_client(
-    db: AsyncSession, tenant: Tenant, *, provisioned_users: int, pilot: bool = False
+    db: AsyncSession,
+    tenant: Tenant,
+    *,
+    provisioned_users: int,
+    pilot: bool = False,
+    billing_email: str | None = None,
 ):
     """Put an enterprise on the free Work client subscription (one per tenant).
 
     Idempotent: if the tenant already has one, only its quantity is brought
     up to date, and ``pilot`` is ignored (use ``end_pilot`` to change it).
+    ``billing_email`` is needed only when the tenant has no Stripe customer.
     """
     if provisioned_users < 0:
         raise ValueError("provisioned_users must not be negative")
 
-    customer_id = await ensure_customer(db, tenant)
+    customer_id = await ensure_customer(db, tenant, billing_email=billing_email)
     existing = find_enterprise_subscription(customer_id)
     if existing is not None:
         item = _items_by_lookup_key(existing)[catalog.WORK_CLIENT]

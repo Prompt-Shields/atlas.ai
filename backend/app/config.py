@@ -125,6 +125,10 @@ class Settings(BaseSettings):
     stripe_webhook_secret: str = ""
     stripe_price_team_monthly: str = ""
     stripe_price_team_annual: str = ""
+    # JSON file of Promptly catalogue amounts ({lookup_key: cents}) read by
+    # scripts/stripe_catalog.py. Kept outside the repository: pricing must not
+    # be committed (CONTRIBUTING.md).
+    stripe_catalog_amounts_file: str = ""
     billing_portal_return_url: str = "http://localhost:3000/dashboard/billing"
     billing_checkout_success_url: str = "http://localhost:3000/dashboard/billing?upgraded=1"
     billing_checkout_cancel_url: str = "http://localhost:3000/dashboard/billing"

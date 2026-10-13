@@ -2,16 +2,31 @@
 
 Stripe is replaced by an in-memory fake patched over the ``stripe_client``
 wrappers, so the tests can check that a second run changes nothing.
+
+The amounts here are made up. Real prices are never committed to this
+repository; the script reads them from a file outside it.
 """
 
 from __future__ import annotations
 
 import itertools
+import json
 
 import pytest
 import stripe
 
 from app.services.billing import catalog, stripe_client
+
+# Fixture amounts in cents. Deliberately not the real prices.
+AMOUNTS: dict[str, int] = {
+    catalog.WORK_CLIENT: 0,
+    catalog.ATLAS_ANNUAL: 1111,
+    catalog.LEARN_ANNUAL: 2222,
+    catalog.ADOPT_ANNUAL: 3333,
+    catalog.SUITE_ANNUAL: 4444,
+    catalog.PLATFORM_FEE_ANNUAL: 555_555,
+    catalog.STEP_OVERAGE: 7,
+}
 
 
 class FakeStripe:
@@ -115,17 +130,57 @@ def test_lookup_keys_are_the_agreed_contract():
     }
 
 
-def test_amounts_match_business_plan():
-    amounts = {p.lookup_key: p.unit_amount for p in catalog.PRICES}
-    assert amounts == {
-        catalog.WORK_CLIENT: 0,
-        catalog.ATLAS_ANNUAL: 6000,
-        catalog.LEARN_ANNUAL: 2400,
-        catalog.ADOPT_ANNUAL: 4800,
-        catalog.SUITE_ANNUAL: 10800,
-        catalog.PLATFORM_FEE_ANNUAL: 1_000_000,
-        catalog.STEP_OVERAGE: 4,
-    }
+def test_no_amounts_in_the_code():
+    """Pricing must not be committed (CONTRIBUTING.md); specs carry no amount."""
+    assert all(not hasattr(p, "unit_amount") for p in catalog.PRICES)
+
+
+# ---------------------------------------------------------------------------
+# Amounts file
+# ---------------------------------------------------------------------------
+
+
+def test_validate_amounts_accepts_whole_cents():
+    assert catalog.validate_amounts(AMOUNTS) == AMOUNTS
+
+
+@pytest.mark.parametrize("bad", [12.5, 12.0, "1200", True, -1, None])
+def test_validate_amounts_refuses_non_cents(bad):
+    with pytest.raises(catalog.AmountsError, match=catalog.ATLAS_ANNUAL):
+        catalog.validate_amounts({**AMOUNTS, catalog.ATLAS_ANNUAL: bad})
+
+
+def test_validate_amounts_refuses_missing_and_unknown_keys():
+    partial = {k: v for k, v in AMOUNTS.items() if k != catalog.SUITE_ANNUAL}
+    with pytest.raises(catalog.AmountsError, match="missing promptly_suite_annual"):
+        catalog.validate_amounts(partial)
+    with pytest.raises(catalog.AmountsError, match="unknown promptly_typo"):
+        catalog.validate_amounts({**AMOUNTS, "promptly_typo": 1})
+    with pytest.raises(catalog.AmountsError, match="JSON object"):
+        catalog.validate_amounts([1, 2])
+
+
+def test_load_amounts_reads_json(tmp_path):
+    path = tmp_path / "amounts.json"
+    path.write_text(json.dumps(AMOUNTS))
+    assert catalog.load_amounts(path) == AMOUNTS
+
+
+def test_load_amounts_reports_missing_and_malformed_files(tmp_path):
+    with pytest.raises(catalog.AmountsError, match="not found"):
+        catalog.load_amounts(tmp_path / "nope.json")
+    bad = tmp_path / "bad.json"
+    bad.write_text("{not json")
+    with pytest.raises(catalog.AmountsError, match="cannot read"):
+        catalog.load_amounts(bad)
+
+
+@pytest.mark.parametrize(
+    ("cents", "shown"),
+    [(0, "0.00 EUR/year"), (7, "0.07 EUR/year"), (1234, "12.34 EUR/year"), (100, "1.00 EUR/year")],
+)
+def test_format_amount_uses_integer_cents(cents, shown):
+    assert catalog.format_amount(cents, "year") == shown
 
 
 def test_subscription_prices_share_the_yearly_interval():
@@ -148,7 +203,7 @@ def test_every_price_has_a_product():
 
 
 def test_first_run_creates_everything(fake):
-    actions = catalog.sync_catalog()
+    actions = catalog.sync_catalog(AMOUNTS)
     assert {a.verb for a in actions} == {"create"}
     assert set(fake.products) == {p.id for p in catalog.PRODUCTS}
     assert len(fake.prices) == len(catalog.PRICES)
@@ -156,7 +211,7 @@ def test_first_run_creates_everything(fake):
 
 
 def test_meter_sums_guided_steps_per_customer(fake):
-    catalog.sync_catalog()
+    catalog.sync_catalog(AMOUNTS)
     meter = fake.meters[0]
     assert meter["event_name"] == "guided_step"
     assert meter["default_aggregation"] == {"formula": "sum"}
@@ -164,9 +219,10 @@ def test_meter_sums_guided_steps_per_customer(fake):
 
 
 def test_created_prices_have_expected_shape(fake):
-    catalog.sync_catalog()
+    catalog.sync_catalog(AMOUNTS)
+    for key, cents in AMOUNTS.items():
+        assert _by_key(fake, key)["unit_amount"] == cents
     work = _by_key(fake, catalog.WORK_CLIENT)
-    assert work["unit_amount"] == 0
     assert work["currency"] == "eur"
     assert work["recurring"] == {"interval": "year", "usage_type": "licensed"}
     assert work["tax_behavior"] == "exclusive"
@@ -180,49 +236,41 @@ def test_created_prices_have_expected_shape(fake):
 
 
 def test_second_run_changes_nothing(fake):
-    catalog.sync_catalog()
+    catalog.sync_catalog(AMOUNTS)
     fake.writes.clear()
-    actions = catalog.sync_catalog()
+    actions = catalog.sync_catalog(AMOUNTS)
     assert {a.verb for a in actions} == {"ok"}
     assert fake.writes == []
 
 
 def test_dry_run_writes_nothing(fake):
-    actions = catalog.sync_catalog(dry_run=True)
+    actions = catalog.sync_catalog(AMOUNTS, dry_run=True)
     assert fake.writes == []
     assert {a.verb for a in actions} == {"create"}
     assert len(actions) == len(catalog.PRODUCTS) + len(catalog.METERS) + len(catalog.PRICES)
 
 
-def test_changed_amount_replaces_price_and_moves_lookup_key(fake, monkeypatch):
-    catalog.sync_catalog()
+def test_changed_amount_replaces_price_and_moves_lookup_key(fake):
+    catalog.sync_catalog(AMOUNTS)
     old = _by_key(fake, catalog.ATLAS_ANNUAL)
 
-    new_prices = tuple(
-        catalog.PriceSpec(**{**p.__dict__, "unit_amount": 7200})
-        if p.lookup_key == catalog.ATLAS_ANNUAL
-        else p
-        for p in catalog.PRICES
-    )
-    monkeypatch.setattr(catalog, "PRICES", new_prices)
-
-    actions = catalog.sync_catalog()
+    actions = catalog.sync_catalog({**AMOUNTS, catalog.ATLAS_ANNUAL: 9999})
     replaced = [a for a in actions if a.verb == "replace"]
     assert [a.key for a in replaced] == [catalog.ATLAS_ANNUAL]
 
     current = _by_key(fake, catalog.ATLAS_ANNUAL)
-    assert current["unit_amount"] == 7200
+    assert current["unit_amount"] == 9999
     assert current["id"] != old["id"]
     assert old["active"] is False
     assert old["lookup_key"] is None
 
 
 def test_archived_price_and_product_are_reactivated(fake):
-    catalog.sync_catalog()
+    catalog.sync_catalog(AMOUNTS)
     _by_key(fake, catalog.LEARN_ANNUAL)["active"] = False
     fake.products["promptly_learn"]["active"] = False
 
-    actions = {(a.kind, a.key): a for a in catalog.sync_catalog()}
+    actions = {(a.kind, a.key): a for a in catalog.sync_catalog(AMOUNTS)}
     assert actions[("price", catalog.LEARN_ANNUAL)].verb == "update"
     assert actions[("product", "promptly_learn")].verb == "update"
     assert _by_key(fake, catalog.LEARN_ANNUAL)["active"] is True
@@ -231,15 +279,15 @@ def test_archived_price_and_product_are_reactivated(fake):
 
 
 def test_inactive_meter_is_reactivated_not_duplicated(fake):
-    catalog.sync_catalog()
+    catalog.sync_catalog(AMOUNTS)
     fake.meters[0]["status"] = "inactive"
-    catalog.sync_catalog()
+    catalog.sync_catalog(AMOUNTS)
     assert len(fake.meters) == 1
     assert fake.meters[0]["status"] == "active"
 
 
 def test_price_id_resolves_active_price(fake):
-    catalog.sync_catalog()
+    catalog.sync_catalog(AMOUNTS)
     assert catalog.price_id(catalog.SUITE_ANNUAL) == _by_key(fake, catalog.SUITE_ANNUAL)["id"]
 
 
@@ -275,28 +323,66 @@ def test_retrieve_product_reraises_other_errors(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_script_refuses_live_key(monkeypatch, capsys):
+@pytest.fixture
+def amounts_file(tmp_path) -> str:
+    path = tmp_path / "catalog-amounts.json"
+    path.write_text(json.dumps(AMOUNTS))
+    return str(path)
+
+
+def test_script_refuses_live_key(monkeypatch, capsys, amounts_file):
     from scripts import stripe_catalog
 
     monkeypatch.setattr(stripe_catalog.get_settings(), "stripe_secret_key", "sk_live_x")
-    assert stripe_catalog.main([]) == 2
+    assert stripe_catalog.main(["--amounts", amounts_file]) == 2
     assert "--live" in capsys.readouterr().err
 
 
-def test_script_dry_run_without_key_prints_plan(monkeypatch, capsys):
-    from scripts import stripe_catalog
-
-    monkeypatch.setattr(stripe_catalog.get_settings(), "stripe_secret_key", "")
-    assert stripe_catalog.main(["--dry-run"]) == 0
-    out = capsys.readouterr().out
-    for p in catalog.PRICES:
-        assert p.lookup_key in out
-
-
-def test_script_runs_sync_with_test_key(monkeypatch, fake, capsys):
+def test_script_refuses_to_run_without_amounts(monkeypatch, fake, capsys):
     from scripts import stripe_catalog
 
     monkeypatch.setattr(stripe_catalog.get_settings(), "stripe_secret_key", "sk_test_x")
-    assert stripe_catalog.main(["--dry-run"]) == 0
+    monkeypatch.setattr(stripe_catalog.get_settings(), "stripe_catalog_amounts_file", "")
+    assert stripe_catalog.main([]) == 2
+    assert "amounts" in capsys.readouterr().err
+    assert fake.writes == []
+
+
+def test_script_refuses_invalid_amounts(monkeypatch, fake, capsys, tmp_path):
+    from scripts import stripe_catalog
+
+    bad = tmp_path / "amounts.json"
+    bad.write_text(json.dumps({**AMOUNTS, catalog.STEP_OVERAGE: 0.04}))
+    monkeypatch.setattr(stripe_catalog.get_settings(), "stripe_secret_key", "sk_test_x")
+    assert stripe_catalog.main(["--amounts", str(bad)]) == 2
+    assert catalog.STEP_OVERAGE in capsys.readouterr().err
+    assert fake.writes == []
+
+
+def test_script_reads_amounts_file_from_settings(monkeypatch, fake, capsys, amounts_file):
+    from scripts import stripe_catalog
+
+    monkeypatch.setattr(stripe_catalog.get_settings(), "stripe_secret_key", "sk_test_x")
+    monkeypatch.setattr(stripe_catalog.get_settings(), "stripe_catalog_amounts_file", amounts_file)
+    assert stripe_catalog.main([]) == 0
+    assert _by_key(fake, catalog.SUITE_ANNUAL)["unit_amount"] == AMOUNTS[catalog.SUITE_ANNUAL]
+
+
+def test_script_dry_run_without_key_prints_plan(monkeypatch, capsys, amounts_file):
+    from scripts import stripe_catalog
+
+    monkeypatch.setattr(stripe_catalog.get_settings(), "stripe_secret_key", "")
+    assert stripe_catalog.main(["--dry-run", "--amounts", amounts_file]) == 0
+    out = capsys.readouterr().out
+    for p in catalog.PRICES:
+        assert p.lookup_key in out
+    assert "44.44 EUR/year" in out
+
+
+def test_script_runs_sync_with_test_key(monkeypatch, fake, capsys, amounts_file):
+    from scripts import stripe_catalog
+
+    monkeypatch.setattr(stripe_catalog.get_settings(), "stripe_secret_key", "sk_test_x")
+    assert stripe_catalog.main(["--dry-run", "--amounts", amounts_file]) == 0
     assert "test mode (dry run" in capsys.readouterr().out
     assert fake.writes == []
