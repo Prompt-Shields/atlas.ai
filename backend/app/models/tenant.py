@@ -95,6 +95,19 @@ class Tenant(GRCBase, TestDataMixin):
     )
     plan_changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    # The free Work client's 90-day rule (promptly-guide#52), added by 051.
+    # Neither created_at nor the trial fields fit: an Atlas tenant can exist
+    # long before it deploys the Work client, and the trial is Atlas's own.
+    # NULL = the tenant has not started the Work client.
+    work_client_started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # When an admin declared that Guide uses the organisation's own model
+    # endpoint. A declaration, not a check: Atlas never sees the endpoint.
+    own_endpoint_declared_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
     # Relationships
     organisations: Mapped[list[Organisation]] = relationship(
         "Organisation", back_populates="tenant", cascade="all, delete-orphan"
