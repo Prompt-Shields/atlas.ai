@@ -24,6 +24,7 @@ logged or stored.
 
 from __future__ import annotations
 
+import json
 import re
 import time
 from collections.abc import Awaitable, Callable
@@ -32,6 +33,8 @@ from typing import Any
 
 import httpx
 from jose import JWTError, jwt
+
+from app.config import get_settings
 
 CERTS_URL = (
     "https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceaccount.com"
@@ -163,8 +166,31 @@ class FirebaseTokenVerifier:
 
 
 _verifier = FirebaseTokenVerifier()
+_test_verifier: FirebaseTokenVerifier | None = None
+
+
+def _test_certs_verifier(document: str) -> FirebaseTokenVerifier:
+    certs: dict[str, str] = json.loads(document)
+
+    async def fetch() -> tuple[dict[str, str], int]:
+        return certs, _DEFAULT_MAX_AGE
+
+    return FirebaseTokenVerifier(fetch=fetch)
 
 
 def get_firebase_verifier() -> FirebaseTokenVerifier:
-    """FastAPI dependency; tests override it with a verifier fed local keys."""
-    return _verifier
+    """FastAPI dependency; unit tests override it with a verifier fed local keys.
+
+    The E2E stack runs the app as it ships, so it cannot override a dependency. It
+    sets `GUIDE_TEST_FIREBASE_CERTS` instead, and tokens are then verified against
+    those certificates rather than Google's. Settings refuses that outside testing;
+    this checks again, so a change there cannot quietly widen it."""
+    global _test_verifier
+    settings = get_settings()
+    if not settings.guide_test_firebase_certs:
+        return _verifier
+    if not settings.is_testing:
+        raise RuntimeError("Test Firebase certificates outside testing")
+    if _test_verifier is None:
+        _test_verifier = _test_certs_verifier(settings.guide_test_firebase_certs)
+    return _test_verifier

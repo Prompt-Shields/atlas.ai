@@ -55,6 +55,9 @@ services:
       RESEARCH_ALL_DATA: "false"
       SUPER_ADMIN_EMAIL: admin@example.com
       SUPER_ADMIN_PASSWORD: TestAdmin_P@ss1
+      # A throwaway key CI makes to sign Guide's Firebase ID tokens (ci.yml, E2E).
+      # Empty: Google's keys, as anywhere else. Refused unless APP_ENV is testing.
+      GUIDE_TEST_FIREBASE_CERTS: ${GUIDE_TEST_FIREBASE_CERTS:-}
     depends_on:
       postgres:
         condition: service_healthy
