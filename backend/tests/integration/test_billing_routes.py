@@ -6,6 +6,7 @@ Tests:
   - checkout-session: trial_period_days included when trial days remain (remaining >= 1)
   - checkout-session: client_reference_id + metadata present in Stripe call args
   - checkout-session: quantity = max(5, activated_users)
+  - checkout-session: no customer yet → customer_email; existing → customer reused
   - portal-session: requires stripe_customer_id
   - entitlements: shape + hard_locked=True when trial expired without subscription
   - entitlements: hard_locked=False when subscription present
@@ -216,6 +217,51 @@ async def test_checkout_quantity_uses_max5_or_activated(client, monkeypatch):
     )
     assert resp.status_code == 200
     assert captured_calls[-1]["line_items"][0]["quantity"] == 8
+
+
+@pytest.mark.asyncio
+async def test_checkout_without_customer_lets_stripe_create_one(client, monkeypatch):
+    """No stripe_customer_id yet → customer_email only; no customer or customer_update."""
+    captured: dict = {}
+    monkeypatch.setattr(
+        "app.services.billing.stripe_client.create_checkout_session",
+        lambda **kw: captured.update(kw) or type("S", (), {"url": "u"})(),
+    )
+
+    _, token = await _seed_tenant_admin(email_verified=True, stripe_customer_id=None)
+    resp = await client.post(
+        "/api/v1/billing/checkout-session",
+        json={"interval": "monthly"},
+        headers=auth_header(token),
+    )
+    assert resp.status_code == 200
+    assert captured["customer_email"].endswith("@acme.test")
+    assert captured["automatic_tax"] == {"enabled": True}
+    assert "customer" not in captured
+    assert "customer_update" not in captured
+
+
+@pytest.mark.asyncio
+async def test_checkout_reuses_existing_customer(client, monkeypatch):
+    """Existing stripe_customer_id → passed as customer, with customer_update for tax."""
+    captured: dict = {}
+    monkeypatch.setattr(
+        "app.services.billing.stripe_client.create_checkout_session",
+        lambda **kw: captured.update(kw) or type("S", (), {"url": "u"})(),
+    )
+
+    _, token = await _seed_tenant_admin(email_verified=True, stripe_customer_id="cus_enterprise")
+    resp = await client.post(
+        "/api/v1/billing/checkout-session",
+        json={"interval": "annual"},
+        headers=auth_header(token),
+    )
+    assert resp.status_code == 200
+    assert captured["customer"] == "cus_enterprise"
+    assert captured["customer_update"] == {"address": "auto", "name": "auto"}
+    assert captured["automatic_tax"] == {"enabled": True}
+    # Stripe rejects customer together with customer_email.
+    assert "customer_email" not in captured
 
 
 # ---------------------------------------------------------------------------
