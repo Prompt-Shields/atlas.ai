@@ -8,6 +8,9 @@ Tests:
   - quote: seats on each module, platform fee on the first paid module only
   - quote: send_invoice, 30-day terms and tenant metadata
   - quote: explicit platform-fee override skips the Stripe lookup
+  - quote: no platform fee while a draft or open quote carries it; two quotes
+    drafted at once add it only once (Postgres row lock, skipped on SQLite)
+  - quote: automatic_tax follows settings.stripe_automatic_tax
   - customer created (and stored) only when the tenant has none
   - finalize delegates to Stripe
   - accept: bank-transfer payment settings on subscription and first invoice,
@@ -17,13 +20,20 @@ Tests:
 
 from __future__ import annotations
 
+import asyncio
+import threading
+import time
 import uuid
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import NullPool
 
 from app.models.tenant import Tenant
 from app.services.billing import quotes
+from tests.conftest import TEST_DATABASE_URL, TestSessionLocal, ensure_tenant
 
 PRICES = {
     "promptly_atlas_annual": "price_atlas",
@@ -69,6 +79,7 @@ def fake_stripe(monkeypatch):
 
     record("list_prices", list_prices)
     record("list_subscriptions", {"data": []})
+    record("list_quotes", {"data": []})
     record("create_customer", {"id": "cus_new"})
     record("create_quote", lambda **kw: {"id": "qt_1", **kw})
     record("finalize_quote", {"id": "qt_1", "status": "open"})
@@ -174,6 +185,116 @@ async def test_explicit_platform_fee_override_skips_lookup(fake_stripe):
     )
     assert "list_subscriptions" not in fake_stripe
     assert quote["line_items"] == [{"price": "price_atlas", "quantity": 5}]
+
+
+@pytest.mark.asyncio
+async def test_platform_fee_marked_on_quote(fake_stripe):
+    quote = await quotes.create_module_quote(AsyncMock(), _tenant(), modules=["atlas"], seats=5)
+    assert quote["metadata"][quotes.PLATFORM_FEE_METADATA] == "true"
+    # The marker is for open quotes only; the subscription does not need it.
+    assert quotes.PLATFORM_FEE_METADATA not in quote["subscription_data"]["metadata"]
+
+
+@pytest.mark.asyncio
+async def test_no_platform_fee_while_pending_quote_carries_it(fake_stripe, monkeypatch):
+    def list_quotes(**kw):
+        if kw["status"] == "open":
+            return {"data": [{"id": "qt_0", "metadata": {"platform_fee": "true"}}]}
+        return {"data": [{"id": "qt_x", "metadata": {}}]}
+
+    monkeypatch.setattr("app.services.billing.stripe_client.list_quotes", list_quotes)
+    quote = await quotes.create_module_quote(AsyncMock(), _tenant(), modules=["learn"], seats=5)
+    assert quote["line_items"] == [{"price": "price_learn", "quantity": 5}]
+    assert quotes.PLATFORM_FEE_METADATA not in quote["metadata"]
+
+
+@pytest.mark.asyncio
+async def test_pending_quote_lookup_lists_draft_and_open(fake_stripe):
+    await quotes.create_module_quote(AsyncMock(), _tenant(), modules=["atlas"], seats=5)
+    statuses = [kw["status"] for _, kw in fake_stripe["list_quotes"]]
+    assert statuses == ["draft", "open"]
+    assert all(kw["customer"] == "cus_1" for _, kw in fake_stripe["list_quotes"])
+
+
+@pytest.mark.asyncio
+async def test_quote_locks_tenant_row(fake_stripe):
+    db = AsyncMock()
+    await quotes.create_module_quote(db, _tenant(), modules=["atlas"], seats=5)
+    stmt = db.execute.await_args.args[0]
+    assert stmt._for_update_arg is not None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("enabled", [True, False])
+async def test_automatic_tax_follows_setting(fake_stripe, monkeypatch, enabled):
+    settings = MagicMock(stripe_automatic_tax=enabled)
+    monkeypatch.setattr("app.services.billing.quotes.get_settings", lambda: settings)
+    quote = await quotes.create_module_quote(AsyncMock(), _tenant(), modules=["atlas"], seats=5)
+    if enabled:
+        assert quote["automatic_tax"] == {"enabled": True}
+    else:
+        assert "automatic_tax" not in quote
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    TEST_DATABASE_URL.startswith("sqlite"), reason="SQLite has no SELECT ... FOR UPDATE"
+)
+async def test_concurrent_quotes_add_platform_fee_once(fake_stripe, monkeypatch):
+    """Two operators draft a quote for one tenant at the same moment.
+
+    Each runs in its own thread with its own event loop and connection, as two
+    script runs would. Stripe's list call is slowed so that, without the row
+    lock, both would check for the fee before either quote exists.
+    """
+    tenant_id = uuid.uuid4()
+    async with TestSessionLocal() as session:
+        tenant = await ensure_tenant(session, tenant_id, name="Acme")
+        tenant.stripe_customer_id = "cus_1"
+        await session.commit()
+
+    created: list[dict] = []
+    lock = threading.Lock()
+
+    def list_quotes(**kw):
+        time.sleep(0.3)
+        with lock:
+            return {
+                "data": [
+                    q
+                    for q in created
+                    if q["status"] == kw["status"] and q["customer"] == kw["customer"]
+                ]
+            }
+
+    def create_quote(**kw):
+        with lock:
+            quote = {"id": f"qt_{len(created) + 1}", "status": "draft", **kw}
+            created.append(quote)
+        return quote
+
+    monkeypatch.setattr("app.services.billing.stripe_client.list_quotes", list_quotes)
+    monkeypatch.setattr("app.services.billing.stripe_client.create_quote", create_quote)
+
+    async def draft(module: str) -> None:
+        eng = create_async_engine(TEST_DATABASE_URL, poolclass=NullPool)
+        try:
+            factory = sessionmaker(eng, class_=AsyncSession, expire_on_commit=False)
+            async with factory() as db:
+                t = await db.get(Tenant, tenant_id)
+                await quotes.create_module_quote(db, t, modules=[module], seats=10)
+                await db.commit()
+        finally:
+            await eng.dispose()
+
+    await asyncio.gather(
+        asyncio.to_thread(asyncio.run, draft("atlas")),
+        asyncio.to_thread(asyncio.run, draft("learn")),
+    )
+
+    assert len(created) == 2
+    with_fee = [q for q in created if {"price": "price_fee", "quantity": 1} in q["line_items"]]
+    assert len(with_fee) == 1
 
 
 @pytest.mark.asyncio

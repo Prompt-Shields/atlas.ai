@@ -76,6 +76,11 @@ def retrieve_quote(quote_id: str, **kwargs):
     return stripe.Quote.retrieve(quote_id, **kwargs)
 
 
+def list_quotes(**kwargs):
+    _configure()
+    return stripe.Quote.list(**kwargs)
+
+
 def finalize_quote(quote_id: str, **kwargs):
     _configure()
     return stripe.Quote.finalize_quote(quote_id, **kwargs)

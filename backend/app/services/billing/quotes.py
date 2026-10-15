@@ -5,7 +5,7 @@ Checkout. The flow is:
 
 1. ``create_module_quote`` builds a draft quote for the tenant's modules and
    seat count, adding the annual platform fee when this is the tenant's first
-   paid module.
+   paid module. The fee is added once per tenant: see ``create_module_quote``.
 2. ``finalize_quote`` makes it sendable; the buyer gets the quote PDF.
 3. ``accept_quote`` accepts it once the buyer signs. Stripe then creates the
    subscription, which bills by ``send_invoice`` with 30-day terms.
@@ -25,6 +25,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 import structlog
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -56,6 +57,14 @@ EU_BANK_TRANSFER_COUNTRIES = frozenset({"BE", "DE", "ES", "FR", "IE", "NL"})
 
 # A subscription in one of these states still carries the platform fee.
 _LIVE_STATUSES = {"active", "trialing", "past_due", "unpaid", "incomplete"}
+
+# A quote in one of these states may still become a subscription. Stripe's
+# quote list filters by one status at a time, so each is listed in turn.
+_PENDING_QUOTE_STATUSES = ("draft", "open")
+
+# Quote metadata marking a quote that carries the platform fee, so a second
+# quote drafted before the first is accepted can see it.
+PLATFORM_FEE_METADATA = "platform_fee"
 
 
 class QuoteError(ValueError):
@@ -134,6 +143,33 @@ def has_platform_fee(customer_id: str) -> bool:
     return False
 
 
+def pending_platform_fee_quote(customer_id: str) -> str | None:
+    """Id of a draft or open quote of this customer that carries the platform fee."""
+    for status in _PENDING_QUOTE_STATUSES:
+        listing = stripe_client.list_quotes(customer=customer_id, status=status, limit=100)
+        for quote in _data(listing):
+            if _get(_get(quote, "metadata", {}), PLATFORM_FEE_METADATA) == "true":
+                return _get(quote, "id")
+    return None
+
+
+async def _lock_tenant(db: AsyncSession, tenant: Tenant) -> None:
+    """Lock the tenant row until the caller's transaction ends.
+
+    Two quotes drafted at the same time for one tenant would otherwise both
+    see no platform fee and both add it, or both create a Stripe customer.
+    The lock makes the second wait until the first has created its quote and
+    committed. ``populate_existing`` reloads the tenant, so a customer id
+    stored by the first is seen by the second.
+    """
+    await db.execute(
+        select(Tenant)
+        .where(Tenant.id == tenant.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+
+
 async def ensure_customer(
     db: AsyncSession, tenant: Tenant, *, billing_email: str | None = None
 ) -> str:
@@ -168,16 +204,25 @@ async def create_module_quote(
 ):
     """Create a draft Stripe Quote for ``modules`` at ``seats`` licensed users.
 
-    ``include_platform_fee=None`` adds the fee only when no live subscription of
-    the customer bills it yet, that is, on the first paid module.
+    ``include_platform_fee=None`` adds the fee only on the first paid module:
+    when no live subscription of the customer bills it, and no draft or open
+    quote carries it. The tenant row is locked first, so two quotes drafted
+    at the same time cannot both add it. The lock lasts until the caller
+    commits, which it should do as soon as this returns.
     """
     chosen = validate_modules(modules)
     if seats < 1:
         raise QuoteError("Seat count must be at least 1")
 
+    await _lock_tenant(db, tenant)
     customer_id = await ensure_customer(db, tenant, billing_email=billing_email)
     if include_platform_fee is None:
-        include_platform_fee = not has_platform_fee(customer_id)
+        pending = pending_platform_fee_quote(customer_id)
+        if pending:
+            log.info(
+                "stripe_platform_fee_on_pending_quote", tenant_id=str(tenant.id), quote=pending
+            )
+        include_platform_fee = not pending and not has_platform_fee(customer_id)
 
     keys = [MODULE_LOOKUP_KEYS[m] for m in chosen]
     if include_platform_fee:
@@ -193,14 +238,20 @@ async def create_module_quote(
         "billing_kind": BILLING_KIND,
         "modules": ",".join(chosen),
     }
+    quote_metadata = dict(metadata)
+    if include_platform_fee:
+        quote_metadata[PLATFORM_FEE_METADATA] = "true"
+    # Stripe Tax follows the account-wide flag (promptly-guide#50). The quote's
+    # setting carries over to the subscription and its invoices.
+    tax = {"automatic_tax": {"enabled": True}} if get_settings().stripe_automatic_tax else {}
     quote = stripe_client.create_quote(
         customer=customer_id,
         line_items=line_items,
         collection_method="send_invoice",
         invoice_settings={"days_until_due": DAYS_UNTIL_DUE},
-        automatic_tax={"enabled": True},
-        metadata=metadata,
+        metadata=quote_metadata,
         subscription_data={"metadata": metadata},
+        **tax,
     )
     log.info(
         "stripe_quote_created",
