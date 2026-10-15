@@ -16,7 +16,8 @@ lookup keys, intervals, usage types and the meter.
 A Stripe price's amount and interval cannot be edited, so changing an
 amount in that file makes the sync create a new price, move the lookup key to
 it and archive the old one. Existing subscriptions keep the old price until
-they are moved.
+they are moved. If a run stops between those two steps, the old price is left
+active with no lookup key; the next run finds it and archives it.
 
 This catalogue sits beside Atlas's self-serve Team plan, whose prices come
 from ``STRIPE_PRICE_TEAM_MONTHLY`` / ``STRIPE_PRICE_TEAM_ANNUAL``. Nothing
@@ -230,7 +231,7 @@ def format_amount(cents: int, interval: str) -> str:
 
 @dataclass(frozen=True)
 class Action:
-    verb: str  # "create", "update", "replace", "ok"
+    verb: str  # "create", "update", "replace", "archive", "ok"
     kind: str  # "product", "price", "meter"
     key: str
     detail: str = ""
@@ -372,6 +373,28 @@ def _sync_price(spec: PriceSpec, amount: int, meter_id: str | None, *, dry_run: 
     return Action("update", "price", spec.lookup_key, ", ".join(changed))
 
 
+def _archive_orphaned_prices(product_id: str, *, dry_run: bool) -> list[Action]:
+    """Archive active catalogue prices on ``product_id`` that have no lookup key.
+
+    Every price the sync creates has a lookup key, and a replacement takes the
+    key from the price it replaces. So an active price of ours without one is
+    the old half of a replacement whose run stopped before archiving it.
+    Nothing resolves to it any more, but it is still offered in the dashboard
+    and could be put on a subscription by hand. Prices without our metadata
+    were made by someone else and are left alone.
+    """
+    actions = []
+    for price in stripe_client.list_prices(product=product_id, active=True, limit=100):
+        if price.get("lookup_key") or (price.get("metadata") or {}).get(OWNER_KEY) != "true":
+            continue
+        if not dry_run:
+            stripe_client.modify_price(price["id"], active=False)
+        actions.append(
+            Action("archive", "price", price["id"], f"{product_id}, replaced, no lookup key")
+        )
+    return actions
+
+
 def sync_catalog(amounts: Mapping[str, int], *, dry_run: bool = False) -> list[Action]:
     """Create or update every catalogue object; safe to run repeatedly.
 
@@ -380,6 +403,9 @@ def sync_catalog(amounts: Mapping[str, int], *, dry_run: bool = False) -> list[A
     their custom id, the meter by its event name and prices by lookup key, so
     a second run makes no changes. With ``dry_run`` nothing is written and
     the returned actions are the plan.
+
+    A run that stopped half way through replacing a price is repaired: the
+    old price, left active without its lookup key, is archived.
     """
     amounts = validate_amounts(amounts)
     actions: list[Action] = []
@@ -395,6 +421,12 @@ def sync_catalog(amounts: Mapping[str, int], *, dry_run: bool = False) -> list[A
     for price in PRICES:
         meter_id = meter_ids.get(price.meter_event) if price.meter_event else None
         actions.append(_sync_price(price, amounts[price.lookup_key], meter_id, dry_run=dry_run))
+
+    # A product created in this run has no old prices to clean up.
+    new_products = {a.key for a in actions if a.kind == "product" and a.verb == "create"}
+    for product_id in dict.fromkeys(p.product_id for p in PRICES):
+        if product_id not in new_products:
+            actions.extend(_archive_orphaned_prices(product_id, dry_run=dry_run))
 
     for action in actions:
         log.info("stripe_catalog_action", action=str(action), dry_run=dry_run)

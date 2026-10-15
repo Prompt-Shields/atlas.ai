@@ -52,8 +52,12 @@ class FakeStripe:
         return self.products[product_id]
 
     # prices
-    def list_prices(self, *, lookup_keys, active=None, limit=10):
-        out = [p for p in self.prices if p.get("lookup_key") in lookup_keys]
+    def list_prices(self, *, lookup_keys=None, product=None, active=None, limit=10):
+        out = list(self.prices)
+        if lookup_keys is not None:
+            out = [p for p in out if p.get("lookup_key") in lookup_keys]
+        if product is not None:
+            out = [p for p in out if p["product"] == product]
         if active is not None:
             out = [p for p in out if p["active"] is active]
         return out[:limit]
@@ -263,6 +267,67 @@ def test_changed_amount_replaces_price_and_moves_lookup_key(fake):
     assert current["id"] != old["id"]
     assert old["active"] is False
     assert old["lookup_key"] is None
+
+
+def test_interrupted_replace_is_repaired_on_next_run(fake, monkeypatch):
+    """A run that stops after creating the replacement leaves the old price live."""
+    catalog.sync_catalog(AMOUNTS)
+    old = _by_key(fake, catalog.ATLAS_ANNUAL)
+    new_amounts = {**AMOUNTS, catalog.ATLAS_ANNUAL: 9999}
+
+    real_modify = fake.modify_price
+
+    def failing_modify(price_id, **kw):
+        if price_id == old["id"] and kw.get("active") is False:
+            raise stripe.error.APIConnectionError("network down")
+        return real_modify(price_id, **kw)
+
+    monkeypatch.setattr(stripe_client, "modify_price", failing_modify)
+    with pytest.raises(stripe.error.APIConnectionError):
+        catalog.sync_catalog(new_amounts)
+    # The broken state: the key moved, but the old price is still active.
+    assert old["lookup_key"] is None
+    assert old["active"] is True
+
+    monkeypatch.setattr(stripe_client, "modify_price", real_modify)
+    fake.writes.clear()
+    actions = catalog.sync_catalog(new_amounts)
+
+    archived = [a for a in actions if a.verb == "archive"]
+    assert [a.key for a in archived] == [old["id"]]
+    assert old["active"] is False
+    assert fake.writes == [f"modify_price {old['id']}"]
+    assert _by_key(fake, catalog.ATLAS_ANNUAL)["unit_amount"] == 9999
+
+    # Repaired: a further run changes nothing.
+    fake.writes.clear()
+    assert {a.verb for a in catalog.sync_catalog(new_amounts)} == {"ok"}
+    assert fake.writes == []
+
+
+def test_repair_dry_run_reports_without_archiving(fake):
+    catalog.sync_catalog(AMOUNTS)
+    old = _by_key(fake, catalog.LEARN_ANNUAL)
+    old["lookup_key"] = None  # as left by an interrupted replace
+    spec = next(p for p in catalog.PRICES if p.lookup_key == catalog.LEARN_ANNUAL)
+    fake.create_price(**catalog._price_params(spec, AMOUNTS[catalog.LEARN_ANNUAL], None))
+    fake.writes.clear()
+
+    actions = catalog.sync_catalog(AMOUNTS, dry_run=True)
+    assert [(a.verb, a.key) for a in actions if a.verb == "archive"] == [("archive", old["id"])]
+    assert old["active"] is True
+    assert fake.writes == []
+
+
+def test_repair_leaves_prices_it_does_not_own(fake):
+    catalog.sync_catalog(AMOUNTS)
+    fake.prices.append(
+        {"id": "price_manual", "product": "promptly_learn", "active": True, "metadata": {}}
+    )
+    fake.writes.clear()
+    actions = catalog.sync_catalog(AMOUNTS)
+    assert {a.verb for a in actions} == {"ok"}
+    assert fake.writes == []
 
 
 def test_archived_price_and_product_are_reactivated(fake):

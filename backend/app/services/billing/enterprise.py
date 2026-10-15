@@ -28,6 +28,7 @@ from __future__ import annotations
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import get_settings
 from app.models.tenant import Tenant
 from app.services.billing import catalog, stripe_client
 
@@ -169,11 +170,15 @@ async def start_work_client(
             proration_behavior="none",
         )
 
+    # Stripe Tax follows the account-wide flag (promptly-guide#50). It is set
+    # on the subscription, so the modules added to it later are taxed too.
+    tax = {"automatic_tax": {"enabled": True}} if get_settings().stripe_automatic_tax else {}
     return stripe_client.create_subscription(
         customer=customer_id,
         items=[{"price": catalog.price_id(catalog.WORK_CLIENT), "quantity": provisioned_users}],
         collection_method="send_invoice",
         days_until_due=DAYS_UNTIL_DUE,
+        **tax,
         metadata={
             KIND_KEY: KIND_ENTERPRISE,
             "tenant_id": str(tenant.id),

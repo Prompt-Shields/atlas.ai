@@ -115,6 +115,20 @@ async def test_start_reuses_existing_customer(stripe_mock):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("enabled", [True, False])
+async def test_start_automatic_tax_follows_setting(stripe_mock, monkeypatch, enabled):
+    settings = MagicMock(stripe_automatic_tax=enabled)
+    monkeypatch.setattr("app.services.billing.enterprise.get_settings", lambda: settings)
+    t = _tenant(stripe_customer_id="cus_team")
+    await enterprise.start_work_client(AsyncMock(), t, provisioned_users=50)
+    kw = stripe_mock.create_subscription.call_args.kwargs
+    if enabled:
+        assert kw["automatic_tax"] == {"enabled": True}
+    else:
+        assert "automatic_tax" not in kw
+
+
+@pytest.mark.asyncio
 async def test_start_leaves_team_plan_columns_alone(stripe_mock):
     t = _tenant(
         stripe_customer_id="cus_team",
