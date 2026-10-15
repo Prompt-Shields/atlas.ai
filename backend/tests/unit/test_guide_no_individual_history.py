@@ -43,7 +43,12 @@ from app.schemas.telemetry import PromptEventAction, PromptEventKind, PromptEven
 from scripts.seed_guide_pilot import DEMO_DEVICE_PREFIX, DEVICES, seed_pilot
 from tests.conftest import TEST_TENANT_ID, TestSessionLocal, auth_header
 from tests.unit import firebase_keys as keys
-from tests.unit.guide_db import guide_resolvers  # noqa: F401
+from tests.unit.guide_db import (
+    SENDING,
+    GuideClock,
+    guide_clock_fixture,  # noqa: F401
+    guide_resolvers,  # noqa: F401
+)
 
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 
@@ -115,6 +120,10 @@ SCIM_GROUP = "Finance approvers"
 
 PERSON_PARAMETERS = ("user_id", "email", "device", "subject")
 
+# People send September while its intake is open; the employer reads on the 12th of
+# October, after it closed on the 7th.
+NOW = datetime(2026, 10, 12, 12, 0, tzinfo=UTC)
+
 # Every integer a Guide response may carry, by its key, and what it must be.
 # A key not listed fails the test: a new number has to be looked at.
 ALLOWED_NUMBERS = {
@@ -123,11 +132,11 @@ ALLOWED_NUMBERS = {
     "minimum_devices": lambda n: n == 10,
     "devices": lambda n: n >= 10,
     "events": lambda n: n >= 10,
-    # Counts of things left out (figures, rows, teams), never of people: the
-    # report says how many, so a partial picture is not read as the whole.
+    # Counts of things left out (figures, rows), never of people: the report says
+    # how many, so a partial picture is not read as the whole. Not of teams too
+    # small: a count of those would say whether a team of one took part (E4).
     "suppressed": lambda n: n >= 0,
     "suppressed_categories": lambda n: n >= 0,
-    "teams_too_small_count": lambda n: n >= 0,
 }
 
 
@@ -178,9 +187,11 @@ async def test_every_guide_route_is_walked() -> None:
 # ---------------------------------------------------------------------------
 
 
-async def _seed(client: AsyncClient, now: datetime) -> dict[str, Any]:
+async def _seed(client: AsyncClient, now: datetime, clock: GuideClock) -> dict[str, Any]:
     """The demo pilot (45 days, three months of teams, twelve devices), Guide's real
-    connection over it, and people who could be named sending through the API."""
+    connection over it, and people who could be named sending through the API while
+    the month's intake was open. The clock is left at `now`."""
+    clock.now = SENDING
     async with TestSessionLocal() as db:
         await seed_pilot(db, TEST_TENANT_ID, now, days_ago=45)
     r = await client.put(
@@ -240,6 +251,7 @@ async def _seed(client: AsyncClient, now: datetime) -> dict[str, Any]:
         await db.commit()
         receipts = list((await db.execute(select(GuideAdoptionReceipt.receipt))).scalars())
     assert len(receipts) == len(BOARD) + len(SUPPORT) + 1
+    clock.now = now
 
     return {
         "forbidden": {
@@ -315,9 +327,10 @@ def _assert_gated_markdown(label: str, r: Response) -> None:
 
 async def test_no_guide_route_hands_the_employer_anything_about_one_person(
     client: AsyncClient,
+    guide_clock: GuideClock,
 ) -> None:
-    now = datetime.now(UTC)
-    seeded = await _seed(client, now)
+    now = NOW
+    seeded = await _seed(client, now, guide_clock)
     forbidden: set[str] = seeded["forbidden"]
     walked: set[tuple[str, str]] = set()
     period = _last_month(now)
@@ -357,11 +370,18 @@ async def test_no_guide_route_hands_the_employer_anything_about_one_person(
     report = await client.get(f"{GUIDE}/adoption/report", params={"period": period_text}, headers=h)
     assert report.status_code == 200, report.text
     body = report.json()
-    # The seed did reach the gate: support shows, and the small teams are counted.
+    # The seed did reach the gate: support shows; the small teams (legal, board and
+    # the question) are neither named nor counted, only the fixed note is said.
     assert any(f["team"] == "support" for f in body["figures"])
-    assert body["teams_too_small_count"] == 3  # legal, board, and the question
+    assert "teams_too_small_count" not in body
+    assert body["small_teams_note"] == "Teams with fewer than 10 counted people are not shown."
     assert body["suppressed_categories"].get("support") == 1
     await employer("GET", f"{GUIDE}/adoption/report", report)
+    # The month running is not shown at all while it can still change.
+    running = await client.get(f"{GUIDE}/adoption/report", params={"period": "2026-10"}, headers=h)
+    assert running.status_code == 409, running.text
+    assert running.json()["error"]["code"] == "MONTH_STILL_COLLECTING"
+    await employer("GET", f"{GUIDE}/adoption/report", running)
 
     pilot = await client.get(f"{GUIDE}/pilot-report", headers=h)
     assert pilot.status_code == 200, pilot.text

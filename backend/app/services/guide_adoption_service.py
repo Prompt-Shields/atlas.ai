@@ -5,7 +5,8 @@ The gate is a port of Guide's `AdoptionGate` (promptly-guide
 `docs/adoption-analytics.md`), and the two must stay the same rules:
 
   1. A team with fewer than `MINIMUM_GROUP_SIZE` contributors that month reports
-     **nothing**, not even which categories it touched.
+     **nothing**, not even which categories it touched. Reports do not name such
+     teams or count them; they say `SMALL_TEAMS_NOTE`, the same every month.
   2. Within a team that reports, a category reaching fewer than
      `MINIMUM_GROUP_SIZE` of them is **suppressed, not rounded**. The report says
      how many were left out per team, never which.
@@ -13,6 +14,11 @@ The gate is a port of Guide's `AdoptionGate` (promptly-guide
      is **no team total**, so nothing can be recovered by subtraction and no
      figure says "all of the team" or "none of them".
   4. Only kinds the tenant currently offers are shown.
+  5. A month is shown only once its intake has **closed**, and after that nothing
+     more is counted for it, so reading a report before and after one Mac sends
+     cannot show what that one person's contribution changed. Intake for a month
+     closes at 00:00 UTC on the `INTAKE_CLOSES_ON_DAY`th of the month after; Guide
+     sends only before then (promptly-guide `AdoptionPeriod.intakeCloses`).
 
 Intake folds a contribution into running counts and keeps nothing per person;
 see `app/models/guide_adoption.py` for why the tables look the way they do.
@@ -39,13 +45,21 @@ from app.models.guide_adoption import (
 )
 
 MINIMUM_GROUP_SIZE = 10
+# What a report says about teams under the minimum: the same words every month,
+# whether there were none or many, so it says nothing about any one team.
+SMALL_TEAMS_NOTE = f"Teams with fewer than {MINIMUM_GROUP_SIZE} counted people are not shown."
 BAND_WIDTH = 10
 _BOTTOM_TOP = 2 * BAND_WIDTH
 
-# A contribution may be for one of the last few *finished* months: Guide sends
-# after a month ends, and a figure for a month still running would let one more
-# contribution move a band while someone watches.
-OLDEST_MONTHS_BACK = 3
+# A contribution is for a *finished* month, and only until that month's intake
+# closes: 00:00 UTC on this day of the month after. The report shows a month only
+# from then on, when its figures can no longer change. Otherwise reading a month's
+# report before and after one Mac sends would show what that one contribution
+# changed: a team of nine becoming ten and appearing, or a category crossing ten
+# (promptly-guide #27, #38, E4). Six days leave room for a Mac that was asleep or
+# offline when the month ended; Guide retries inside them and never after.
+# promptly-guide's `AdoptionPeriod.intakeCloseDay` is the same number.
+INTAKE_CLOSES_ON_DAY = 7
 
 MAX_CATEGORIES = 200
 MAX_TEAM_LENGTH = 100
@@ -95,16 +109,39 @@ def _months(year: int, month: int) -> int:
     return year * 12 + (month - 1)
 
 
+def _month_start(months: int) -> datetime:
+    return datetime(months // 12, months % 12 + 1, 1, tzinfo=UTC)
+
+
+def intake_closes(year: int, month: int) -> datetime:
+    """When contributions for the month stop being taken, and its report is shown."""
+    return _month_start(_months(year, month) + 1).replace(day=INTAKE_CLOSES_ON_DAY)
+
+
+class IntakeClosed(ContributionRejected):
+    """A contribution for a month whose intake has closed. Refused like any other, so
+    Guide does not send it again; the code says why."""
+
+
 def acceptable_period(text: str, now: datetime) -> str:
-    """`text` if it is one of the last `OLDEST_MONTHS_BACK` finished months."""
+    """`text` if it is a finished month whose intake is still open at `now`."""
     year, month = parse_period(text)
-    current = _months(now.year, now.month)
-    asked = _months(year, month)
-    if asked >= current:
+    if now < _month_start(_months(year, month) + 1):
         raise ContributionRejected("only a finished month can be contributed")
-    if asked < current - OLDEST_MONTHS_BACK:
-        raise ContributionRejected("that month is too long ago")
+    closes = intake_closes(year, month)
+    if now >= closes:
+        raise IntakeClosed(
+            f"contributions for {period_text(year, month)} closed at "
+            f"{closes.isoformat().replace('+00:00', 'Z')}"
+        )
     return period_text(year, month)
+
+
+def is_closed(period: str, now: datetime) -> bool:
+    """Whether the month's intake has closed, so its report may be shown: its figures
+    will not change again."""
+    year, month = parse_period(period)
+    return now >= intake_closes(year, month)
 
 
 # ---------------------------------------------------------------------------

@@ -23,11 +23,25 @@ from app.models.prompt_event import PromptEvent
 from app.schemas.telemetry import PromptEventAction, PromptEventKind, PromptEventSource
 from app.services import guide_pilot_report as pilot
 from tests.conftest import TEST_TENANT_ID, TestSessionLocal, auth_header, ensure_tenant
-from tests.unit.guide_db import guide_resolvers  # noqa: F401
+from tests.unit.guide_db import (
+    SENDING,
+    GuideClock,
+    guide_clock_fixture,  # noqa: F401
+    guide_resolvers,  # noqa: F401
+)
 
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 
 OTHER_TENANT_ID = uuid.UUID("00000000-0000-0000-0000-0000000000b3")
+# The report is read on 12 October 2026: September's intake closed on the 7th.
+NOW = datetime(2026, 10, 12, 12, 0, tzinfo=UTC)
+SEPTEMBER = "2026-09"
+
+
+@pytest.fixture(autouse=True)
+def _read_on_the_twelfth(guide_clock: GuideClock) -> GuideClock:
+    guide_clock.now = NOW
+    return guide_clock
 
 
 def _admin(tenant_id: uuid.UUID = TEST_TENANT_ID) -> dict[str, str]:
@@ -40,11 +54,6 @@ def _admin(tenant_id: uuid.UUID = TEST_TENANT_ID) -> dict[str, str]:
             org_id=tenant_id,
         )
     )
-
-
-def _last_month(now: datetime) -> str:
-    year, month = (now.year, now.month - 1) if now.month > 1 else (now.year - 1, 12)
-    return f"{year:04d}-{month:02d}"
 
 
 async def _connect(
@@ -61,7 +70,7 @@ async def _connect(
                 firebase_project_id=project,
                 firebase_tenant_id="",
                 offered_kinds=list(kinds),
-                created_at=datetime.now(UTC) - timedelta(days=days_ago),
+                created_at=NOW - timedelta(days=days_ago),
             )
         )
         await s.commit()
@@ -111,7 +120,7 @@ async def _violations(
                     pii_categories={category: 1},
                     device_fingerprint=f"{app}-device-{i}",
                     occurrences=2,
-                    occurred_at=datetime.now(UTC) - timedelta(days=3),
+                    occurred_at=NOW - timedelta(days=3),
                 )
             )
         await s.commit()
@@ -131,7 +140,7 @@ async def test_the_report_waits_for_thirty_days(client: AsyncClient) -> None:
 
 async def test_guides_sections_are_its_gated_figures(client: AsyncClient) -> None:
     await _connect(days_ago=40)
-    period = _last_month(datetime.now(UTC))
+    period = SEPTEMBER
     await _team(
         period,
         "sales",
@@ -153,15 +162,42 @@ async def test_guides_sections_are_its_gated_figures(client: AsyncClient) -> Non
     assert [f["band"] for f in month["finished"]] == ["80% or more"]
     assert month["not_finished"] == []
     assert [f["category_id"] for f in month["topics"]] == ["chatgpt/model"]
-    assert month["teams_too_small_count"] == 1
-    assert "legal" not in r.text  # counted, never named (#28)
+    assert "teams_too_small_count" not in month
+    assert "legal" not in r.text  # never named nor counted (#28)
+    assert "Teams with fewer than 10 counted people are not shown." in r.json()["notes"]
     assert month["suppressed_categories"] == {"sales": 1}
+
+
+async def test_a_month_still_being_collected_is_left_out(
+    client: AsyncClient, guide_clock: GuideClock
+) -> None:
+    await _connect(days_ago=40)
+    await _team(SEPTEMBER, "sales", 12, {("app", "Claude"): 12})
+    guide_clock.now = SENDING  # 3 October: September's intake is open
+    r = await client.get("/api/v1/guide/pilot-report", headers=_admin())
+    assert r.status_code == 200, r.text
+    assert r.json()["months"] == []
+    r = await client.get(
+        "/api/v1/guide/pilot-report", params={"format": "markdown"}, headers=_admin()
+    )
+    assert "No month has finished collecting yet." in r.text
+    assert "Claude" not in r.text
+
+
+async def test_the_small_teams_note_reads_the_same_with_none(client: AsyncClient) -> None:
+    await _connect(days_ago=40)
+    await _team(SEPTEMBER, "sales", 12, {("app", "Claude"): 12})
+    r = await client.get(
+        "/api/v1/guide/pilot-report", params={"format": "markdown"}, headers=_admin()
+    )
+    assert "> Teams with fewer than 10 counted people are not shown." in r.text
+    assert "team(s)" not in r.text
 
 
 async def test_where_people_get_stuck_in_a_task_is_its_own_section(client: AsyncClient) -> None:
     # promptly-guide #85: where a topic's walkthrough ended, through the same gate.
     await _connect(days_ago=40, kinds=("completion", "friction"))
-    period = _last_month(datetime.now(UTC))
+    period = SEPTEMBER
     await _team(
         period,
         "finance",
@@ -190,7 +226,7 @@ async def test_friction_is_not_shown_when_the_organisation_does_not_count_it(
     client: AsyncClient,
 ) -> None:
     await _connect(days_ago=40)
-    period = _last_month(datetime.now(UTC))
+    period = SEPTEMBER
     await _team(period, "finance", 20, {("friction", "nordlys-expenses/new-claim/step-3"): 15})
     r = await client.get("/api/v1/guide/pilot-report", headers=_admin())
     month = next(m for m in r.json()["months"] if m["period"] == period)
@@ -218,7 +254,7 @@ async def test_risk_rows_from_too_few_devices_are_left_out(client: AsyncClient) 
 async def test_one_tenant_never_sees_anothers(client: AsyncClient) -> None:
     await _connect(days_ago=40)
     await _connect(days_ago=40, tenant_id=OTHER_TENANT_ID, project="q")
-    period = _last_month(datetime.now(UTC))
+    period = SEPTEMBER
     await _team(period, "sales", 12, {("app", "Claude"): 12})
     await _violations(10, "chatgpt.com", "email", PromptEventAction.BLOCKED)
     r = await client.get("/api/v1/guide/pilot-report", headers=_admin(OTHER_TENANT_ID))
@@ -229,7 +265,7 @@ async def test_one_tenant_never_sees_anothers(client: AsyncClient) -> None:
 
 async def test_the_markdown_is_the_same_report(client: AsyncClient) -> None:
     await _connect(days_ago=40)
-    period = _last_month(datetime.now(UTC))
+    period = SEPTEMBER
     await _team(period, "sales", 12, {("app", "Claude"): 12})
     await _violations(10, "chatgpt.com", "email", PromptEventAction.BLOCKED)
     r = await client.get(
@@ -248,7 +284,13 @@ async def test_the_markdown_is_the_same_report(client: AsyncClient) -> None:
 async def test_the_months_are_the_finished_ones_since_connecting() -> None:
     connected = datetime(2026, 7, 20, tzinfo=UTC)
     assert pilot.report_months(connected, datetime(2026, 8, 25, tzinfo=UTC)) == ["2026-07"]
+    # November is still being collected until 7 December.
     assert pilot.report_months(connected, datetime(2026, 12, 2, tzinfo=UTC)) == [
+        "2026-08",
+        "2026-09",
+        "2026-10",
+    ]
+    assert pilot.report_months(connected, datetime(2026, 12, 7, tzinfo=UTC)) == [
         "2026-09",
         "2026-10",
         "2026-11",
@@ -256,3 +298,7 @@ async def test_the_months_are_the_finished_ones_since_connecting() -> None:
     assert pilot.report_months(
         datetime(2025, 12, 5, tzinfo=UTC), datetime(2026, 1, 9, tzinfo=UTC)
     ) == ["2025-12"]
+    assert (
+        pilot.report_months(datetime(2025, 12, 5, tzinfo=UTC), datetime(2026, 1, 6, tzinfo=UTC))
+        == []
+    )

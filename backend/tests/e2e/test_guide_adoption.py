@@ -4,11 +4,14 @@ Guide's half is built and tested on its side, Atlas's half on this one, and each
 against `tests/contracts/atlas-guide.json`. This drives the running stack the way a
 fleet of Macs would, to check the halves meet:
 
-  * every Mac in a team sends its finished month as Guide's `AdoptionSender` does:
-    ask the offer, then post the contribution, each with the person's Firebase ID
-    token as the only credential;
-  * the admin's report then shows the team, in bands;
-  * a team under ten shows nothing, not even its name (promptly-guide #28, E4);
+  * every Mac in a team sends its finished month as Guide's `AdoptionSender` does,
+    while the month's intake is open: ask the offer, then post the contribution,
+    each with the person's Firebase ID token as the only credential;
+  * the admin's report shows nothing for the month until its intake has closed,
+    then shows the team, in bands, and a Mac that sends late is refused, so the
+    report never changes under the admin's eyes (E4);
+  * a team under ten shows nothing, not its name and not a count (promptly-guide
+    #28, E4);
   * a payload Guide would never send (a person, an exact count) is refused.
 
 The requests are built from the contract and from Guide's own code
@@ -18,6 +21,12 @@ The requests are built from the contract and from Guide's own code
 Firebase ID tokens can only come from Google, so the stack is started with
 `GUIDE_TEST_FIREBASE_CERTS` naming a throwaway certificate, and the tests sign with
 its key, at `E2E_FIREBASE_KEY_FILE` (CI makes both: ci.yml, E2E job).
+
+Intake for a month closes at 00:00 UTC on the 7th of the month after, and these
+tests send a month and read it within seconds, so the stack is started with
+`GUIDE_TEST_CLOCK` (docker-compose.test.yml, refused unless APP_ENV is testing) and
+each request says when it is sent with `X-Guide-Test-Now`, as the contract's
+`given.now` does.
 """
 
 from __future__ import annotations
@@ -28,7 +37,6 @@ import time
 import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
 
 import asyncpg
@@ -47,18 +55,18 @@ CONTRACT = json.loads((Path(__file__).parents[1] / "contracts" / "atlas-guide.js
 # to it (`AtlasAdoption.offerPath`, `contributionPath`).
 ATLAS = BASE_URL.removesuffix("/").removesuffix("/api/v1")
 MINIMUM_GROUP_SIZE = 10
+TEST_NOW = "X-Guide-Test-Now"
 
 
 def _interaction(name: str) -> dict:
     return next(i for i in CONTRACT["interactions"] if i["name"] == name)
 
 
-def _last_finished_month(now: datetime) -> dict[str, int]:
-    """`AdoptionPeriod.lastFinished(before:)`, in UTC as Guide reckons it. Atlas takes
-    only finished months, so the contract's own month is replaced with this one."""
-    if now.month == 1:
-        return {"year": now.year - 1, "month": 12}
-    return {"year": now.year, "month": now.month - 1}
+# When the Macs send, and when intake closes, from the contract: September 2026 is
+# sent on 3 October and its intake closes at 00:00 UTC on 7 October.
+SENDING = _interaction("a month's contribution, counted")["given"]["now"]
+CLOSED = _interaction("a month whose intake has closed")["given"]["now"]
+PERIOD = _interaction("a month's contribution, counted")["request"]["body"]["period"]
 
 
 # ---------------------------------------------------------------------------
@@ -120,22 +128,28 @@ def outcome(resp: httpx.Response) -> str:
     return "tryLater"
 
 
-async def offer(client: httpx.AsyncClient, token: str) -> httpx.Response:
+async def offer(client: httpx.AsyncClient, token: str, at: str = SENDING) -> httpx.Response:
     request = _interaction("the offer")["request"]
     return await client.request(
         request["method"],
         f"{ATLAS}/{request['path']}",
-        headers={"Authorization": "Bearer " + token},
+        headers={"Authorization": "Bearer " + token, TEST_NOW: at},
     )
 
 
-async def post_contribution(client: httpx.AsyncClient, token: str, body: dict) -> httpx.Response:
+async def post_contribution(
+    client: httpx.AsyncClient, token: str, body: dict, at: str = SENDING
+) -> httpx.Response:
     """`AtlasAdoption.contributionRequest`: the JSON body, its content type, the token."""
     request = _interaction("a month's contribution, counted")["request"]
     return await client.request(
         request["method"],
         f"{ATLAS}/{request['path']}",
-        headers={"Authorization": "Bearer " + token, "Content-Type": "application/json"},
+        headers={
+            "Authorization": "Bearer " + token,
+            "Content-Type": "application/json",
+            TEST_NOW: at,
+        },
         # Foundation's JSONEncoder escapes "/" by default, so "chatgpt/model" goes out as
         # "chatgpt\/model". Sent the same way here; a "/" only ever appears in a string.
         content=json.dumps(body).replace("/", "\\/").encode(),
@@ -148,16 +162,17 @@ async def send_month(
     team: str,
     period: dict[str, int],
     reached: list[dict[str, str]],
+    at: str = SENDING,
 ) -> str:
     """`AdoptionSender.sendIfDue` for one opted-in Mac: what the organisation counts
     now, then the team, the month and the categories reached of those kinds, sorted
     (`AdoptionConsent.contribution`)."""
-    resp = await offer(client, token)
+    resp = await offer(client, token, at)
     assert resp.status_code == 200, resp.text
     offered = set(resp.json()["offered_kinds"])
     kept = sorted((r for r in reached if r["kind"] in offered), key=lambda r: (r["kind"], r["id"]))
     body = {"team": team, "period": period, "reached": kept}
-    return outcome(await post_contribution(client, token, body))
+    return outcome(await post_contribution(client, token, body, at))
 
 
 # ---------------------------------------------------------------------------
@@ -245,18 +260,19 @@ async def organisation() -> AsyncIterator[Organisation]:
         )
         assert resp.status_code == 200, resp.text
     try:
-        yield Organisation(
-            admin=admin, project=project, period=_last_finished_month(datetime.now(UTC))
-        )
+        yield Organisation(admin=admin, project=project, period=PERIOD)
     finally:
         await remove_tenant(admin.tenant_id)
 
 
-async def report(client: httpx.AsyncClient, org: Organisation, **params: str) -> httpx.Response:
+async def report(
+    client: httpx.AsyncClient, org: Organisation, at: str = CLOSED, **params: str
+) -> httpx.Response:
+    """The admin reads the month: by default once its intake has closed."""
     period = f"{org.period['year']:04d}-{org.period['month']:02d}"
     return await client.get(
         f"{BASE_URL}/guide/adoption/report",
-        headers=auth(org.admin.token),
+        headers={**auth(org.admin.token), TEST_NOW: at},
         params={"period": period, **params},
     )
 
@@ -328,9 +344,27 @@ async def test_a_team_of_macs_reaches_the_report_in_bands(
             "alreadyCounted"
         )
 
+        # While intake is open the month is not shown: watching it would show each Mac.
+        resp = await report(client, org, at=SENDING)
+        assert resp.status_code == 409, resp.text
+        assert resp.json()["error"]["code"] == "MONTH_STILL_COLLECTING"
+        assert TEAM not in resp.text
+
         resp = await report(client, org)
         assert resp.status_code == 200, resp.text
         body = resp.json()
+
+        # A Mac that sends after intake closed is refused, and the report stays as read:
+        # the one more person who would have made the small team ten is not counted.
+        late = org.device(issuer, "small-late")
+        resp = await post_contribution(
+            client, late, {"team": SMALL_TEAM, "period": org.period, "reached": [APP]}, at=CLOSED
+        )
+        assert resp.status_code == 422, resp.text
+        assert resp.json()["error"]["code"] == "INTAKE_CLOSED"
+        assert outcome(resp) == "refused"
+        again = await report(client, org)
+        assert again.json() == body
 
     figures = {(f["category_kind"], f["category_id"]): f for f in body["figures"]}
     assert all(f["team"] == TEAM for f in body["figures"])
@@ -346,9 +380,13 @@ async def test_a_team_of_macs_reaches_the_report_in_bands(
         set(f) == {"team", "category_kind", "category_id", "band", "band_lower"}
         for f in body["figures"]
     )
-    # Nine people is one short: the team is counted as too small and not named.
-    assert body["teams_too_small_count"] == 1
-    assert SMALL_TEAM not in resp.text
+    # Nine people is one short: the team is neither named nor counted. The report says
+    # the same sentence it would say if no team were too small.
+    assert "teams_too_small_count" not in body
+    assert body["small_teams_note"] == (
+        f"Teams with fewer than {MINIMUM_GROUP_SIZE} counted people are not shown."
+    )
+    assert SMALL_TEAM not in again.text
     assert body["minimum_group_size"] == MINIMUM_GROUP_SIZE
 
 
@@ -374,10 +412,7 @@ async def test_what_guide_never_sends_is_refused(
                 **contribution,
                 "period": {**org.period, "day": 14},
             },
-            "the month still running": {
-                **contribution,
-                "period": {"year": datetime.now(UTC).year, "month": datetime.now(UTC).month},
-            },
+            "the month still running": {**contribution, "period": {"year": 2026, "month": 10}},
             "free text as a topic": {
                 **contribution,
                 "reached": [{"kind": "topic", "id": "How do I export the Q3 forecast?"}],

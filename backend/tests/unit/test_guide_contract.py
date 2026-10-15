@@ -20,6 +20,7 @@ from httpx import AsyncClient
 from app.auth.firebase_token import get_firebase_verifier
 from app.auth.jwt import create_access_token
 from app.main import app
+from app.routers.guide import guide_now
 from tests.conftest import TEST_TENANT_ID, TestSessionLocal, auth_header
 from tests.unit import firebase_keys as keys
 from tests.unit.guide_db import guide_resolvers  # noqa: F401
@@ -38,6 +39,7 @@ def _local_google_keys():
     app.dependency_overrides[get_firebase_verifier] = lambda: local
     yield
     app.dependency_overrides.pop(get_firebase_verifier, None)
+    app.dependency_overrides.pop(guide_now, None)
 
 
 def _admin() -> dict[str, str]:
@@ -50,12 +52,6 @@ def _admin() -> dict[str, str]:
             org_id=TEST_TENANT_ID,
         )
     )
-
-
-def _last_finished_month() -> dict[str, int]:
-    now = datetime.now(UTC)
-    year, month = (now.year, now.month - 1) if now.month > 1 else (now.year - 1, 12)
-    return {"year": year, "month": month}
 
 
 def holds(actual: object, expected: object) -> bool:
@@ -110,12 +106,17 @@ async def _scim_groups(client: AsyncClient, groups: dict[str, list[str]]) -> Non
 
 
 async def _send(client: AsyncClient, request: dict, headers: dict[str, str]):
-    body = request.get("body")
-    if body is not None and "period" in body:
-        body = {**body, "period": _last_finished_month()}
     return await client.request(
-        request["method"], "/" + request["path"], json=body, headers=headers
+        request["method"], "/" + request["path"], json=request.get("body"), headers=headers
     )
+
+
+def test_every_contribution_says_when_it_is_sent() -> None:
+    """The month's intake closes on a fixed day, so a contribution is only right or
+    wrong at a moment: each one gives it, and both sides use it."""
+    for i in INTERACTIONS:
+        if i["request"]["path"] == "api/v1/guide/adoption":
+            assert datetime.fromisoformat(i["given"]["now"]).tzinfo == UTC, i["name"]
 
 
 def test_the_contract_covers_every_call_guide_makes() -> None:
@@ -131,6 +132,9 @@ def test_the_contract_covers_every_call_guide_makes() -> None:
 @pytest.mark.parametrize("interaction", INTERACTIONS, ids=[i["name"] for i in INTERACTIONS])
 async def test_atlas_answers_as_guide_reads(client: AsyncClient, interaction: dict) -> None:
     given = interaction["given"]
+    if "now" in given:
+        moment = datetime.fromisoformat(given["now"])
+        app.dependency_overrides[guide_now] = lambda: moment
     if given.get("connected", True):
         r = await client.put(
             "/api/v1/guide/connection",

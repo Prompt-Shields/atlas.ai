@@ -75,16 +75,45 @@ def test_bands_round_down() -> None:
 # ── Periods ───────────────────────────────────────────────────────────────
 
 
-def test_only_a_finished_recent_month_is_accepted() -> None:
+def test_only_a_finished_month_still_open_for_intake_is_accepted() -> None:
     assert svc.acceptable_period("2026-09", OCTOBER) == "2026-09"
-    assert svc.acceptable_period("2026-07", OCTOBER) == "2026-07"
-    for refused in ("2026-10", "2026-11", "2026-06", "2026-13", "26-09", "2026-9"):
+    for refused in ("2026-10", "2026-11", "2026-08", "2026-07", "2026-13", "26-09", "2026-9"):
         with pytest.raises(ContributionRejected):
             svc.acceptable_period(refused, OCTOBER)
 
 
+def test_intake_closes_at_midnight_utc_on_the_seventh() -> None:
+    assert svc.intake_closes(2026, 9) == datetime(2026, 10, 7, tzinfo=UTC)
+    assert svc.intake_closes(2026, 12) == datetime(2027, 1, 7, tzinfo=UTC)
+    first = datetime(2026, 10, 1, tzinfo=UTC)
+    last = datetime(2026, 10, 6, 23, 59, 59, 999999, tzinfo=UTC)
+    closed = datetime(2026, 10, 7, tzinfo=UTC)
+    assert svc.acceptable_period("2026-09", first) == "2026-09"
+    assert svc.acceptable_period("2026-09", last) == "2026-09"
+    with pytest.raises(svc.IntakeClosed, match="closed at 2026-10-07T00:00:00Z"):
+        svc.acceptable_period("2026-09", closed)
+    # A month still running is not "closed": it is refused as not finished.
+    with pytest.raises(ContributionRejected) as running:
+        svc.acceptable_period("2026-09", datetime(2026, 9, 30, 23, 59, tzinfo=UTC))
+    assert not isinstance(running.value, svc.IntakeClosed)
+
+
+def test_a_month_is_shown_only_once_its_intake_has_closed() -> None:
+    assert not svc.is_closed("2026-09", datetime(2026, 9, 15, tzinfo=UTC))
+    assert not svc.is_closed("2026-09", datetime(2026, 10, 6, 23, 59, tzinfo=UTC))
+    assert svc.is_closed("2026-09", datetime(2026, 10, 7, tzinfo=UTC))
+    assert svc.is_closed("2026-08", datetime(2026, 10, 1, tzinfo=UTC))
+    assert not svc.is_closed("2026-10", datetime(2026, 10, 7, tzinfo=UTC))
+
+
 def test_january_looks_back_into_last_year() -> None:
     assert svc.acceptable_period("2025-12", datetime(2026, 1, 2, tzinfo=UTC)) == "2025-12"
+    with pytest.raises(svc.IntakeClosed):
+        svc.acceptable_period("2025-12", datetime(2026, 1, 7, tzinfo=UTC))
+
+
+def test_the_small_teams_note_names_no_team_and_no_number_but_the_minimum() -> None:
+    assert svc.SMALL_TEAMS_NOTE == "Teams with fewer than 10 counted people are not shown."
 
 
 # ── What a contribution may say ───────────────────────────────────────────

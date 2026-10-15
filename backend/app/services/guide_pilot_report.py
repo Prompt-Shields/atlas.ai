@@ -15,8 +15,10 @@ Three sections, each from data that is already aggregate, and each through a gat
     describes one person's machine.
 
 Ready 30 days after Guide was connected (`GuideConnection.created_at`). Guide's
-figures are monthly, so the report covers the finished months since then, at most
-`MAX_MONTHS` of them; the risk section covers the same days.
+figures are monthly, so the report covers the months since then whose intake has
+closed (`guide_adoption_service.intake_closes`), at most `MAX_MONTHS` of them: a month
+still being collected is left out, since watching its figures change would show what
+each Mac that sends adds. The risk section covers the days since connecting.
 """
 
 from __future__ import annotations
@@ -84,7 +86,8 @@ class MonthSection:
     # Where a topic's walkthrough ended (promptly-guide #85): the friction in the
     # organisation's own apps, by team.
     friction: list[adoption.Figure]
-    teams_too_small: list[str]
+    # No teams too small, by name or by count: `adoption.SMALL_TEAMS_NOTE` is in every
+    # report's notes instead (promptly-guide #28, E4).
     suppressed_categories: dict[str, int]
 
 
@@ -103,11 +106,12 @@ def _utc(value: datetime) -> datetime:
 
 
 def report_months(connected_at: datetime, now: datetime) -> list[str]:
-    """The finished months the pilot overlaps, newest last, at most `MAX_MONTHS`."""
+    """The months the pilot overlaps whose intake has closed by `now`, newest last, at
+    most `MAX_MONTHS`."""
     start = adoption._months(connected_at.year, connected_at.month)
     current = adoption._months(now.year, now.month)
     months = [adoption.period_text(m // 12, m % 12 + 1) for m in range(start, current)]
-    return months[-MAX_MONTHS:]
+    return [m for m in months if adoption.is_closed(m, now)][-MAX_MONTHS:]
 
 
 async def _risk_rows(db: AsyncSession, filters: list, column) -> tuple[list[RiskRow], int]:  # noqa: ANN001 — a SQLAlchemy column expression
@@ -198,7 +202,6 @@ def month_section(tallies: list[adoption.Tally], period: str, offered: set[str])
         not_finished=[f for f in endings if f.category_id != "finished"],
         topics=[f for f in report.figures if f.category_kind == "topic"],
         friction=[f for f in report.figures if f.category_kind == "friction"],
-        teams_too_small=report.teams_too_small,
         suppressed_categories=report.suppressed_categories,
     )
 
@@ -230,7 +233,7 @@ async def build(
         offered_kinds=sorted(offered),
         months=months,
         risk=risk,
-        notes=[OPT_IN_NOTE, RISK_NOTE],
+        notes=[OPT_IN_NOTE, adoption.SMALL_TEAMS_NOTE, RISK_NOTE],
     )
 
 
@@ -272,7 +275,7 @@ def markdown(report: PilotReport, organisation: str) -> str:
     lines += ["", *[f"> {note}" for note in report.notes]]
     lines += ["", "## AI tools in use, and where people get stuck"]
     if not report.months:
-        lines += ["", "No finished month yet."]
+        lines += ["", "No month has finished collecting yet."]
     for month in report.months:
         lines += ["", f"### {month.period}"]
         _figures(lines, "AI tools in use", month.tools, lambda f: f.category_id)
@@ -294,12 +297,6 @@ def markdown(report: PilotReport, organisation: str) -> str:
             month.tools or month.finished or month.not_finished or month.topics or month.friction
         ):
             lines += ["", "Not enough people for any figure this month."]
-        if month.teams_too_small:
-            lines += [
-                "",
-                f"{len(month.teams_too_small)} team(s) had fewer than "
-                f"{adoption.MINIMUM_GROUP_SIZE} people counted and are not shown.",
-            ]
         left = sum(month.suppressed_categories.values())
         if left:
             lines += ["", f"{left} figure(s) were left out for being about too few people."]

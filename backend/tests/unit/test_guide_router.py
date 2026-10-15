@@ -8,7 +8,7 @@ only way figures leave is through the gate, tenant by tenant.
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
+from datetime import timedelta
 
 import pytest
 from httpx import AsyncClient
@@ -25,23 +25,19 @@ from app.models.guide_adoption import (
 )
 from tests.conftest import TEST_TENANT_ID, TestSessionLocal, auth_header
 from tests.unit import firebase_keys as keys
-from tests.unit.guide_db import guide_resolvers  # noqa: F401
+from tests.unit.guide_db import (
+    CLOSED,
+    SEPTEMBER,
+    SEPTEMBER_TEXT,
+    GuideClock,
+    guide_clock_fixture,  # noqa: F401
+    guide_resolvers,  # noqa: F401
+)
 
-pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
+pytestmark = [pytest.mark.unit, pytest.mark.asyncio, pytest.mark.usefixtures("guide_clock")]
 
 OTHER_TENANT_ID = uuid.UUID("00000000-0000-0000-0000-0000000000b2")
 OTHER_PROJECT = "someone-elses-guide"
-
-
-def _last_month() -> dict[str, int]:
-    now = datetime.now(UTC)
-    year, month = (now.year, now.month - 1) if now.month > 1 else (now.year - 1, 12)
-    return {"year": year, "month": month}
-
-
-def _period_text() -> str:
-    p = _last_month()
-    return f"{p['year']:04d}-{p['month']:02d}"
 
 
 @pytest.fixture(autouse=True)
@@ -85,7 +81,7 @@ async def _connect(
 async def _contribute(client: AsyncClient, subject: str, reached: list[dict], team: str = "sales"):
     return await client.post(
         "/api/v1/guide/adoption",
-        json={"team": team, "period": _last_month(), "reached": reached},
+        json={"team": team, "period": SEPTEMBER, "reached": reached},
         headers=_guide(subject),
     )
 
@@ -154,23 +150,30 @@ async def test_an_extra_field_is_refused(client: AsyncClient) -> None:
     await _connect(client, ["app"])
     r = await client.post(
         "/api/v1/guide/adoption",
-        json={"team": "sales", "period": _last_month(), "reached": [], "email": "kari@example.com"},
+        json={"team": "sales", "period": SEPTEMBER, "reached": [], "email": "kari@example.com"},
         headers=_guide(),
     )
     assert r.status_code == 422
 
 
-async def test_ten_people_make_a_figure_and_nine_do_not(client: AsyncClient) -> None:
+async def _report(client: AsyncClient, tenant_id: uuid.UUID = TEST_TENANT_ID):
+    return await client.get(
+        "/api/v1/guide/adoption/report",
+        params={"period": SEPTEMBER_TEXT},
+        headers=_admin(tenant_id),
+    )
+
+
+async def test_ten_people_make_a_figure_and_nine_do_not(
+    client: AsyncClient, guide_clock: GuideClock
+) -> None:
     await _connect(client, ["app", "completion"])
     for i in range(10):
         await _contribute(client, f"uid-{i}", [CLAUDE], team="sales")
     for i in range(9):
         await _contribute(client, f"uid-small-{i}", [CLAUDE, FINISHED], team="legal")
-    r = await client.get(
-        "/api/v1/guide/adoption/report",
-        params={"period": _period_text()},
-        headers=_admin(TEST_TENANT_ID),
-    )
+    guide_clock.now = CLOSED
+    r = await _report(client)
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["figures"] == [
@@ -182,23 +185,106 @@ async def test_ten_people_make_a_figure_and_nine_do_not(client: AsyncClient) -> 
             "band_lower": 80,
         }
     ]
-    assert body["teams_too_small_count"] == 1
-    assert "legal" not in r.text  # a team too small is counted, never named (#28)
+    assert "legal" not in r.text  # a team too small is never named (#28)
+    assert "teams_too_small_count" not in body  # nor counted
+    assert body["small_teams_note"] == "Teams with fewer than 10 counted people are not shown."
     assert "chose to be counted" in body["note"]
 
 
-async def test_one_tenant_never_sees_anothers_figures(client: AsyncClient) -> None:
+async def test_the_small_teams_note_is_the_same_with_none_or_many(
+    client: AsyncClient, guide_clock: GuideClock
+) -> None:
+    """An organisation that put one person in a team of their own learns nothing from
+    the note: it reads the same whether that team, or any, was too small."""
+    await _connect(client, ["app"])
+    await _connect(client, ["app"], tenant_id=OTHER_TENANT_ID, project=OTHER_PROJECT)
+    for i in range(10):
+        await _contribute(client, f"uid-{i}", [CLAUDE], team="sales")
+    await _contribute(client, "uid-alone", [CLAUDE], team="a team of one")
+    for team in ("legal", "board", "audit"):
+        await _contribute(client, f"uid-{team}", [CLAUDE], team=team)
+    guide_clock.now = CLOSED
+    many = (await _report(client)).json()
+    none = (await _report(client, OTHER_TENANT_ID)).json()
+    assert many["small_teams_note"] == none["small_teams_note"]
+    assert set(many) == set(none)
+    assert {f["team"] for f in many["figures"]} == {"sales"}
+
+
+async def test_one_tenant_never_sees_anothers_figures(
+    client: AsyncClient, guide_clock: GuideClock
+) -> None:
     await _connect(client, ["app"])
     await _connect(client, ["app"], tenant_id=OTHER_TENANT_ID, project=OTHER_PROJECT)
     for i in range(10):
         await _contribute(client, f"uid-{i}", [CLAUDE])
+    guide_clock.now = CLOSED
+    r = await _report(client, OTHER_TENANT_ID)
+    assert r.json()["figures"] == []
+
+
+# ── Intake closes, then the month is shown (promptly-guide #27, E4) ──────────
+
+
+async def test_a_month_is_not_shown_while_it_is_being_collected(
+    client: AsyncClient, guide_clock: GuideClock
+) -> None:
+    await _connect(client, ["app"])
+    for i in range(10):
+        await _contribute(client, f"uid-{i}", [CLAUDE])
+    r = await _report(client)
+    assert r.status_code == 409, r.text
+    assert r.json()["error"]["code"] == "MONTH_STILL_COLLECTING"
+    assert r.json()["error"]["details"] == {"shown_from": "2026-10-07"}
+    assert "Claude" not in r.text
+    guide_clock.now = CLOSED
+    assert (await _report(client)).status_code == 200
+
+
+async def test_the_running_month_is_not_shown_either(
+    client: AsyncClient, guide_clock: GuideClock
+) -> None:
+    await _connect(client, ["app"])
+    guide_clock.now = CLOSED
     r = await client.get(
         "/api/v1/guide/adoption/report",
-        params={"period": _period_text()},
-        headers=_admin(OTHER_TENANT_ID),
+        params={"period": "2026-10"},
+        headers=_admin(TEST_TENANT_ID),
     )
-    assert r.json()["figures"] == []
-    assert r.json()["teams_too_small_count"] == 0
+    assert r.status_code == 409
+    assert r.json()["error"]["details"] == {"shown_from": "2026-11-07"}
+
+
+async def test_after_intake_closes_nothing_more_is_counted(
+    client: AsyncClient, guide_clock: GuideClock
+) -> None:
+    """Reading the report and then sending one more cannot show what that one Mac
+    adds: once the month is shown, the Mac is refused and the figures stay as read."""
+    await _connect(client, ["app"])
+    for i in range(9):
+        await _contribute(client, f"uid-{i}", [CLAUDE])
+    guide_clock.now = CLOSED
+    before = await _report(client)
+    late = await _contribute(client, "uid-tenth", [CLAUDE])
+    assert late.status_code == 422, late.text
+    assert late.json()["error"]["code"] == "INTAKE_CLOSED"
+    after = await _report(client)
+    assert before.json() == after.json()
+    assert after.json()["figures"] == []
+    async with TestSessionLocal() as s:
+        people = (await s.execute(select(GuideAdoptionContributors.people))).scalars().all()
+        receipts = (await s.execute(select(GuideAdoptionReceipt))).scalars().all()
+    assert people == [9]
+    assert len(receipts) == 9
+
+
+async def test_the_last_moment_before_closing_is_still_open(
+    client: AsyncClient, guide_clock: GuideClock
+) -> None:
+    await _connect(client, ["app"])
+    guide_clock.now = CLOSED - timedelta(seconds=1)
+    assert (await _contribute(client, "uid-1", [CLAUDE])).json() == {"counted": True}
+    assert (await _report(client)).status_code == 409
 
 
 async def test_a_project_belongs_to_one_tenant(client: AsyncClient) -> None:
@@ -278,7 +364,7 @@ async def test_a_figure_about_one_person_is_refused_not_answered_empty(
     for path in ("/api/v1/guide/adoption/report", "/api/v1/guide/pilot-report"):
         r = await client.get(
             path,
-            params={"period": _period_text(), parameter: "kari@example.com"},
+            params={"period": SEPTEMBER_TEXT, parameter: "kari@example.com"},
             headers=_admin(TEST_TENANT_ID),
         )
         assert r.status_code == 400, (path, r.text)
@@ -291,3 +377,47 @@ async def test_the_minimum_group_size_is_ten_as_guide_pins_it() -> None:
     # Lowering it is a change to Guide's gate and this port together, for months after
     # the change only (promptly-guide docs/adoption-analytics.md).
     assert adoption.MINIMUM_GROUP_SIZE == 10
+
+
+# ── The E2E stack's clock (GUIDE_TEST_CLOCK) ─────────────────────────────────
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+async def test_the_test_clock_header_works_only_when_switched_on(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch, enabled: bool
+) -> None:
+    from app.config import get_settings
+    from app.routers import guide as guide_router
+
+    app.dependency_overrides.pop(guide_router.guide_now, None)  # the real clock
+    settings = get_settings().model_copy(update={"guide_test_clock": enabled})
+    monkeypatch.setattr(guide_router, "get_settings", lambda: settings)
+    await _connect(client, ["app"])
+    r = await client.post(
+        "/api/v1/guide/adoption",
+        json={"team": "sales", "period": SEPTEMBER, "reached": [CLAUDE]},
+        headers={**_guide(), guide_router.TEST_NOW_HEADER: "2026-10-03T12:00:00Z"},
+    )
+    if enabled:
+        assert r.json() == {"counted": True}, r.text
+    else:
+        # Ignored: today's date decides, and September 2026 is closed by now.
+        assert r.status_code == 422, r.text
+        assert r.json()["error"]["code"] == "INTAKE_CLOSED"
+
+
+async def test_the_test_clock_is_refused_outside_testing() -> None:
+    from pydantic import ValidationError
+
+    from app.config import Environment, Settings
+
+    for env in (Environment.DEVELOPMENT, Environment.STAGING, Environment.PRODUCTION):
+        with pytest.raises(ValidationError, match="GUIDE_TEST_CLOCK may only be set"):
+            Settings(
+                app_env=env,
+                app_debug=False,
+                database_url="postgresql+asyncpg://u:p@localhost/db",
+                jwt_secret_key="x" * 40,
+                backend_cors_origins="https://atlas.example",
+                guide_test_clock=True,
+            )

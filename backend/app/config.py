@@ -151,6 +151,11 @@ class Settings(BaseSettings):
     # project issued. Refused at start-up unless APP_ENV is testing, so no other
     # deployment can be told to trust a key of someone's choosing.
     guide_test_firebase_certs: str = ""
+    # Promptly Guide adoption intake closes on a fixed day each month and the report
+    # waits for it, so the E2E stack, which has to send a month and then read it in a
+    # few seconds, may say when "now" is with an `X-Guide-Test-Now` header. Off (the
+    # header ignored) unless set, and refused at start-up unless APP_ENV is testing.
+    guide_test_clock: bool = False
 
     @field_validator("backend_cors_origins")
     @classmethod
@@ -172,6 +177,12 @@ class Settings(BaseSettings):
                     raise ValueError(
                         f"Non-localhost HTTP CORS origin '{origin}' is not allowed in production/staging. Use HTTPS."
                     )
+        return self
+
+    @model_validator(mode="after")
+    def _test_clock_only_in_testing(self) -> Settings:
+        if self.guide_test_clock and self.app_env != Environment.TESTING:
+            raise ValueError("GUIDE_TEST_CLOCK may only be set when APP_ENV is testing")
         return self
 
     @model_validator(mode="after")

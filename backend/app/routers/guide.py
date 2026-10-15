@@ -29,6 +29,7 @@ from __future__ import annotations
 import json
 import uuid
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Query, Request
@@ -85,6 +86,32 @@ OPT_IN_NOTE = (
     "Only people who chose to be counted are in these figures, so a range is a share "
     "of them, not of the whole team."
 )
+# Said with every report, whether no team or many were too small: a count of them, or
+# a sentence only some months carry, would tell an organisation that put one person in
+# a team of their own whether that person took part (promptly-guide #28, E4).
+SMALL_TEAMS_NOTE = adoption.SMALL_TEAMS_NOTE
+
+# The E2E stack's clock (`GUIDE_TEST_CLOCK`); ignored everywhere else.
+TEST_NOW_HEADER = "X-Guide-Test-Now"
+
+
+def guide_now(request: Request) -> datetime:
+    """When intake and the reports reckon it is: the time, except on the E2E stack,
+    which has to send a month and then read it moments later, across the day intake
+    closes. There, and only when `GUIDE_TEST_CLOCK` is set (refused unless APP_ENV is
+    testing), `X-Guide-Test-Now` says when it is."""
+    given = request.headers.get(TEST_NOW_HEADER) if get_settings().guide_test_clock else None
+    if given:
+        try:
+            moment = datetime.fromisoformat(given)
+        except ValueError:
+            raise AppException(
+                code="BAD_TEST_CLOCK",
+                message=f"{TEST_NOW_HEADER} is not an ISO 8601 time",
+                status_code=http_status.HTTP_400_BAD_REQUEST,
+            )
+        return moment if moment.tzinfo is not None else moment.replace(tzinfo=UTC)
+    return datetime.now(UTC)
 
 
 def _kinds(values: object) -> list[str]:
@@ -247,6 +274,7 @@ async def contribute(
     payload: GuideContributionIn,
     caller: GuideCaller = Depends(require_guide_caller),
     db: AsyncSession = DB_SESSION,
+    now: datetime = Depends(guide_now),
 ) -> GuideContributionOut:
     try:
         contribution = adoption.validate_contribution(
@@ -254,6 +282,15 @@ async def contribute(
             period=adoption.period_text(payload.period.year, payload.period.month),
             categories=[(r.kind, r.id) for r in payload.reached],
             offered=set(caller.offered),
+            now=now,
+        )
+    except adoption.IntakeClosed as error:
+        # Refused like any other contribution, so Guide does not send it again; its own
+        # code, so a late Mac is told apart from one that sent something wrong.
+        raise AppException(
+            code="INTAKE_CLOSED",
+            message=str(error),
+            status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
         )
     except adoption.ContributionRejected as error:
         raise AppException(
@@ -368,6 +405,7 @@ async def adoption_report(
     user: Analyst,
     period: str = Query(..., description="YYYY-MM"),
     db: AsyncSession = Depends(get_tenant_db_session),
+    now: datetime = Depends(guide_now),
 ) -> GuideAdoptionReportOut:
     _refuse_a_person(request)
     tenant_id = _tenant_of(user.tenant_id)
@@ -380,6 +418,19 @@ async def adoption_report(
             status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
         )
     month_text = adoption.period_text(year, month)
+    if not adoption.is_closed(month_text, now):
+        # Not "no figures": the month's figures can still change, and showing them as
+        # they change would show what each Mac that sends adds (E4).
+        shown_from = adoption.intake_closes(year, month).date().isoformat()
+        raise AppException(
+            code="MONTH_STILL_COLLECTING",
+            message=(
+                f"Figures for {month_text} are still being collected. They are shown from "
+                f"{shown_from}, once nothing more can be added to them."
+            ),
+            status_code=http_status.HTTP_409_CONFLICT,
+            details={"shown_from": shown_from},
+        )
     row = (
         await db.execute(select(GuideConnection).where(GuideConnection.tenant_id == tenant_id))
     ).scalar_one_or_none()
@@ -398,7 +449,7 @@ async def adoption_report(
             )
             for f in report.figures
         ],
-        teams_too_small_count=len(report.teams_too_small),
+        small_teams_note=SMALL_TEAMS_NOTE,
         suppressed_categories=report.suppressed_categories,
         minimum_group_size=adoption.MINIMUM_GROUP_SIZE,
         note=OPT_IN_NOTE,
@@ -421,6 +472,7 @@ async def pilot_report(
     user: Analyst,
     format: Literal["json", "markdown"] = Query("json"),  # noqa: A002 — the query name
     db: AsyncSession = Depends(get_tenant_db_session),
+    now: datetime = Depends(guide_now),
 ) -> GuidePilotReportOut | PlainTextResponse:
     """The 30-day pilot report (promptly-guide #39): AI tools in use and where people
     get stuck from Guide's gated figures, risky behaviour from Atlas's own prompt
@@ -428,7 +480,7 @@ async def pilot_report(
     _refuse_a_person(request)
     tenant_id = _tenant_of(user.tenant_id)
     try:
-        report = await pilot.build(db, tenant_id)
+        report = await pilot.build(db, tenant_id, now)
     except pilot.PilotNotReady as not_ready:
         raise AppException(
             code="PILOT_NOT_READY",
@@ -455,7 +507,6 @@ async def pilot_report(
                 not_finished=[_figure_out(f) for f in m.not_finished],
                 topics=[_figure_out(f) for f in m.topics],
                 friction=[_figure_out(f) for f in m.friction],
-                teams_too_small_count=len(m.teams_too_small),
                 suppressed_categories=m.suppressed_categories,
             )
             for m in report.months

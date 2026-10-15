@@ -48,7 +48,7 @@ POST /api/v1/guide/adoption
   "reached": [ { "kind": "app", "id": "Claude" }, { "kind": "completion", "id": "finished" } ] }
 ```
 
-- **Only a finished month**, from the last three. Guide sends after a month ends. Accepting a month still running would let one more contribution move a band while someone watches.
+- **Only a finished month, and only while its intake is open.** Intake for a month opens when the month ends and closes at **00:00 UTC on the 7th of the month after** (`INTAKE_CLOSES_ON_DAY`). Guide sends on the 1st to the 6th and retries only inside that window. A contribution after it is refused with `422 INTAKE_CLOSED`; Guide reads that as refused and does not send that month again. Accepting a month still running, or a month already shown, would let one more contribution move a figure while someone watches.
 - **Only compiled-in identifiers.** Each kind has its own pattern:
   - topic: `<pack>/<entry>`;
   - app: a well-known tool's name;
@@ -61,9 +61,11 @@ POST /api/v1/guide/adoption
 
 ## What an admin sees
 
-`GET /api/v1/guide/adoption/report?period=2026-09` (Analyst and above) runs the counts through the gate. The gate is a port of Guide's `AdoptionGate`, and the two must keep the same rules:
+`GET /api/v1/guide/adoption/report?period=2026-09` (Analyst and above) runs the counts through the gate. **A month is shown only once its intake has closed**: before 00:00 UTC on the 7th of the month after, the report answers `409 MONTH_STILL_COLLECTING`, with the date it is shown from (`details.shown_from`). From then on nothing more is counted for the month, so its figures never change once anyone can see them. Without this, reading a month before and after one Mac sends would show what that one person added: a team going from 9 to 10 and appearing, or a category crossing ten.
 
-- A team with **fewer than 10** contributors that month reports **nothing**, not even which categories it touched. Not even its name: the report says only how many teams were too small (`teams_too_small_count`). A team named beside "too small" would say that one to nine people in it took part that month, and an organisation names its own teams, so it could make one a team of one (promptly-guide #28, E4).
+The gate is a port of Guide's `AdoptionGate`, and the two must keep the same rules:
+
+- A team with **fewer than 10** contributors that month reports **nothing**, not even which categories it touched. Not its name, and not a count of such teams: every report says the same sentence, `small_teams_note`, "Teams with fewer than 10 counted people are not shown.", whether no team or many were too small. An organisation names its own teams, so it could put one person in a team of their own; a name beside "too small", or a count that goes from 0 to 1, would tell it each month whether that person took part (promptly-guide #28, E4).
 - Within a team that reports, a category that reached fewer than 10 people is **suppressed, not rounded**. The report says how many were left out per team, but never which ones.
 - Figures are **bands** (`under 20%`, `20–29%` … `80% or more`), and there is **no team total**. No figure can be recovered by subtraction, and none can say "all of the team" or "none of them".
 - Only kinds the tenant offers right now are shown.
@@ -84,8 +86,9 @@ A figures request that names a person, a user, an email or a device is refused w
 | Where people get stuck | Guide's `completion` figures (walkthroughs finished, and where they stopped), `topic` figures (what people needed help with) and `friction` figures (for a topic's walkthrough, finished or the step it stopped at) | The same gate |
 | Risky behaviour | Atlas's own prompt telemetry from the Prompt Shields clients (`grc.prompt_events`): violations by kind of personal data, by AI tool, and by what was done about them | Counts for the whole tenant. **A row is shown only if at least 10 devices contributed to it**; the report says how many rows were left out, but not which |
 
-- **Months covered:** Guide's figures are monthly, so the report covers the finished months since connection, at most three.
-- **Risk window:** the risk section covers the same days.
+- **Months covered:** Guide's figures are monthly, so the report covers the months since connection whose intake has closed, at most three. A month still being collected is left out.
+- **Teams too small:** not named and not counted. The report's notes say "Teams with fewer than 10 counted people are not shown." every time.
+- **Risk window:** the risk section covers the days since connection.
 - **Prompt tips:** Guide's prompt tips are not counted (promptly-guide #34), so nothing in the risk section comes from Guide.
 - **For a demo:** `python -m scripts.seed_guide_pilot --tenant-slug demo` gives a demo tenant a pilot that began 45 days ago. It seeds:
   - adoption counts for three teams, in the tables Guide's contributions fold into, with one team too small to show and a few categories under ten;
@@ -140,7 +143,8 @@ Atlas hosts a SCIM 2.0 endpoint at `/api/v1/scim/v2`. The customer's Entra ID pr
 - **Team is client-sent.** Guide takes it from the organisation's configuration profile, so a person on a Mac they administer could name another team. The minimum group size and bands blunt the effect, but they do not prevent it.
 - **The request itself reveals the caller to Atlas for its duration.** The token is verified and then dropped. The audit middleware does not cover `/api/v1/guide/`, so no client IP is logged against a contribution. Keep it that way, and keep request logs free of `Authorization` headers.
 - **Differencing across months** can narrow a band for a team that changed size. The same limit is documented in Guide's `docs/adoption-analytics.md`.
-- **Differencing over time within a month.** A finished month keeps taking contributions for up to three months, and the report is computed when asked. Someone who reads a month's report before and after one person's Mac sends can see what that one contribution changed: a team crossing ten and appearing, or a category crossing ten and appearing. Closing a month's intake before its report is released would remove this; that is an open decision, since Guide sends late for Macs that were offline.
+- **Differencing over time within a month** is closed off: a month's intake closes at 00:00 UTC on the 7th of the month after, the report shows the month only from then, and nothing is counted for it afterwards. The cost is that a Mac offline for the whole of the 1st to the 6th is not counted for that month. The close day is one constant on each side (`INTAKE_CLOSES_ON_DAY` here, `AdoptionPeriod.intakeCloseDay` in Guide) and the contract (`given.now`) holds the two together.
+- **Testing the window end to end.** The E2E stack is started with `GUIDE_TEST_CLOCK`, which lets a request say when it is with `X-Guide-Test-Now`. Settings refuse it unless `APP_ENV` is testing, and without it the header is ignored.
 
 ## Friction in the organisation's own apps (promptly-guide #85)
 

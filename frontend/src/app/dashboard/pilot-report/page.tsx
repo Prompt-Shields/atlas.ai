@@ -113,7 +113,7 @@ function frictionLabel(id: string): string {
     : `${topic}: stopped at step ${outcome.replace('step-', '')}`;
 }
 
-function MonthCard({ month, minimum }: { month: GuidePilotMonth; minimum: number }) {
+function MonthCard({ month }: { month: GuidePilotMonth }) {
   const left = Object.values(month.suppressed_categories).reduce((a, b) => a + b, 0);
   return (
     <section className="bg-white border border-gray-200 rounded-lg p-6 mb-6">
@@ -148,11 +148,9 @@ function MonthCard({ month, minimum }: { month: GuidePilotMonth; minimum: number
         label={(f) => frictionLabel(f.category_id)}
         empty="No task reached enough people to show."
       />
-      {(month.teams_too_small_count > 0 || left > 0) && (
+      {left > 0 && (
         <p className="text-xs text-gray-500">
-          {month.teams_too_small_count > 0 &&
-            `${month.teams_too_small_count} team(s) had fewer than ${minimum} people counted and are not shown. `}
-          {left > 0 && `${left} figure(s) were left out for being about too few people.`}
+          {`${left} figure(s) were left out for being about too few people.`}
         </p>
       )}
     </section>
@@ -241,10 +239,10 @@ export default function PilotReportPage() {
 
           <h2 className="text-xl font-semibold mb-4">AI tools in use, and where people get stuck</h2>
           {result.report.months.length === 0 ? (
-            <p className="text-gray-500 mb-8">No finished month yet.</p>
+            <p className="text-gray-500 mb-8">No month has finished collecting yet.</p>
           ) : (
             result.report.months.map((m) => (
-              <MonthCard key={m.period} month={m} minimum={result.report.minimum_group_size} />
+              <MonthCard key={m.period} month={m} />
             ))
           )}
 

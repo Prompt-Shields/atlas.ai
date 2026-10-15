@@ -28,7 +28,7 @@ async def test_the_seeded_demo_makes_a_report_with_figures() -> None:
     assert report is not None
     month = report.months[-1]
     assert {f.team for f in month.tools} == {"sales", "finance"}
-    assert month.teams_too_small == ["legal"]
+    assert "legal" not in {f.team for f in month.tools + month.topics + month.friction}
     assert any(f.category_id.endswith("/step-3") for f in month.friction)
     assert {r.key for r in report.risk.by_app} >= {"chatgpt.com", "claude.ai"}
 

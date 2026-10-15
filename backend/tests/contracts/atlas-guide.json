@@ -4,9 +4,9 @@
     "The canonical copy is promptly-guide's contracts/atlas-guide.json. atlas.ai keeps an identical copy at backend/tests/contracts/atlas-guide.json; Scripts/check-atlas-contract.py compares the two.",
     "Guide's side (Tests/GuideAdoptionTests/AtlasContractTests.swift): each request is exactly what Guide builds, and each response reads as guide_reads.",
     "Atlas's side (backend/tests/unit/test_guide_contract.py): with what given describes set up, each request gets a response with the status, and a body that holds the one here (objects may have more keys, lists are exact).",
-    "Atlas takes only the last finished month, so its side replaces the request's period with that month."
+    "A contribution is for a finished month, and Atlas takes it only until that month's intake closes, at 00:00 UTC on the 7th of the month after. A contribution's given.now is the moment it is sent: Atlas's side sets its clock to it, and Guide's side checks that it would send the month then, or would not."
   ],
-  "version": 1,
+  "version": 2,
   "interactions": [
     {
       "name": "the offer",
@@ -27,7 +27,7 @@
     },
     {
       "name": "a month's contribution, counted",
-      "given": {"offered_kinds": ["topic", "app", "completion", "friction"]},
+      "given": {"offered_kinds": ["topic", "app", "completion", "friction"], "now": "2026-10-03T12:00:00Z"},
       "request": {
         "method": "POST",
         "path": "api/v1/guide/adoption",
@@ -47,7 +47,7 @@
     },
     {
       "name": "the same month again",
-      "given": {"offered_kinds": ["topic", "app", "completion", "friction"], "already_counted": true},
+      "given": {"offered_kinds": ["topic", "app", "completion", "friction"], "already_counted": true, "now": "2026-10-06T23:59:59Z"},
       "request": {
         "method": "POST",
         "path": "api/v1/guide/adoption",
@@ -67,7 +67,7 @@
     },
     {
       "name": "a kind the organisation no longer offers",
-      "given": {"offered_kinds": ["completion"]},
+      "given": {"offered_kinds": ["completion"], "now": "2026-10-03T12:00:00Z"},
       "request": {
         "method": "POST",
         "path": "api/v1/guide/adoption",
@@ -83,6 +83,26 @@
         }
       },
       "response": {"status": 422, "body": {"error": {"code": "CONTRIBUTION_REJECTED"}}},
+      "guide_reads": "refused"
+    },
+    {
+      "name": "a month whose intake has closed",
+      "given": {"offered_kinds": ["topic", "app", "completion", "friction"], "now": "2026-10-07T00:00:00Z"},
+      "request": {
+        "method": "POST",
+        "path": "api/v1/guide/adoption",
+        "body": {
+          "team": "Sales",
+          "period": {"year": 2026, "month": 9},
+          "reached": [
+            {"kind": "app", "id": "Claude"},
+            {"kind": "completion", "id": "finished"},
+            {"kind": "friction", "id": "nordlys-expenses/new-claim/step-3"},
+            {"kind": "topic", "id": "chatgpt/model"}
+          ]
+        }
+      },
+      "response": {"status": 422, "body": {"error": {"code": "INTAKE_CLOSED"}}},
       "guide_reads": "refused"
     },
     {

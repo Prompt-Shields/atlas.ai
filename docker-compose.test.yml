@@ -58,6 +58,9 @@ services:
       # A throwaway key CI makes to sign Guide's Firebase ID tokens (ci.yml, E2E).
       # Empty: Google's keys, as anywhere else. Refused unless APP_ENV is testing.
       GUIDE_TEST_FIREBASE_CERTS: ${GUIDE_TEST_FIREBASE_CERTS:-}
+      # Guide adoption intake closes on the 7th of each month and the report waits for
+      # it; the E2E tests say when it is with X-Guide-Test-Now. Refused unless testing.
+      GUIDE_TEST_CLOCK: "true"
     depends_on:
       postgres:
         condition: service_healthy
