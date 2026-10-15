@@ -27,6 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.billing import StripeWebhookEvent
 from app.models.tenant import Plan, SubscriptionStatus, Tenant
 from app.models.user import User
+from app.services.billing.enterprise import is_enterprise_subscription
 
 log = structlog.get_logger()
 
@@ -58,6 +59,19 @@ async def _tenant_by_id(db: AsyncSession, tenant_id: str) -> Tenant | None:
     except (ValueError, AttributeError):
         return None
     return await db.scalar(select(Tenant).where(Tenant.id == tid))
+
+
+def _is_enterprise(obj: dict) -> bool:
+    """True for the Promptly enterprise subscription, or an invoice for it.
+
+    That subscription can share a Stripe customer with a Team-plan one. Its
+    status and Work client quantity must not overwrite the Team plan's
+    ``subscription_status`` and ``seats_billed``.
+    """
+    # Invoices carry the subscription's metadata under subscription_details.
+    return is_enterprise_subscription(obj) or is_enterprise_subscription(
+        obj.get("subscription_details")
+    )
 
 
 async def _tenant_by_customer(db: AsyncSession, customer_id: str) -> Tenant | None:
@@ -169,6 +183,9 @@ async def _on_checkout_completed(db: AsyncSession, obj: dict) -> None:
 
 async def _on_subscription_updated(db: AsyncSession, obj: dict) -> None:
     """customer.subscription.updated — syncs status and seat quantity."""
+    if _is_enterprise(obj):
+        log.info("webhook_enterprise_subscription_skipped", customer=obj.get("customer"))
+        return
     tenant = await _tenant_by_customer(db, obj.get("customer", ""))
     if not tenant:
         log.warning("webhook_tenant_not_found_by_customer", customer=obj.get("customer"))
@@ -196,6 +213,9 @@ async def _on_subscription_updated(db: AsyncSession, obj: dict) -> None:
 
 async def _on_subscription_deleted(db: AsyncSession, obj: dict) -> None:
     """customer.subscription.deleted — marks subscription as canceled."""
+    if _is_enterprise(obj):
+        log.info("webhook_enterprise_subscription_skipped", customer=obj.get("customer"))
+        return
     tenant = await _tenant_by_customer(db, obj.get("customer", ""))
     if not tenant:
         log.warning("webhook_tenant_not_found_by_customer", customer=obj.get("customer"))
@@ -209,6 +229,9 @@ async def _on_subscription_deleted(db: AsyncSession, obj: dict) -> None:
 
 async def _on_invoice_payment_failed(db: AsyncSession, obj: dict) -> None:
     """invoice.payment_failed — sets subscription_status=past_due."""
+    if _is_enterprise(obj):
+        log.info("webhook_enterprise_subscription_skipped", customer=obj.get("customer"))
+        return
     tenant = await _tenant_by_customer(db, obj.get("customer", ""))
     if not tenant:
         log.warning("webhook_tenant_not_found_by_customer", customer=obj.get("customer"))
@@ -220,6 +243,9 @@ async def _on_invoice_payment_failed(db: AsyncSession, obj: dict) -> None:
 
 async def _on_invoice_paid(db: AsyncSession, obj: dict) -> None:
     """invoice.paid — clears past_due / confirms active subscription."""
+    if _is_enterprise(obj):
+        log.info("webhook_enterprise_subscription_skipped", customer=obj.get("customer"))
+        return
     tenant = await _tenant_by_customer(db, obj.get("customer", ""))
     if not tenant:
         log.warning("webhook_tenant_not_found_by_customer", customer=obj.get("customer"))

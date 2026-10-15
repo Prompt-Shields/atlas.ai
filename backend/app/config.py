@@ -125,9 +125,19 @@ class Settings(BaseSettings):
     stripe_webhook_secret: str = ""
     stripe_price_team_monthly: str = ""
     stripe_price_team_annual: str = ""
+    # JSON file of Promptly catalogue amounts ({lookup_key: cents}) read by
+    # scripts/stripe_catalog.py. Kept outside the repository: pricing must not
+    # be committed (CONTRIBUTING.md).
+    stripe_catalog_amounts_file: str = ""
     billing_portal_return_url: str = "http://localhost:3000/dashboard/billing"
     billing_checkout_success_url: str = "http://localhost:3000/dashboard/billing?upgraded=1"
     billing_checkout_cancel_url: str = "http://localhost:3000/dashboard/billing"
+    # Stripe Tax (promptly-guide#50). On by default, because main already
+    # sent `automatic_tax` on every Team checkout and production must keep
+    # charging VAT. Stripe rejects `automatic_tax` on an account with no
+    # head-office address, so dev and test accounts without that set-up turn
+    # it off with STRIPE_AUTOMATIC_TAX=false.
+    stripe_automatic_tax: bool = True
 
     # ── Feature Flags ─────────────────────────────────────────────────
     research_all_data: bool = False
