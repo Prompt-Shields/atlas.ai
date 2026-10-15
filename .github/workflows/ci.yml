@@ -142,6 +142,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Guide's routes take Firebase ID tokens, which only Google can sign. The stack
+      # trusts a throwaway key made here instead (GUIDE_TEST_FIREBASE_CERTS, refused
+      # unless APP_ENV is testing), and tests/e2e/test_guide_adoption.py signs with it.
+      - name: Make a Firebase signing key for the stack
+        run: |
+          openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=securetoken.e2e \
+            -keyout "$RUNNER_TEMP/firebase-e2e.key" -out "$RUNNER_TEMP/firebase-e2e.crt"
+          echo "GUIDE_TEST_FIREBASE_CERTS=$(jq -cn --rawfile cert "$RUNNER_TEMP/firebase-e2e.crt" '{"e2e-guide": $cert}')" >> "$GITHUB_ENV"
+          echo "E2E_FIREBASE_KEY_FILE=$RUNNER_TEMP/firebase-e2e.key" >> "$GITHUB_ENV"
+
       - name: Start test stack
         run: docker compose -f docker-compose.test.yml up -d --build --wait
 
