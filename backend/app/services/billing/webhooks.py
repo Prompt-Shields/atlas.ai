@@ -135,7 +135,19 @@ async def _on_checkout_completed(db: AsyncSession, obj: dict) -> None:
         log.warning("webhook_tenant_not_found", tenant_id=tenant_id)
         return
 
-    tenant.stripe_customer_id = obj.get("customer")
+    # A tenant keeps its first Stripe customer. Checkout reuses it, so a
+    # different id here means a session was created some other way; keep the
+    # stored one, because invoice and subscription events for it route by it.
+    incoming_customer = obj.get("customer")
+    if not tenant.stripe_customer_id:
+        tenant.stripe_customer_id = incoming_customer
+    elif incoming_customer and incoming_customer != tenant.stripe_customer_id:
+        log.warning(
+            "webhook_checkout_customer_mismatch",
+            tenant_id=str(tenant.id),
+            stored_customer=tenant.stripe_customer_id,
+            incoming_customer=incoming_customer,
+        )
     tenant.stripe_subscription_id = obj.get("subscription")
 
     # Fetch the subscription item id from Stripe (stubbed in tests)
