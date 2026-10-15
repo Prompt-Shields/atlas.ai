@@ -4,7 +4,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-AdoptionKind = Literal["topic", "app", "completion", "friction"]
+AdoptionKind = Literal["topic", "app", "completion", "friction", "lesson"]
 
 
 class GuideConnectionIn(BaseModel):
@@ -102,6 +102,7 @@ class GuidePilotMonthOut(BaseModel):
     not_finished: list[GuideFigureOut]
     topics: list[GuideFigureOut]
     friction: list[GuideFigureOut]
+    lessons: list[GuideFigureOut]
     # Teams under the minimum group size are not named or counted; the report's
     # notes say so in the same words every month (promptly-guide #28, E4).
     suppressed_categories: dict[str, int]

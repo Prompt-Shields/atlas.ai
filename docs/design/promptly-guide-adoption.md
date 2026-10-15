@@ -53,7 +53,8 @@ POST /api/v1/guide/adoption
   - topic: `<pack>/<entry>`;
   - app: a well-known tool's name;
   - completion: a walkthrough ending;
-  - friction: `<pack>/<entry>/finished`, or `<pack>/<entry>/step-N` with N from 1 to 10 (promptly-guide #85).
+  - friction: `<pack>/<entry>/finished`, or `<pack>/<entry>/step-N` with N from 1 to 10 (promptly-guide #85);
+  - lesson: `<pack>/<lesson>`, a lesson someone finished (promptly-guide #78).
 
   Free text is refused, and so is any field beyond these three (`extra="forbid"`).
 - **Only offered kinds.** A category of a kind the tenant does not offer rejects the whole contribution. Guide only sends what was offered, so a client that sends anything else is suspect.
@@ -84,6 +85,7 @@ A figures request that names a person, a user, an email or a device is refused w
 | --- | --- | --- |
 | AI tools in use | Guide's `app` figures | The gate above: teams of 10 or more, bands, no totals |
 | Where people get stuck | Guide's `completion` figures (walkthroughs finished, and where they stopped), `topic` figures (what people needed help with) and `friction` figures (for a topic's walkthrough, finished or the step it stopped at) | The same gate |
+| Lessons people finished | Guide's `lesson` figures (promptly-guide #78): reach by team, never who | The same gate |
 | Risky behaviour | Atlas's own prompt telemetry from the Prompt Shields clients (`grc.prompt_events`): violations by kind of personal data, by AI tool, and by what was done about them | Counts for the whole tenant. **A row is shown only if at least 10 devices contributed to it**; the report says how many rows were left out, but not which |
 
 - **Months covered:** Guide's figures are monthly, so the report covers the months since connection whose intake has closed, at most three. A month still being collected is left out.
@@ -152,3 +154,6 @@ Atlas hosts a SCIM 2.0 endpoint at `/api/v1/scim/v2`. The customer's Entra ID pr
 
 A figure is still a share of the people who opted in, in a team of ten or more, banded, with a category suppressed below ten people. The pilot report shows it as its own section, "Where people get stuck in a task". Ids are at most 130 characters, which is why `category_id` is 140.
 
+## Lessons people finished (promptly-guide #78)
+
+`lesson` is a kind like the others: offered by the tenant, agreed to by each person, counted by team and month through the same gate. A category is a pack and one of its lessons, for example `chatgpt/custom-instructions-what-to-write`, with the same id rules as a topic. A figure says what share of a team of ten or more finished that lesson, in a band; a lesson fewer than ten finished is left out. Nothing says who finished one, how long it took or what they answered: Guide does not send it. The pilot report shows lessons as their own section, "Lessons people finished".

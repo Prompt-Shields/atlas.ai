@@ -31,6 +31,8 @@ export interface GuidePilotMonth {
   topics: GuideFigure[];
   /** Where a topic's walkthrough ended (promptly-guide #85). */
   friction: GuideFigure[];
+  /** Which of Guide's lessons people finished (promptly-guide #78), by team. */
+  lessons: GuideFigure[];
   // Teams under the minimum group size are neither named nor counted; the report's
   // notes say so in the same words every month (promptly-guide #28, E4).
   suppressed_categories: Record<string, number>;

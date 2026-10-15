@@ -7,7 +7,8 @@ Three sections, each from data that is already aggregate, and each through a gat
     adoption figures (`guide_adoption_service`): teams of ten or more, open-ended
     bands, no totals, and only people who opted in (#38). Tools are the `app`
     kind; getting stuck is how walkthroughs ended (`completion`) and which of
-    Guide's topics people needed (`topic`).
+    Guide's topics people needed (`topic`). Beside them, which of Guide's lessons
+    people finished (`lesson`, promptly-guide #78), as reach by team, never who.
   * **Risky behaviour** comes from Atlas's own prompt telemetry from the Prompt
     Shields clients (`grc.prompt_events`), as tenant-level counts. Guide adds
     nothing here: its prompt tips are not counted at all (promptly-guide #34). A
@@ -86,6 +87,8 @@ class MonthSection:
     # Where a topic's walkthrough ended (promptly-guide #85): the friction in the
     # organisation's own apps, by team.
     friction: list[adoption.Figure]
+    # Which of Guide's lessons people finished (promptly-guide #78), by team.
+    lessons: list[adoption.Figure]
     # No teams too small, by name or by count: `adoption.SMALL_TEAMS_NOTE` is in every
     # report's notes instead (promptly-guide #28, E4).
     suppressed_categories: dict[str, int]
@@ -202,6 +205,7 @@ def month_section(tallies: list[adoption.Tally], period: str, offered: set[str])
         not_finished=[f for f in endings if f.category_id != "finished"],
         topics=[f for f in report.figures if f.category_kind == "topic"],
         friction=[f for f in report.figures if f.category_kind == "friction"],
+        lessons=[f for f in report.figures if f.category_kind == "lesson"],
         suppressed_categories=report.suppressed_categories,
     )
 
@@ -293,8 +297,14 @@ def markdown(report: PilotReport, organisation: str) -> str:
             month.friction,
             lambda f: friction_label(f.category_id),
         )
+        _figures(lines, "Lessons people finished", month.lessons, lambda f: f.category_id)
         if not (
-            month.tools or month.finished or month.not_finished or month.topics or month.friction
+            month.tools
+            or month.finished
+            or month.not_finished
+            or month.topics
+            or month.friction
+            or month.lessons
         ):
             lines += ["", "Not enough people for any figure this month."]
         left = sum(month.suppressed_categories.values())

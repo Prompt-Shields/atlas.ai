@@ -10,13 +10,13 @@
   "interactions": [
     {
       "name": "the offer",
-      "given": {"offered_kinds": ["topic", "app", "completion", "friction"]},
+      "given": {"offered_kinds": ["topic", "app", "completion", "friction", "lesson"]},
       "request": {"method": "GET", "path": "api/v1/guide/offer"},
       "response": {
         "status": 200,
-        "body": {"offered_kinds": ["topic", "app", "completion", "friction"], "minimum_group_size": 10}
+        "body": {"offered_kinds": ["topic", "app", "completion", "friction", "lesson"], "minimum_group_size": 10}
       },
-      "guide_reads": ["app", "completion", "friction", "topic"]
+      "guide_reads": ["app", "completion", "friction", "lesson", "topic"]
     },
     {
       "name": "an organisation that has not connected Guide",
@@ -27,7 +27,7 @@
     },
     {
       "name": "a month's contribution, counted",
-      "given": {"offered_kinds": ["topic", "app", "completion", "friction"], "now": "2026-10-03T12:00:00Z"},
+      "given": {"offered_kinds": ["topic", "app", "completion", "friction", "lesson"], "now": "2026-10-03T12:00:00Z"},
       "request": {
         "method": "POST",
         "path": "api/v1/guide/adoption",
@@ -38,6 +38,7 @@
             {"kind": "app", "id": "Claude"},
             {"kind": "completion", "id": "finished"},
             {"kind": "friction", "id": "nordlys-expenses/new-claim/step-3"},
+            {"kind": "lesson", "id": "chatgpt/custom-instructions-what-to-write"},
             {"kind": "topic", "id": "chatgpt/model"}
           ]
         }
@@ -47,7 +48,7 @@
     },
     {
       "name": "the same month again",
-      "given": {"offered_kinds": ["topic", "app", "completion", "friction"], "already_counted": true, "now": "2026-10-06T23:59:59Z"},
+      "given": {"offered_kinds": ["topic", "app", "completion", "friction", "lesson"], "already_counted": true, "now": "2026-10-06T23:59:59Z"},
       "request": {
         "method": "POST",
         "path": "api/v1/guide/adoption",
@@ -58,6 +59,7 @@
             {"kind": "app", "id": "Claude"},
             {"kind": "completion", "id": "finished"},
             {"kind": "friction", "id": "nordlys-expenses/new-claim/step-3"},
+            {"kind": "lesson", "id": "chatgpt/custom-instructions-what-to-write"},
             {"kind": "topic", "id": "chatgpt/model"}
           ]
         }
@@ -78,6 +80,7 @@
             {"kind": "app", "id": "Claude"},
             {"kind": "completion", "id": "finished"},
             {"kind": "friction", "id": "nordlys-expenses/new-claim/step-3"},
+            {"kind": "lesson", "id": "chatgpt/custom-instructions-what-to-write"},
             {"kind": "topic", "id": "chatgpt/model"}
           ]
         }
@@ -87,7 +90,7 @@
     },
     {
       "name": "a month whose intake has closed",
-      "given": {"offered_kinds": ["topic", "app", "completion", "friction"], "now": "2026-10-07T00:00:00Z"},
+      "given": {"offered_kinds": ["topic", "app", "completion", "friction", "lesson"], "now": "2026-10-07T00:00:00Z"},
       "request": {
         "method": "POST",
         "path": "api/v1/guide/adoption",
@@ -98,6 +101,7 @@
             {"kind": "app", "id": "Claude"},
             {"kind": "completion", "id": "finished"},
             {"kind": "friction", "id": "nordlys-expenses/new-claim/step-3"},
+            {"kind": "lesson", "id": "chatgpt/custom-instructions-what-to-write"},
             {"kind": "topic", "id": "chatgpt/model"}
           ]
         }

@@ -60,6 +60,7 @@ TEAMS: dict[str, tuple[int, dict[tuple[str, str], int]]] = {
             ("topic", "m365-copilot/draft-email"): 21,
             ("friction", "nordlys-expenses/new-claim/finished"): 20,
             ("friction", "nordlys-expenses/new-claim/step-3"): 13,
+            ("lesson", "chatgpt/custom-instructions-what-to-write"): 16,
         },
     ),
     "finance": (
@@ -70,6 +71,7 @@ TEAMS: dict[str, tuple[int, dict[tuple[str, str], int]]] = {
             ("completion", "finished"): 15,
             ("topic", "m365-copilot/analyse-data"): 12,
             ("friction", "nordlys-expenses/new-claim/step-3"): 10,
+            ("lesson", "chatgpt/custom-instructions-what-to-write"): 7,
         },
     ),
     # Under the minimum group size: counted in the report, never named or shown.

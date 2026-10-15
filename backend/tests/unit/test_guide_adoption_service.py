@@ -222,3 +222,61 @@ def test_friction_goes_through_the_same_gate() -> None:
     report = svc.gate([Tally("finance", 30, {stopped: 12, finished: 9})], "2026-09", FRICTION)
     assert [(f.category_kind, f.category_id) for f in report.figures] == [stopped]
     assert report.suppressed_categories == {"finance": 1}
+
+
+# ── Lessons (promptly-guide #78) ──────────────────────────────────────────
+
+LESSONS = {"lesson"}
+LESSON = ("lesson", "chatgpt/custom-instructions-what-to-write")
+
+
+@pytest.mark.parametrize(
+    "category_id",
+    [
+        "chatgpt/custom-instructions-what-to-write",
+        "nordlys/check-a-figure",
+        f"{'a' * 60}/{'b' * 60}",
+    ],
+)
+def test_a_lesson_is_a_pack_and_one_of_its_lessons(category_id: str) -> None:
+    c = svc.validate_contribution("finance", "2026-09", [("lesson", category_id)], LESSONS, OCTOBER)
+    assert c.categories == frozenset({("lesson", category_id)})
+
+
+@pytest.mark.parametrize(
+    "category_id",
+    [
+        "chatgpt",
+        "chatgpt/",
+        "/custom-instructions",
+        "chatgpt/custom-instructions/step-3",
+        "ChatGPT/custom-instructions",
+        "chatgpt/-custom",
+        f"chatgpt/{'b' * 61}",
+        "how do I quit/my job",
+    ],
+)
+def test_a_lesson_that_is_not_that_shape_is_refused(category_id: str) -> None:
+    with pytest.raises(ContributionRejected):
+        svc.validate_contribution("finance", "2026-09", [("lesson", category_id)], LESSONS, OCTOBER)
+
+
+def test_a_lesson_is_refused_where_lessons_are_not_counted() -> None:
+    with pytest.raises(ContributionRejected):
+        svc.validate_contribution("finance", "2026-09", [LESSON], EVERYTHING, OCTOBER)
+
+
+def test_lessons_go_through_the_same_gate() -> None:
+    other = ("lesson", "chatgpt/check-a-figure")
+    report = svc.gate(
+        [Tally("finance", 30, {LESSON: 30, other: 9}), Tally("legal", 9, {LESSON: 9})],
+        "2026-09",
+        LESSONS,
+    )
+    # Finance's 30 of 30 is banded with an open top, never "all of the team"; its 9 is
+    # left out, not rounded; legal, under ten, shows nothing at all.
+    assert [(f.team, f.category_id, f.band.text) for f in report.figures] == [
+        ("finance", LESSON[1], "80% or more")
+    ]
+    assert report.suppressed_categories == {"finance": 1}
+    assert report.teams_too_small == ["legal"]

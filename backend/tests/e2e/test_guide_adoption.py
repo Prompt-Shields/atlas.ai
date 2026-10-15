@@ -283,11 +283,12 @@ async def report(
 
 # The contract's contribution: one Mac that reached a category of every kind.
 CONTRACT_BODY = _interaction("a month's contribution, counted")["request"]["body"]
-APP, COMPLETION, FRICTION, TOPIC = CONTRACT_BODY["reached"]
-assert [APP["kind"], COMPLETION["kind"], FRICTION["kind"], TOPIC["kind"]] == [
+APP, COMPLETION, FRICTION, LESSON, TOPIC = CONTRACT_BODY["reached"]
+assert [APP["kind"], COMPLETION["kind"], FRICTION["kind"], LESSON["kind"], TOPIC["kind"]] == [
     "app",
     "completion",
     "friction",
+    "lesson",
     "topic",
 ]
 TEAM = CONTRACT_BODY["team"]
@@ -298,10 +299,13 @@ SALES_SIZE = 20
 
 def sales_reached(n: int) -> list[dict[str, str]]:
     """What the n-th of twenty Macs in the team reached. Everyone used the app, 15
-    finished a walkthrough, 10 asked about the topic, 4 stopped at the same step."""
+    finished a walkthrough, 12 finished the lesson (promptly-guide #78), 10 asked about
+    the topic, 4 stopped at the same step."""
     reached = [APP]
     if n < 15:
         reached.append(COMPLETION)
+    if n < 12:
+        reached.append(LESSON)
     if n < 10:
         reached.append(TOPIC)
     if n < 4:
@@ -335,7 +339,7 @@ async def test_a_team_of_macs_reaches_the_report_in_bands(
                 org.device(issuer, f"small-{n}"),
                 SMALL_TEAM,
                 org.period,
-                [APP, COMPLETION, FRICTION, TOPIC],
+                [APP, COMPLETION, FRICTION, LESSON, TOPIC],
             )
             assert sent == "counted", n
 
@@ -371,6 +375,7 @@ async def test_a_team_of_macs_reaches_the_report_in_bands(
     assert {k: (f["band"], f["band_lower"]) for k, f in figures.items()} == {
         ("app", APP["id"]): ("80% or more", 80),  # 20 of 20: never "all of them"
         ("completion", COMPLETION["id"]): ("70–79%", 70),  # 15 of 20
+        ("lesson", LESSON["id"]): ("60–69%", 60),  # 12 of 20
         ("topic", TOPIC["id"]): ("50–59%", 50),  # 10 of 20, the least a figure needs
     }
     # Four people stopped at the step: suppressed, and only counted as suppressed.
@@ -416,6 +421,14 @@ async def test_what_guide_never_sends_is_refused(
             "free text as a topic": {
                 **contribution,
                 "reached": [{"kind": "topic", "id": "How do I export the Q3 forecast?"}],
+            },
+            "a lesson that is not <pack>/<lesson>": {
+                **contribution,
+                "reached": [{"kind": "lesson", "id": "chatgpt/custom-instructions/step-3"}],
+            },
+            "a lesson by its title": {
+                **contribution,
+                "reached": [{"kind": "lesson", "id": "Custom instructions: what to write"}],
             },
         }
         for why, body in never_sent.items():

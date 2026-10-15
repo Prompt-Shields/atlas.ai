@@ -30,6 +30,8 @@ async def test_the_seeded_demo_makes_a_report_with_figures() -> None:
     assert {f.team for f in month.tools} == {"sales", "finance"}
     assert "legal" not in {f.team for f in month.tools + month.topics + month.friction}
     assert any(f.category_id.endswith("/step-3") for f in month.friction)
+    # Finance's seven are under ten, so only sales shows a lesson.
+    assert [f.team for f in month.lessons] == ["sales"]
     assert {r.key for r in report.risk.by_app} >= {"chatgpt.com", "claude.ai"}
 
 

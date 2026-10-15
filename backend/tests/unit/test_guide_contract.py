@@ -20,6 +20,7 @@ from httpx import AsyncClient
 from app.auth.firebase_token import get_firebase_verifier
 from app.auth.jwt import create_access_token
 from app.main import app
+from app.models.guide_adoption import ADOPTION_KINDS
 from app.routers.guide import guide_now
 from tests.conftest import TEST_TENANT_ID, TestSessionLocal, auth_header
 from tests.unit import firebase_keys as keys
@@ -117,6 +118,17 @@ def test_every_contribution_says_when_it_is_sent() -> None:
     for i in INTERACTIONS:
         if i["request"]["path"] == "api/v1/guide/adoption":
             assert datetime.fromisoformat(i["given"]["now"]).tzinfo == UTC, i["name"]
+
+
+def test_the_contract_covers_every_kind_atlas_counts() -> None:
+    """Every kind Atlas offers and counts, lessons (promptly-guide #78) included, is in
+    the offer and in each contribution, so neither side can add one the other lacks."""
+    offer = next(i for i in INTERACTIONS if i["name"] == "the offer")
+    assert offer["response"]["body"]["offered_kinds"] == list(ADOPTION_KINDS)
+    for i in INTERACTIONS:
+        if i["request"]["path"] == "api/v1/guide/adoption":
+            kinds = {c["kind"] for c in i["request"]["body"]["reached"]}
+            assert kinds == set(ADOPTION_KINDS), i["name"]
 
 
 def test_the_contract_covers_every_call_guide_makes() -> None:

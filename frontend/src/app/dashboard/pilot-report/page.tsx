@@ -148,6 +148,12 @@ function MonthCard({ month }: { month: GuidePilotMonth }) {
         label={(f) => frictionLabel(f.category_id)}
         empty="No task reached enough people to show."
       />
+      <FigureTable
+        title="Lessons people finished"
+        figures={month.lessons ?? []}
+        label={(f) => f.category_id}
+        empty="No lesson reached enough people to show."
+      />
       {left > 0 && (
         <p className="text-xs text-gray-500">
           {`${left} figure(s) were left out for being about too few people.`}

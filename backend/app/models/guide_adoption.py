@@ -33,8 +33,10 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.database import Base
 from app.models.base import GRCBase, TenantScopedMixin, UUIDPrimaryKeyMixin
 
-# The three things Guide's adoption figures may be about (Guide's `AdoptionKind`).
-ADOPTION_KINDS = ("topic", "app", "completion", "friction")
+# What Guide's adoption figures may be about (Guide's `AdoptionKind`): the three
+# things E15 names, where people get stuck in a task (promptly-guide #85), and which
+# lessons people finished (promptly-guide #78).
+ADOPTION_KINDS = ("topic", "app", "completion", "friction", "lesson")
 
 
 class GuideConnection(GRCBase, TenantScopedMixin):

@@ -233,6 +233,39 @@ async def test_friction_is_not_shown_when_the_organisation_does_not_count_it(
     assert month["friction"] == []
 
 
+async def test_lessons_people_finished_are_their_own_section(client: AsyncClient) -> None:
+    # promptly-guide #78: reach by team, through the same gate as every other kind.
+    await _connect(days_ago=40, kinds=("lesson",))
+    lesson = ("lesson", "chatgpt/custom-instructions-what-to-write")
+    await _team(SEPTEMBER, "finance", 20, {lesson: 12, ("lesson", "chatgpt/check-a-figure"): 9})
+    await _team(SEPTEMBER, "legal", 9, {lesson: 9})  # under ten: nothing shown
+    r = await client.get("/api/v1/guide/pilot-report", headers=_admin())
+    assert r.status_code == 200, r.text
+    month = next(m for m in r.json()["months"] if m["period"] == SEPTEMBER)
+    assert [(f["team"], f["category_id"], f["band"]) for f in month["lessons"]] == [
+        ("finance", "chatgpt/custom-instructions-what-to-write", "60–69%")
+    ]
+    assert month["suppressed_categories"] == {"finance": 1}
+    assert "legal" not in r.text
+
+    r = await client.get(
+        "/api/v1/guide/pilot-report", params={"format": "markdown"}, headers=_admin()
+    )
+    assert "Lessons people finished" in r.text
+    assert "| finance | chatgpt/custom-instructions-what-to-write | 60–69% |" in r.text
+    assert "chatgpt/check-a-figure" not in r.text
+
+
+async def test_lessons_are_not_shown_when_the_organisation_does_not_count_them(
+    client: AsyncClient,
+) -> None:
+    await _connect(days_ago=40)
+    await _team(SEPTEMBER, "finance", 20, {("lesson", "chatgpt/check-a-figure"): 15})
+    r = await client.get("/api/v1/guide/pilot-report", headers=_admin())
+    month = next(m for m in r.json()["months"] if m["period"] == SEPTEMBER)
+    assert month["lessons"] == []
+
+
 async def test_a_friction_label_says_finished_or_the_step() -> None:
     assert pilot.friction_label("a/b/finished") == "a/b: finished"
     assert pilot.friction_label("a/b/step-10") == "a/b: stopped at step 10"

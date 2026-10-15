@@ -507,6 +507,7 @@ async def pilot_report(
                 not_finished=[_figure_out(f) for f in m.not_finished],
                 topics=[_figure_out(f) for f in m.topics],
                 friction=[_figure_out(f) for f in m.friction],
+                lessons=[_figure_out(f) for f in m.lessons],
                 suppressed_categories=m.suppressed_categories,
             )
             for m in report.months

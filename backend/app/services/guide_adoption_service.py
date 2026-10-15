@@ -13,7 +13,8 @@ The gate is a port of Guide's `AdoptionGate` (promptly-guide
   3. Figures are **bands** with open ends ("under 20%", "80% or more") and there
      is **no team total**, so nothing can be recovered by subtraction and no
      figure says "all of the team" or "none of them".
-  4. Only kinds the tenant currently offers are shown.
+  4. Only kinds the tenant currently offers are shown. Every kind goes through the
+     same rules, lessons people finished (promptly-guide #78) included.
   5. A month is shown only once its intake has **closed**, and after that nothing
      more is counted for it, so reading a report before and after one Mac sends
      cannot show what that one person's contribution changed. Intake for a month
@@ -72,13 +73,17 @@ _PERIOD_RE = re.compile(r"^(\d{4})-(\d{2})$")
 #   friction    "<pack>/<entry>/" and where its walkthrough ended: "finished" or
 #               the step it stopped at, 1 to 10 (promptly-guide #85)
 #                                                     e.g. "expenses/new-claim/step-3"
+#   lesson      "<pack>/<lesson>", lowercase ids: a lesson someone finished
+#               (promptly-guide #78)          e.g. "chatgpt/custom-instructions-what-to-write"
+_PACK_PAIR = r"^[a-z0-9][a-z0-9-]{0,59}/[a-z0-9][a-z0-9-]{0,59}$"
 _CATEGORY_ID_RE = {
-    "topic": re.compile(r"^[a-z0-9][a-z0-9-]{0,59}/[a-z0-9][a-z0-9-]{0,59}$"),
+    "topic": re.compile(_PACK_PAIR),
     "app": re.compile(r"^[A-Za-z0-9][A-Za-z0-9 .\-]{0,39}$"),
     "completion": re.compile(r"^[a-z][A-Za-z]{0,29}$"),
     "friction": re.compile(
         r"^[a-z0-9][a-z0-9-]{0,59}/[a-z0-9][a-z0-9-]{0,59}/(finished|step-([1-9]|10))$"
     ),
+    "lesson": re.compile(_PACK_PAIR),
 }
 
 
