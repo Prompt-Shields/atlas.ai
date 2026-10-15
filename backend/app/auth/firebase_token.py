@@ -24,7 +24,9 @@ logged or stored.
 
 from __future__ import annotations
 
+import asyncio
 import json
+import math
 import re
 import time
 from collections.abc import Awaitable, Callable
@@ -43,6 +45,10 @@ ISSUER_PREFIX = "https://securetoken.google.com/"
 # A clock a little ahead of Google's should not reject a token minted a moment ago.
 _LEEWAY_SECONDS = 60
 _DEFAULT_MAX_AGE = 3600
+# A token naming a key Atlas has not seen makes it fetch Google's certificates
+# early, in case Google rotated one in. Anyone who knows a connected project id can
+# send such tokens, so that early fetch happens at most once in this many seconds.
+FORCED_REFRESH_INTERVAL = 60.0
 _MAX_AGE_RE = re.compile(r"max-age=(\d+)")
 
 CertFetcher = Callable[[], Awaitable[tuple[dict[str, str], int]]]
@@ -104,14 +110,48 @@ class FirebaseTokenVerifier:
         self,
         fetch: CertFetcher = fetch_google_certs,
         clock: Callable[[], float] = time.time,
+        forced_refresh_interval: float = FORCED_REFRESH_INTERVAL,
     ) -> None:
         self._fetch = fetch
         self._clock = clock
+        self._forced_refresh_interval = forced_refresh_interval
         self._certs: dict[str, str] = {}
         self._expires_at = 0.0
+        self._last_forced_at = -math.inf
+        # One fetch at a time, so requests that arrive while one is under way wait
+        # for it and read its result. An asyncio lock belongs to one event loop, so
+        # a new loop (each test has its own) gets a new lock.
+        self._lock: asyncio.Lock | None = None
+        self._lock_loop: asyncio.AbstractEventLoop | None = None
+
+    def _fetch_lock(self) -> asyncio.Lock:
+        loop = asyncio.get_running_loop()
+        if self._lock is None or self._lock_loop is not loop:
+            self._lock = asyncio.Lock()
+            self._lock_loop = loop
+        return self._lock
+
+    def _cached(self, kid: str) -> str | None:
+        if self._clock() >= self._expires_at:
+            return None
+        return self._certs.get(kid)
 
     async def _cert(self, kid: str) -> str:
-        if self._clock() >= self._expires_at or kid not in self._certs:
+        cert = self._cached(kid)
+        if cert is not None:
+            return cert
+        async with self._fetch_lock():
+            # Another request may have fetched while this one waited.
+            cert = self._cached(kid)
+            if cert is not None:
+                return cert
+            now = self._clock()
+            if now < self._expires_at:
+                # The certificates are current but lack this key: fetch early only
+                # if no early fetch was made in the last interval.
+                if now - self._last_forced_at < self._forced_refresh_interval:
+                    raise FirebaseTokenError("Unknown signing key")
+                self._last_forced_at = now
             try:
                 certs, max_age = await self._fetch()
             except (httpx.HTTPError, ValueError) as error:

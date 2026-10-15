@@ -7,6 +7,7 @@ expired, not from the future, a subject.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import hmac
@@ -15,7 +16,12 @@ import time
 
 import pytest
 
-from app.auth.firebase_token import FirebaseTokenError, unverified_target
+from app.auth.firebase_token import (
+    FORCED_REFRESH_INTERVAL,
+    FirebaseTokenError,
+    FirebaseTokenVerifier,
+    unverified_target,
+)
 from tests.unit import firebase_keys as keys
 
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
@@ -119,6 +125,74 @@ async def test_keys_are_fetched_again_when_a_new_one_appears() -> None:
     identity = await verifier.verify(keys.token(), keys.PROJECT)
     assert identity.subject == "firebase-uid-1"
     assert fetches == 2
+
+
+class _CountingGoogle:
+    """Google's certificate endpoint, counting how often Atlas asks, on a clock the
+    test moves."""
+
+    def __init__(self, served: dict[str, str]) -> None:
+        self.served = served
+        self.fetches = 0
+        self.now = time.time()
+
+    async def fetch(self) -> tuple[dict[str, str], int]:
+        self.fetches += 1
+        await asyncio.sleep(0)  # let other requests in while this one is under way
+        return dict(self.served), 3600
+
+    def verifier(self) -> FirebaseTokenVerifier:
+        return FirebaseTokenVerifier(fetch=self.fetch, clock=lambda: self.now)
+
+
+async def test_unknown_key_ids_fetch_googles_keys_again_at_most_once_an_interval() -> None:
+    google = _CountingGoogle({keys.KID: keys.CERT_PEM})
+    verifier = google.verifier()
+    await verifier.verify(keys.token(), keys.PROJECT)
+    assert google.fetches == 1
+
+    async def unknown(n: int) -> None:
+        with pytest.raises(FirebaseTokenError):
+            await verifier.verify(keys.token(kid=f"made-up-{n}"), keys.PROJECT)
+
+    await asyncio.gather(*(unknown(n) for n in range(50)))
+    for n in range(50, 100):
+        await unknown(n)
+    assert google.fetches == 2
+    # Tokens with a known key still verify, from the cache.
+    await verifier.verify(keys.token(), keys.PROJECT)
+    assert google.fetches == 2
+
+
+async def test_a_key_google_rotated_in_is_accepted() -> None:
+    google = _CountingGoogle({"old-kid": keys.CERT_PEM})
+    verifier = google.verifier()
+    await verifier.verify(keys.token(kid="old-kid"), keys.PROJECT)
+    google.served[keys.KID] = keys.CERT_PEM
+    # Requests arriving together share the one early fetch.
+    identities = await asyncio.gather(
+        *(verifier.verify(keys.token(), keys.PROJECT) for _ in range(5))
+    )
+    assert {i.subject for i in identities} == {"firebase-uid-1"}
+    assert google.fetches == 2
+
+
+async def test_another_early_fetch_is_allowed_once_the_interval_has_passed() -> None:
+    google = _CountingGoogle({"old-kid": keys.CERT_PEM})
+    verifier = google.verifier()
+    await verifier.verify(keys.token(kid="old-kid"), keys.PROJECT)
+    with pytest.raises(FirebaseTokenError):
+        await verifier.verify(keys.token(), keys.PROJECT)
+    assert google.fetches == 2
+    google.served[keys.KID] = keys.CERT_PEM
+    google.now += FORCED_REFRESH_INTERVAL - 1
+    with pytest.raises(FirebaseTokenError):
+        await verifier.verify(keys.token(), keys.PROJECT)
+    assert google.fetches == 2
+    google.now += 1
+    identity = await verifier.verify(keys.token(), keys.PROJECT)
+    assert identity.subject == "firebase-uid-1"
+    assert google.fetches == 3
 
 
 async def test_the_target_is_read_without_trusting_it() -> None:

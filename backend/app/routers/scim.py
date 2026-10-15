@@ -34,6 +34,7 @@ from typing import Any
 from fastapi import APIRouter, Body, Depends, Query, Request
 from fastapi.responses import JSONResponse, Response
 from sqlalchemy import delete, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.scim_token import require_scim_tenant
@@ -75,6 +76,28 @@ def _error(error: ScimError) -> JSONResponse:
     if error.scim_type:
         body["scimType"] = error.scim_type
     return _scim(body, error.status)
+
+
+# How each unique name's violation reads: Postgres names the constraint, SQLite the
+# columns.
+_UNIQUE_NAMES = {
+    "userName": ("uq_guide_scim_users_name", "guide_scim_users.user_name_key"),
+    "displayName": ("uq_guide_scim_groups_name", "guide_scim_groups.display_name"),
+}
+
+
+async def _write(db: AsyncSession, attribute: str, *, commit: bool = True) -> None:
+    """Commits (or flushes). The name check before it cannot see a request running
+    at the same time, so two creates of one name can both pass it; the database's
+    unique constraint then refuses the second, and that is the same 409 a
+    sequential duplicate gets (RFC 7644 §3.3), not a 500."""
+    try:
+        await (db.commit() if commit else db.flush())
+    except IntegrityError as error:
+        await db.rollback()
+        if any(marker in str(error.orig) for marker in _UNIQUE_NAMES[attribute]):
+            raise ScimError(409, f"{attribute} is already provisioned", "uniqueness") from error
+        raise
 
 
 def _uuid(value: str) -> uuid.UUID:
@@ -149,7 +172,10 @@ async def _name_taken(
     )
     if other_than is not None:
         query = query.where(GuideScimUser.id != other_than)
-    return (await db.execute(query)).first() is not None
+    # Not flushed first: a rename to a taken name would hit the unique constraint
+    # in the flush and never reach the check.
+    with db.no_autoflush:
+        return (await db.execute(query)).first() is not None
 
 
 def _apply_user(user: GuideScimUser, values: dict[str, Any]) -> None:
@@ -225,10 +251,10 @@ async def create_user(
         _apply_user(user, payload)
         if await _name_taken(db, tenant_id, user.user_name_key):
             raise ScimError(409, "userName is already provisioned", "uniqueness")
+        db.add(user)
+        await _write(db, "userName")
     except ScimError as error:
         return _error(error)
-    db.add(user)
-    await db.commit()
     await db.refresh(user)
     return _scim(_user_json(user), 201)
 
@@ -261,10 +287,10 @@ async def replace_user(
         _apply_user(user, payload)
         if await _name_taken(db, tenant_id, user.user_name_key, other_than=user.id):
             raise ScimError(409, "userName is already provisioned", "uniqueness")
+        await _write(db, "userName")
     except ScimError as error:
         await db.rollback()
         return _error(error)
-    await db.commit()
     await db.refresh(user)
     return _scim(_user_json(user))
 
@@ -291,10 +317,10 @@ async def patch_user(
                 _apply_user(user, value)
         if await _name_taken(db, tenant_id, user.user_name_key, other_than=user.id):
             raise ScimError(409, "userName is already provisioned", "uniqueness")
+        await _write(db, "userName")
     except ScimError as error:
         await db.rollback()
         return _error(error)
-    await db.commit()
     await db.refresh(user)
     return _scim(_user_json(user))
 
@@ -404,7 +430,10 @@ async def _display_name_taken(
     )
     if other_than is not None:
         query = query.where(GuideScimGroup.id != other_than)
-    return (await db.execute(query)).first() is not None
+    # Not flushed first: a rename to a taken name would hit the unique constraint
+    # in the flush and never reach the check.
+    with db.no_autoflush:
+        return (await db.execute(query)).first() is not None
 
 
 @router.get("/Groups")
@@ -470,13 +499,13 @@ async def create_group(
             external_id=None if external is None else _text(external, "externalId", 255),
         )
         db.add(group)
-        await db.flush()
+        await _write(db, "displayName", commit=False)
         if payload.get("members"):
             await _add_members(db, tenant_id, group, payload["members"])
+        await _write(db, "displayName")
     except ScimError as error:
         await db.rollback()
         return _error(error)
-    await db.commit()
     await db.refresh(group)
     return _scim(await _group_json(db, group), 201)
 
@@ -534,10 +563,10 @@ async def patch_group(
             elif kind in ("replace", "add") and path.lower() == "externalid":
                 group.external_id = None if value is None else _text(value, "externalId", 255)
             # Anything else names an attribute this store does not keep.
+        await _write(db, "displayName")
     except ScimError as error:
         await db.rollback()
         return _error(error)
-    await db.commit()
     await db.refresh(group)
     return _scim(await _group_json(db, group))
 

@@ -9,6 +9,7 @@ verified.
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 
 import pytest
@@ -296,3 +297,83 @@ async def test_an_email_firebase_did_not_verify_gets_no_groups(
     r = await client.get("/api/v1/guide/groups", headers=auth_header(token))
     assert r.status_code == 200, r.text
     assert r.json() == {"groups": expected}
+
+
+async def _race(monkeypatch: pytest.MonkeyPatch, check: str) -> None:
+    """Makes two requests both pass the name check before either writes, as two
+    simultaneous requests can."""
+    from app.routers import scim
+
+    real = getattr(scim, check)
+    barrier = asyncio.Barrier(2)
+
+    async def checked(*args, **kwargs) -> bool:
+        taken = await real(*args, **kwargs)
+        await asyncio.wait_for(barrier.wait(), 5)
+        return taken
+
+    monkeypatch.setattr(scim, check, checked)
+
+
+async def test_two_creates_of_one_user_at_once_give_one_201_and_one_409(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    h = await _scim_token(client)
+    await _race(monkeypatch, "_name_taken")
+    responses = await asyncio.gather(
+        *(
+            client.post(f"{SCIM}/Users", json={"userName": name}, headers=h)
+            for name in ("kari@nordlys.example", "KARI@nordlys.example")
+        )
+    )
+    assert sorted(r.status_code for r in responses) == [201, 409]
+    conflict = next(r for r in responses if r.status_code == 409)
+    assert conflict.json()["scimType"] == "uniqueness"
+    assert conflict.json()["schemas"] == ["urn:ietf:params:scim:api:messages:2.0:Error"]
+
+
+async def test_two_creates_of_one_group_at_once_give_one_201_and_one_409(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    h = await _scim_token(client)
+    kari = await _user(client, h, "kari@nordlys.example")
+    await _race(monkeypatch, "_display_name_taken")
+    responses = await asyncio.gather(
+        *(
+            client.post(
+                f"{SCIM}/Groups",
+                json={"displayName": "Finance", "members": [{"value": kari}]},
+                headers=h,
+            )
+            for _ in range(2)
+        )
+    )
+    assert sorted(r.status_code for r in responses) == [201, 409]
+    assert next(r for r in responses if r.status_code == 409).json()["scimType"] == "uniqueness"
+    r = await client.get(f"{SCIM}/Groups", params={"filter": 'displayName eq "Finance"'}, headers=h)
+    assert r.json()["totalResults"] == 1
+
+
+async def test_renaming_to_a_name_already_provisioned_is_a_409(client: AsyncClient) -> None:
+    h = await _scim_token(client)
+    await _user(client, h, "kari@nordlys.example")
+    ola = await _user(client, h, "ola@nordlys.example")
+    r = await client.put(
+        f"{SCIM}/Users/{ola}", json={"userName": "Kari@nordlys.example"}, headers=h
+    )
+    assert (r.status_code, r.json().get("scimType")) == (409, "uniqueness")
+    patch = {
+        "schemas": [PATCH_OP],
+        "Operations": [{"op": "Replace", "path": "userName", "value": "kari@nordlys.example"}],
+    }
+    r = await client.patch(f"{SCIM}/Users/{ola}", json=patch, headers=h)
+    assert (r.status_code, r.json().get("scimType")) == (409, "uniqueness")
+    finance = await client.post(f"{SCIM}/Groups", json={"displayName": "Finance"}, headers=h)
+    legal = await client.post(f"{SCIM}/Groups", json={"displayName": "Legal"}, headers=h)
+    rename = {
+        "schemas": [PATCH_OP],
+        "Operations": [{"op": "Replace", "path": "displayName", "value": "Finance"}],
+    }
+    r = await client.patch(f"{SCIM}/Groups/{legal.json()['id']}", json=rename, headers=h)
+    assert (r.status_code, r.json().get("scimType")) == (409, "uniqueness")
+    assert finance.status_code == 201
