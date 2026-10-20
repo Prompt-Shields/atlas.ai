@@ -7,6 +7,7 @@ Tests:
   - checkout-session: client_reference_id + metadata present in Stripe call args
   - checkout-session: quantity = max(5, activated_users)
   - checkout-session: no customer yet → customer_email; existing → customer reused
+  - checkout-session: VAT ID always collected; automatic_tax only with the flag
   - portal-session: requires stripe_customer_id
   - entitlements: shape + hard_locked=True when trial expired without subscription
   - entitlements: hard_locked=False when subscription present
@@ -236,7 +237,6 @@ async def test_checkout_without_customer_lets_stripe_create_one(client, monkeypa
     )
     assert resp.status_code == 200
     assert captured["customer_email"].endswith("@acme.test")
-    assert captured["automatic_tax"] == {"enabled": True}
     assert "customer" not in captured
     assert "customer_update" not in captured
 
@@ -258,10 +258,39 @@ async def test_checkout_reuses_existing_customer(client, monkeypatch):
     )
     assert resp.status_code == 200
     assert captured["customer"] == "cus_enterprise"
+    # tax_id_collection is always on, so Checkout must be allowed to save the address.
     assert captured["customer_update"] == {"address": "auto", "name": "auto"}
-    assert captured["automatic_tax"] == {"enabled": True}
     # Stripe rejects customer together with customer_email.
     assert "customer_email" not in captured
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("flag", [False, True])
+async def test_checkout_tax_follows_flag(client, monkeypatch, flag):
+    """automatic_tax follows stripe_automatic_tax; VAT ID collection does not."""
+    from app.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "stripe_automatic_tax", flag)
+    captured = {}
+    monkeypatch.setattr(
+        "app.services.billing.stripe_client.create_checkout_session",
+        lambda **kw: captured.update(kw) or type("S", (), {"url": "u"})(),
+    )
+
+    _, token = await _seed_tenant_admin(email_verified=True, trial_delta_days=5)
+    resp = await client.post(
+        "/api/v1/billing/checkout-session",
+        json={"interval": "annual"},
+        headers=auth_header(token),
+    )
+    assert resp.status_code == 200
+    assert ("automatic_tax" in captured) is flag
+    if flag:
+        assert captured["automatic_tax"] == {"enabled": True}
+    assert captured["tax_id_collection"] == {"enabled": True}
+    assert captured["billing_address_collection"] == "required"
+    # Reverse charge is Stripe Tax's call; we never mark a customer exempt.
+    assert "tax_exempt" not in str(captured)
 
 
 # ---------------------------------------------------------------------------

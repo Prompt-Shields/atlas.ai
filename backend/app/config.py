@@ -6,6 +6,7 @@ references injected into Container Apps. Locally they come from .env files.
 
 from __future__ import annotations
 
+import json
 from enum import Enum
 from functools import lru_cache
 from typing import Literal
@@ -128,6 +129,12 @@ class Settings(BaseSettings):
     billing_portal_return_url: str = "http://localhost:3000/dashboard/billing"
     billing_checkout_success_url: str = "http://localhost:3000/dashboard/billing?upgraded=1"
     billing_checkout_cancel_url: str = "http://localhost:3000/dashboard/billing"
+    # Stripe Tax (promptly-guide#50). On by default, because main already
+    # sent `automatic_tax` on every Team checkout and production must keep
+    # charging VAT. Stripe rejects `automatic_tax` on an account with no
+    # head-office address, so dev and test accounts without that set-up turn
+    # it off with STRIPE_AUTOMATIC_TAX=false.
+    stripe_automatic_tax: bool = True
 
     # ── Feature Flags ─────────────────────────────────────────────────
     research_all_data: bool = False
@@ -143,6 +150,18 @@ class Settings(BaseSettings):
     # Azure AI Foundry, GCP Knowledge Catalog) are not implemented yet, so a
     # scan always uses seeded fixtures regardless of this flag until they land.
     agent_discovery_live_collectors_enabled: bool = False
+
+    # Promptly Guide (promptly-guide #37): Firebase signing certificates to trust in
+    # place of Google's, as Google publishes them: a JSON object of key id to PEM
+    # certificate. For the E2E stack only, which has to verify ID tokens no Google
+    # project issued. Refused at start-up unless APP_ENV is testing, so no other
+    # deployment can be told to trust a key of someone's choosing.
+    guide_test_firebase_certs: str = ""
+    # Promptly Guide adoption intake closes on a fixed day each month and the report
+    # waits for it, so the E2E stack, which has to send a month and then read it in a
+    # few seconds, may say when "now" is with an `X-Guide-Test-Now` header. Off (the
+    # header ignored) unless set, and refused at start-up unless APP_ENV is testing.
+    guide_test_clock: bool = False
 
     @field_validator("backend_cors_origins")
     @classmethod
@@ -164,6 +183,30 @@ class Settings(BaseSettings):
                     raise ValueError(
                         f"Non-localhost HTTP CORS origin '{origin}' is not allowed in production/staging. Use HTTPS."
                     )
+        return self
+
+    @model_validator(mode="after")
+    def _test_clock_only_in_testing(self) -> Settings:
+        if self.guide_test_clock and self.app_env != Environment.TESTING:
+            raise ValueError("GUIDE_TEST_CLOCK may only be set when APP_ENV is testing")
+        return self
+
+    @model_validator(mode="after")
+    def _test_firebase_certs_only_in_testing(self) -> Settings:
+        if not self.guide_test_firebase_certs:
+            return self
+        if self.app_env != Environment.TESTING:
+            raise ValueError("GUIDE_TEST_FIREBASE_CERTS may only be set when APP_ENV is testing")
+        try:
+            certs = json.loads(self.guide_test_firebase_certs)
+        except json.JSONDecodeError as error:
+            raise ValueError("GUIDE_TEST_FIREBASE_CERTS is not JSON") from error
+        if (
+            not isinstance(certs, dict)
+            or not certs
+            or not all(isinstance(k, str) and isinstance(v, str) for k, v in certs.items())
+        ):
+            raise ValueError("GUIDE_TEST_FIREBASE_CERTS must map key ids to PEM certificates")
         return self
 
     @property

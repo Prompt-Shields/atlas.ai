@@ -31,5 +31,15 @@ def modify_subscription_item(item_id: str, **kwargs):
     return stripe.SubscriptionItem.modify(item_id, **kwargs)
 
 
+def list_tax_ids(customer_id: str, **kwargs):
+    _configure()
+    return stripe.Customer.list_tax_ids(customer_id, **kwargs)
+
+
+def create_tax_id(customer_id: str, **kwargs):
+    _configure()
+    return stripe.Customer.create_tax_id(customer_id, **kwargs)
+
+
 def construct_event(payload: bytes, sig_header: str):
     return stripe.Webhook.construct_event(payload, sig_header, get_settings().stripe_webhook_secret)
