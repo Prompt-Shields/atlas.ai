@@ -45,6 +45,7 @@ const en = {
     aiSpend: 'AI Spend',
     developer: 'Developer',
     promptActivity: 'Prompt Activity',
+    pilotReport: 'Pilot Report',
     admin: 'Admin',
   },
   dashboardHome: {

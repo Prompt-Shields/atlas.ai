@@ -40,6 +40,7 @@ const fr: Dictionary = {
     aiSpend: 'Dépenses IA',
     developer: 'Développeur',
     promptActivity: 'Activité des invites',
+    pilotReport: 'Rapport de pilote',
     admin: 'Administration',
   },
   dashboardHome: {

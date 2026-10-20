@@ -26,6 +26,7 @@ from app.models.billing import BillingOutbox, StripeWebhookEvent, TrialEvent  # 
 from app.models.blob import BlobRecord  # noqa: F401
 from app.models.compliance_assessment import ComplianceAssessment  # noqa: F401
 from app.models.correlation import CorrelationActionPlan  # noqa: F401
+from app.models.cost_anomaly import CostAnomaly  # noqa: F401
 from app.models.cost_budget import (  # noqa: F401
     ALERT_LEVEL_RANK,
     DEFAULT_WARN_THRESHOLD_PERCENT,
@@ -59,6 +60,18 @@ from app.models.drift_signal import (  # noqa: F401
 from app.models.enrolled_device import EnrolledDevice  # noqa: F401
 from app.models.extension_heartbeat import (  # noqa: F401
     ExtensionDeviceHeartbeat,
+)
+from app.models.guide_adoption import (  # noqa: F401
+    GuideAdoptionContributors,
+    GuideAdoptionCount,
+    GuideAdoptionReceipt,
+    GuideConnection,
+)
+from app.models.guide_scim import (  # noqa: F401
+    GuideScimGroup,
+    GuideScimMember,
+    GuideScimToken,
+    GuideScimUser,
 )
 from app.models.handbook import (  # noqa: F401
     HandbookAcknowledgement,
