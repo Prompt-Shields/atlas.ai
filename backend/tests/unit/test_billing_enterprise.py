@@ -379,6 +379,21 @@ def test_end_pilot_on_converted_customer_is_a_no_op(stripe_mock):
 # ---------------------------------------------------------------------------
 
 
+# Since module entitlements (#18), the enterprise subscription is routed to
+# tenant.stripe_subscriptions instead of being skipped. Either way the Team
+# columns must stay as they were.
+
+
+def _team_tenant() -> Tenant:
+    return _tenant(
+        stripe_customer_id="cus_1",
+        stripe_subscription_id="sub_team",
+        subscription_status=SubscriptionStatus.ACTIVE,
+        seats_billed=7,
+        stripe_subscriptions={},
+    )
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "handler",
@@ -387,26 +402,34 @@ def test_end_pilot_on_converted_customer_is_a_no_op(stripe_mock):
         webhooks._on_subscription_deleted,
     ],
 )
-async def test_webhook_skips_enterprise_subscription(handler):
+async def test_webhook_enterprise_subscription_leaves_team_state(handler):
+    t = _team_tenant()
     db = AsyncMock()
+    db.scalar = AsyncMock(return_value=t)
     obj = {**_sub(_item(catalog.WORK_CLIENT, 1000)), "customer": "cus_1", "status": "canceled"}
     await handler(db, obj)
-    db.scalar.assert_not_awaited()
+    assert t.subscription_status == SubscriptionStatus.ACTIVE
+    assert t.seats_billed == 7
+    assert t.stripe_subscriptions["sub_1"]["status"] == "canceled"
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "handler",
-    [webhooks._on_invoice_paid, webhooks._on_invoice_payment_failed],
+    ("handler", "status"),
+    [(webhooks._on_invoice_paid, "active"), (webhooks._on_invoice_payment_failed, "past_due")],
 )
-async def test_webhook_skips_enterprise_invoice(handler):
+async def test_webhook_enterprise_invoice_leaves_team_state(handler, status):
+    t = _team_tenant()
     db = AsyncMock()
+    db.scalar = AsyncMock(return_value=t)
     obj = {
         "customer": "cus_1",
+        "subscription": "sub_1",
         "subscription_details": {"metadata": {enterprise.KIND_KEY: enterprise.KIND_ENTERPRISE}},
     }
     await handler(db, obj)
-    db.scalar.assert_not_awaited()
+    assert t.subscription_status == SubscriptionStatus.ACTIVE
+    assert t.stripe_subscriptions["sub_1"]["status"] == status
 
 
 @pytest.mark.asyncio

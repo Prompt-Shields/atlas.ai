@@ -341,5 +341,27 @@ async def test_entitlements_shape(client):
     assert isinstance(body["hard_locked"], bool)
     assert isinstance(body["seats_used"], int)
     assert isinstance(body["seats_billed"], int)
+    # Added for module entitlements; a tenant with no module subscription has none.
+    assert body["modules"] == []
     # 3 activated_users seeded (not counting the admin, whose first_login_at is None)
     assert body["seats_used"] == 3
+
+
+@pytest.mark.asyncio
+async def test_entitlements_lists_modules_from_module_subscriptions(client):
+    """modules[] comes from the module subscriptions' items, sorted."""
+    tid, token = await _seed_tenant_admin(email_verified=True)
+    async with TestSessionLocal() as db:
+        t = await db.get(Tenant, tid)
+        t.stripe_subscriptions = {
+            "sub_ent": {
+                "kind": "enterprise",
+                "status": "active",
+                "items": {"promptly_work_client": 200, "promptly_suite_annual": 50},
+            },
+        }
+        await db.commit()
+
+    resp = await client.get("/api/v1/billing/entitlements", headers=auth_header(token))
+    assert resp.status_code == 200
+    assert resp.json()["modules"] == ["adopt", "atlas", "learn", "work_client"]

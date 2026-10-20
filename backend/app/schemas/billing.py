@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class CheckoutSessionRequest(BaseModel):
@@ -28,3 +28,7 @@ class EntitlementsResponse(BaseModel):
     seats_billed: int
     capabilities: list[str]
     hard_locked: bool
+    # Promptly modules switched on by the subscription's items: any of
+    # "work_client", "atlas", "learn", "adopt". Added after the fields above,
+    # with a default, so existing clients are unaffected.
+    modules: list[str] = Field(default_factory=list)
