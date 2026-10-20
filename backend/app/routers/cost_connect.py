@@ -49,12 +49,12 @@ from typing import Any, Protocol
 
 import httpx
 import structlog
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import OrgAdmin
-from app.database import get_db_session
+from app.database import DB_SESSION
 from app.errors import ConflictError, ForbiddenError, UnauthorizedError
 from app.models.integration import Integration, IntegrationProvider
 from app.schemas.integration import IntegrationCard
@@ -263,7 +263,7 @@ async def _connect(
 async def anthropic_connect(
     payload: AnthropicConnectRequest,
     user: OrgAdmin,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> IntegrationCard:
     """Connect Anthropic org spend via an Admin API key."""
     return await _connect(
@@ -284,7 +284,7 @@ async def anthropic_connect(
 async def openai_connect(
     payload: OpenAIConnectRequest,
     user: OrgAdmin,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> IntegrationCard:
     """Connect OpenAI API spend via an organization admin key."""
     return await _connect(
@@ -305,7 +305,7 @@ async def openai_connect(
 async def cursor_connect(
     payload: CursorConnectRequest,
     user: OrgAdmin,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> IntegrationCard:
     """Connect Cursor per-member spend via a Teams Admin API key."""
     return await _connect(
@@ -326,7 +326,7 @@ async def cursor_connect(
 async def github_copilot_connect(
     payload: CopilotConnectRequest,
     user: OrgAdmin,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> IntegrationCard:
     """Connect GitHub Copilot seat spend for one organization."""
     config: dict[str, Any] = {"github_org": payload.github_org}
@@ -355,7 +355,7 @@ async def github_copilot_connect(
 async def vercel_connect(
     payload: VercelConnectRequest,
     user: OrgAdmin,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = DB_SESSION,
 ) -> IntegrationCard:
     """Connect Vercel platform spend, optionally with AI Gateway."""
     config: dict[str, Any] = {}
