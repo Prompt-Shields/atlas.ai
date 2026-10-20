@@ -94,3 +94,25 @@ def test_construct_event_delegates(monkeypatch):
 
     result = stripe_client.construct_event(b'{"type":"test"}', "t=123,v1=abc")
     assert result is fake_event
+
+
+def test_tax_id_wrappers_delegate(monkeypatch):
+    """list_tax_ids / create_tax_id must call the stripe.Customer tax-ID methods."""
+    import stripe
+
+    calls = []
+    monkeypatch.setattr(
+        stripe.Customer, "list_tax_ids", lambda cid, **kw: calls.append(("list", cid, kw))
+    )
+    monkeypatch.setattr(
+        stripe.Customer, "create_tax_id", lambda cid, **kw: calls.append(("create", cid, kw))
+    )
+
+    from app.services.billing import stripe_client
+
+    stripe_client.list_tax_ids("cus_1", limit=100)
+    stripe_client.create_tax_id("cus_1", type="eu_vat", value="DE123456789")
+    assert calls == [
+        ("list", "cus_1", {"limit": 100}),
+        ("create", "cus_1", {"type": "eu_vat", "value": "DE123456789"}),
+    ]

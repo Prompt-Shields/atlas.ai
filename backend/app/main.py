@@ -34,12 +34,14 @@ from app.routers import (
     compliance,
     correlations,
     cost,
+    cost_connect,
     defender_import,
     developer,
     devices,
     dispatch,
     endpoints,
     extension,
+    guide,
     handbook,
     integrations,
     invites,
@@ -52,6 +54,7 @@ from app.routers import (
     pii,
     risks,
     saas_vendor,
+    scim,
     sentinel_connect,
     signup,
     slack,
@@ -164,6 +167,7 @@ def create_app() -> FastAPI:
     app.include_router(slack.integrations_router, prefix=api_v1)
     app.include_router(slack.slack_router, prefix=api_v1)
     app.include_router(mdm_connect.router, prefix=api_v1)
+    app.include_router(cost_connect.router, prefix=api_v1)
     app.include_router(sentinel_connect.router, prefix=api_v1)
     app.include_router(endpoints.router, prefix=api_v1)
     app.include_router(handbook.router, prefix=api_v1)
@@ -180,6 +184,8 @@ def create_app() -> FastAPI:
     app.include_router(defender_import.router, prefix=api_v1)
     app.include_router(pii.router, prefix=api_v1)
     app.include_router(adoption.router, prefix=api_v1)
+    app.include_router(guide.router, prefix=api_v1)
+    app.include_router(scim.router, prefix=api_v1)
     app.include_router(admin.router, prefix=api_v1)
     app.include_router(developer.router, prefix=api_v1)
     app.include_router(telemetry.router, prefix=api_v1)

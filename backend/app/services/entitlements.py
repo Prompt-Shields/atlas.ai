@@ -1,4 +1,5 @@
-"""Plan → capability gate, and the free Work client's 90-day rule.
+"""Plan → capability gate, module entitlements, and the free Work client's
+90-day rule.
 
 Pure functions, no I/O, no DB writes.
 """
@@ -54,6 +55,87 @@ def hard_locked(tenant: Tenant, *, now: datetime) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Modules
+# ---------------------------------------------------------------------------
+
+
+class Module(str, enum.Enum):
+    WORK_CLIENT = "work_client"
+    ATLAS = "atlas"
+    LEARN = "learn"
+    ADOPT = "adopt"
+
+
+# Stripe price lookup_key → modules that price switches on. Keys are the ones
+# configured in Stripe (Promptly business plan, "Stripe setup"); mapping by
+# lookup_key rather than price id keeps test and live mode the same and lets
+# a price be replaced without a deploy. The platform fee and step overage are
+# billed but grant nothing on their own. A key not listed here grants nothing.
+LOOKUP_KEY_MODULES: dict[str, frozenset[Module]] = {
+    "promptly_work_client": frozenset({Module.WORK_CLIENT}),
+    "promptly_atlas_annual": frozenset({Module.ATLAS}),
+    "promptly_learn_annual": frozenset({Module.LEARN}),
+    "promptly_adopt_annual": frozenset({Module.ADOPT}),
+    "promptly_suite_annual": frozenset({Module.ATLAS, Module.LEARN, Module.ADOPT}),
+    "promptly_platform_fee_annual": frozenset(),
+    "promptly_step_overage": frozenset(),
+}
+
+# The Work client is free, so an unpaid invoice for modules does not take it
+# away; only a subscription that has ended does.
+_FREE_MODULES: frozenset[Module] = frozenset({Module.WORK_CLIENT})
+
+# Stripe subscription statuses, as stored per subscription.
+_GRANTING_STATUSES = {"active", "trialing"}
+_UNPAID_STATUSES = {"past_due", "unpaid"}
+
+
+def subscription_items_from_stripe(items: list[dict]) -> dict[str, int | None]:
+    """Reduce Stripe ``subscription.items.data`` to {lookup_key: quantity}.
+
+    Items whose price has no lookup_key (for example the Atlas Team price) are
+    dropped: they map to no module. Metered items carry no quantity, hence None.
+    """
+    out: dict[str, int | None] = {}
+    for item in items:
+        key = (item.get("price") or {}).get("lookup_key")
+        if key:
+            out[key] = item.get("quantity")
+    return out
+
+
+def _granted_by(items: dict | None, status: str | None) -> set[Module]:
+    granted: set[Module] = set()
+    for key in items or {}:
+        granted |= LOOKUP_KEY_MODULES.get(key, frozenset())
+    if status in _GRANTING_STATUSES:
+        return granted
+    if status in _UNPAID_STATUSES:
+        return granted & _FREE_MODULES
+    return set()
+
+
+def modules(tenant: Tenant) -> set[Module]:
+    """Modules switched on for *tenant*, across its module subscriptions. Default-deny.
+
+    A tenant can hold several: the enterprise Work client subscription, on
+    which modules are items, and one per accepted module Quote. Each grants
+    the modules its items carry, by its own Stripe status: active and
+    trialing grant them all; past_due or unpaid (a failed payment) keeps only
+    the free Work client; anything else, such as canceled, grants nothing.
+    The Team subscription carries no module prices and grants no modules.
+    """
+    granted: set[Module] = set()
+    for sub in (tenant.stripe_subscriptions or {}).values():
+        granted |= _granted_by(sub.get("items"), sub.get("status"))
+    return granted
+
+
+def has_module(tenant: Tenant, module: Module) -> bool:
+    return module in modules(tenant)
+
+
+# ---------------------------------------------------------------------------
 # Free Work client: the 90-day rule (promptly-guide#52)
 # ---------------------------------------------------------------------------
 # "After 90 days without a paid module, the customer must connect its own
@@ -87,16 +169,23 @@ class FreeClientGrace:
 def paid_module_active(tenant: Tenant) -> bool:
     """True iff the tenant pays for a module.
 
-    Atlas.AI is the only module Atlas bills today, as a paid plan. A canceled
-    subscription leaves the plan in place (the webhook only sets the status),
-    so the status is checked too. A paid plan with no status is one set by
-    hand, as a quote-and-invoice enterprise deal would be, and counts as paid.
-    The Atlas trial does not: it is Plan.FREE until checkout.
+    Two ways to pay:
+
+    * a paid Atlas plan. A canceled subscription leaves the plan in place
+      (the webhook only sets the status), so the status is checked too. A
+      paid plan with no status is one set by hand and counts as paid. The
+      Atlas trial does not: it is Plan.FREE until checkout;
+    * a paid module (Atlas.AI, Learn, Adopt or Suite) on a module
+      subscription, the enterprise one or one created by a Quote, as
+      modules() reports it. The free Work client alone does not count, and
+      a module subscription that is past due grants only the Work client, so
+      it does not count either.
     """
-    return (
+    paid_plan = (
         tenant.plan is not Plan.FREE
         and tenant.subscription_status is not SubscriptionStatus.CANCELED
     )
+    return paid_plan or bool(modules(tenant) - _FREE_MODULES)
 
 
 def free_client_grace(tenant: Tenant, *, now: datetime) -> FreeClientGrace:

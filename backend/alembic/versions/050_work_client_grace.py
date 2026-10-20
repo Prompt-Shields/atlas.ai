@@ -15,11 +15,8 @@ hold:
 Both are nullable with no backfill: no tenant has started the Work client
 through Atlas yet.
 
-NUMBERING: 051 is a placeholder. Other open branches hold 046 and 047; renumber
-this file and its `down_revision` onto whatever head `main` has at merge.
-
-Revision ID: 051
-Revises: 045
+Revision ID: 050
+Revises: 049
 Create Date: 2026-10-13
 """
 
@@ -28,8 +25,8 @@ from typing import Sequence, Union
 from alembic import op
 import sqlalchemy as sa
 
-revision: str = "051"
-down_revision: Union[str, None] = "045"
+revision: str = "050"
+down_revision: Union[str, None] = "049"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

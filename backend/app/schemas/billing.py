@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class CheckoutSessionRequest(BaseModel):
@@ -28,6 +28,10 @@ class EntitlementsResponse(BaseModel):
     seats_billed: int
     capabilities: list[str]
     hard_locked: bool
+    # Promptly modules switched on by the subscription's items: any of
+    # "work_client", "atlas", "learn", "adopt". Added after the fields above,
+    # with a default, so existing clients are unaffected.
+    modules: list[str] = Field(default_factory=list)
     # The free Work client's 90-day rule (promptly-guide#52). Status is None
     # when the tenant has not started the Work client.
     free_client_status: Literal["active", "grace_ending", "endpoint_required"] | None = None
