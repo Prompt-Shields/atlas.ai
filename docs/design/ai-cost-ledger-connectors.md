@@ -1,7 +1,7 @@
 # AI Cost Ledger + Vendor Connectors — Design Spec
 
 **Date:** 2026-06-17
-**Status:** Slices 1, 2, 3 and 4 all shipped — see the per-slice sections below
+**Status:** Slices 1-5 all shipped — see the per-slice sections below
 **Scope:** atlas.ai backend + dashboard. First slice of a larger "AI Spend & ROI" product surface.
 
 ## Problem
@@ -366,6 +366,69 @@ bounced mail permanently silence that crossing.
   block spend. Cutting off a team's AI access from a provisional number that
   the vendor may revise downward is a much worse error than a late email.
 
+
+## Slice 5 — spend anomaly detection (shipped 2026-09-15)
+
+`grc.cost_anomalies`, migration 046. A day whose spend broke sharply from that
+scope's own trailing median, detected after the daily sweep and mailed to
+admins once.
+
+Slice 4's budgets are the wrong instrument for the failure this product exists
+to catch. A runaway agent, a retry loop, a key used outside its scope — these
+burn a month's ceiling in a day, and a monthly budget notices on the day the
+money is gone. A budget compares spend to a number a human chose; an anomaly
+compares it to what that tenant normally does.
+
+### The statistics are deliberately unambitious
+
+A trailing median and a ratio. No seasonality model, no z-score, no changepoint
+detection. The binding constraint on this feature is **false positives, not
+detection power**: a detector that cries twice a week is muted within a month,
+after which its detection power is zero and it occupies the slot a trustworthy
+one would have filled.
+
+So all four guards trade sensitivity for trust:
+
+1. **Median, not mean.** If the tenant spiked last Tuesday, that spike is in the
+   window. A mean drags upward far enough that the *next* spike — often the same
+   runaway process, still running — falls under the threshold and goes
+   unreported. This is the most consequential line in the module, and the test
+   for it asserts explicitly that a mean would have missed the second spike.
+2. **An absolute dollar floor, not just a ratio.** $0.02 → $0.30 is 15x and
+   means nothing. Without a floor the detector's output is dominated by the
+   tenants who spend least, which is exactly backwards.
+3. **Enough history, or nothing.** Seven days minimum, from a 21-day window
+   (three of each weekday, so a Monday is compared against Mondays). With three
+   days of ledger there is no baseline, only three numbers.
+4. **Finalized days only.** Today's rows are provisional and usually partial.
+   Evaluating them flags the morning's incomplete figure and un-flags it by
+   evening — the flapping that teaches people to ignore the channel. Detection
+   therefore defaults to *yesterday*, not today.
+
+A zero baseline yields no finding rather than an infinity, the same rule as
+slice 3's ROI denominator: first-ever spend is a start, not a spike.
+
+### Acknowledgement is why it is a table
+
+Without a row, every cron run re-detects the same spike and re-mails it — the
+daily-repeat failure slice 4 already established as worse than silence. And
+"we know, it was the backfill" needs somewhere to live: an acknowledged
+anomaly stays as history, never alerts again, and is skipped by later
+detection runs rather than being resurrected as new.
+
+### Deliberately not built
+
+- **A configurable threshold per tenant.** The 3x default is exposed as a
+  function parameter and tested, but not yet a setting. Letting tenants tune it
+  before there is any data on how it performs would be asking them to guess.
+- **Anomaly detection on a *drop*.** A collapse to near zero usually means a
+  broken connector, which is a real problem — but calling it a *spend* anomaly
+  would point the reader at spending rather than at the sync, and connector
+  health already has `Integration.last_error`.
+- **Per-member or per-model anomalies.** The ledger supports the grain, but the
+  smaller the slice the noisier the ratio, and guard 2 exists because ratios on
+  small numbers are noise amplifiers.
+
 ## Out of scope (explicit — future slices)
 
 - ~~Self-hosted app instrumentation via open-source telemetry lib (Azure AI Foundry / AWS
@@ -376,5 +439,6 @@ bounced mail permanently silence that crossing.
   **Shipped** — see "Slice 3" above.
 - ChatGPT consumer/Team/Enterprise seat connector (weak/limited cost API).
 - ~~budgets/alerts~~ **Shipped** — see "Slice 4" above.
-- Multi-currency normalization; cost anomaly detection; chargeback/showback allocation.
+- ~~cost anomaly detection~~ **Shipped** — see "Slice 5" above.
+- Multi-currency normalization; chargeback/showback allocation.
 - A dedicated price-book table (config_json suffices for v1).
