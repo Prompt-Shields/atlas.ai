@@ -7,6 +7,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     DateTime,
     Enum,
@@ -16,7 +17,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import GRCBase, TestDataMixin
@@ -94,6 +95,24 @@ class Tenant(GRCBase, TestDataMixin):
         DateTime(timezone=True), index=True, nullable=True
     )
     plan_changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # The tenant's module subscriptions, the ones carrying Promptly prices,
+    # keyed by Stripe subscription id (added by 049_stripe_subscriptions):
+    #   {"sub_…": {"kind": "enterprise" | "enterprise_modules" | "unmarked",
+    #              "status": "<Stripe status>",
+    #              "items": {"<price lookup_key>": <quantity or null>},
+    #              "event_created": <Stripe event.created of the last event applied>}}
+    # These are the enterprise Work client subscription and one per accepted
+    # module Quote; the Team subscription above is not among them. Items are
+    # kept raw, not as a module list, so a subscription whose invoice is paid
+    # after a failed payment gets its modules back from invoice.paid, which
+    # carries no item list. Modules are derived in
+    # app.services.entitlements.modules().
+    stripe_subscriptions: Mapped[dict[str, dict]] = mapped_column(
+        JSON().with_variant(JSONB(), "postgresql"),
+        default=dict,
+        server_default="{}",
+        nullable=False,
+    )
 
     # Relationships
     organisations: Mapped[list[Organisation]] = relationship(

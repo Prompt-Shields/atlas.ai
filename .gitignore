@@ -117,3 +117,8 @@ Thumbs.db
 # Local strategy/working documents kept outside version control
 docs/*.docx
 # --- END open-source hygiene ---
+
+# Promptly catalogue amounts (scripts/stripe_catalog.py --amounts): pricing
+# must never be committed to this public repository.
+*catalog-amounts*.json
+*catalog_amounts*.json

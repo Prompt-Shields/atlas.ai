@@ -181,6 +181,7 @@ async def get_entitlements(
         seats_billed=tenant.seats_billed,
         capabilities=caps,
         hard_locked=ent.hard_locked(tenant, now=now),
+        modules=sorted(m.value for m in ent.modules(tenant)),
     )
 
 

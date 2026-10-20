@@ -27,7 +27,172 @@ import {
   type IntegrationCard,
 } from '@/lib/curated-demo-data';
 
-const CONNECTABLE = new Set(['JAMF_PRO', 'KANDJI', 'JUMPCLOUD']);
+const MDM_PROVIDERS = new Set(['JAMF_PRO', 'KANDJI', 'JUMPCLOUD']);
+
+// ─── Cost providers ──────────────────────────────────────────────────
+//
+// The pull-mode AI spend providers all submit a small set of flat
+// fields, so they are described declaratively and rendered by one
+// component rather than a hand-written form each. The MDM forms above
+// keep their bespoke components — their field help is more involved.
+//
+//   Anthropic: POST /api/v1/integrations/anthropic/connect
+//   OpenAI:    POST /api/v1/integrations/openai/connect
+//   Cursor:    POST /api/v1/integrations/cursor/connect
+//   Copilot:   POST /api/v1/integrations/github-copilot/connect
+//   Vercel:    POST /api/v1/integrations/vercel/connect
+
+type FieldKind = 'text' | 'password' | 'number' | 'checkbox';
+
+interface FieldSpec {
+  name: string;
+  label: string;
+  kind: FieldKind;
+  required?: boolean;
+  placeholder?: string;
+  help?: string;
+  minLength?: number;
+  /** Render only when this checkbox field is ticked. */
+  showWhen?: string;
+}
+
+type FieldValues = Record<string, string | boolean>;
+
+interface CostProviderSpec {
+  fields: FieldSpec[];
+  submit: (values: FieldValues) => Promise<unknown>;
+}
+
+/** Trimmed string value, or '' when unset. */
+function text(values: FieldValues, name: string): string {
+  const v = values[name];
+  return typeof v === 'string' ? v.trim() : '';
+}
+
+/** Include a key only when the admin actually filled it in. */
+function optional(values: FieldValues, name: string): Record<string, string> {
+  const v = text(values, name);
+  return v ? { [name]: v } : {};
+}
+
+const API_KEY_FIELD: FieldSpec = {
+  name: 'api_key',
+  label: 'Admin API key',
+  kind: 'password',
+  required: true,
+  minLength: 10,
+  help: 'Fernet-encrypted server-side. Never round-trips back via the API.',
+};
+
+const COST_PROVIDERS: Record<string, CostProviderSpec> = {
+  ANTHROPIC: {
+    fields: [
+      {
+        ...API_KEY_FIELD,
+        placeholder: 'sk-ant-admin-…',
+        help: 'Anthropic Console → Settings → Admin keys. Needs organization-level billing access, not a regular API key.',
+      },
+    ],
+    submit: (v) => api.anthropicConnect({ api_key: text(v, 'api_key') }),
+  },
+  OPENAI: {
+    fields: [
+      {
+        ...API_KEY_FIELD,
+        placeholder: 'sk-admin-…',
+        help: 'OpenAI platform → Organization → Admin keys. Covers API spend only — ChatGPT seat billing is not exposed over the API.',
+      },
+    ],
+    submit: (v) => api.openaiConnect({ api_key: text(v, 'api_key') }),
+  },
+  CURSOR: {
+    fields: [
+      {
+        ...API_KEY_FIELD,
+        label: 'Teams Admin API key',
+        help: 'Cursor dashboard → Settings → Teams → Admin API. Returns per-member on-demand spend.',
+      },
+    ],
+    submit: (v) => api.cursorConnect({ api_key: text(v, 'api_key') }),
+  },
+  GITHUB_COPILOT: {
+    fields: [
+      {
+        ...API_KEY_FIELD,
+        label: 'GitHub access token',
+        placeholder: 'ghp_… or github_pat_…',
+        help: 'Needs the manage_billing:copilot scope for the organization below.',
+      },
+      {
+        name: 'github_org',
+        label: 'GitHub organization',
+        kind: 'text',
+        required: true,
+        placeholder: 'your-org',
+        help: 'The org whose Copilot seats are billed. Pasting the full org URL is fine.',
+      },
+      {
+        name: 'seat_price_usd',
+        label: 'Per-seat monthly price (USD)',
+        kind: 'number',
+        placeholder: '19.00',
+        help: 'Optional. GitHub exposes no dollar figure over the API, so spend is derived as seats × price. Leave blank to use the documented default.',
+      },
+    ],
+    submit: (v) =>
+      api.copilotConnect({
+        api_key: text(v, 'api_key'),
+        github_org: text(v, 'github_org'),
+        ...optional(v, 'seat_price_usd'),
+      }),
+  },
+  VERCEL: {
+    fields: [
+      {
+        ...API_KEY_FIELD,
+        label: 'Vercel access token',
+        help: 'Vercel → Account Settings → Tokens. Scope it to the team below.',
+      },
+      {
+        name: 'team_slug',
+        label: 'Team slug',
+        kind: 'text',
+        placeholder: 'acme',
+        help: 'Optional. Leave both team fields blank for a personal account.',
+      },
+      {
+        name: 'team_id',
+        label: 'Team ID',
+        kind: 'text',
+        placeholder: 'team_…',
+        help: 'Optional. Use when the slug is ambiguous.',
+      },
+      {
+        name: 'ai_gateway',
+        label: 'Also ingest AI Gateway model spend',
+        kind: 'checkbox',
+        help: 'Adds per-model token spend routed through Vercel AI Gateway.',
+      },
+      {
+        name: 'ai_gateway_key',
+        label: 'AI Gateway key',
+        kind: 'password',
+        showWhen: 'ai_gateway',
+        help: 'Optional — the access token above is used when blank. Stored encrypted, never returned.',
+      },
+    ],
+    submit: (v) =>
+      api.vercelConnect({
+        api_key: text(v, 'api_key'),
+        ...optional(v, 'team_slug'),
+        ...optional(v, 'team_id'),
+        ai_gateway: v.ai_gateway === true,
+        ...(v.ai_gateway === true ? optional(v, 'ai_gateway_key') : {}),
+      }),
+  },
+};
+
+const CONNECTABLE = new Set([...MDM_PROVIDERS, ...Object.keys(COST_PROVIDERS)]);
 
 // ─── Per-provider form ───────────────────────────────────────────────
 
@@ -58,6 +223,96 @@ function isUrl(s: string): boolean {
 
 // ─── Form components ─────────────────────────────────────────────────
 
+
+const INPUT_CLASS =
+  'mt-1 w-full rounded-md border border-gray-300 bg-white px-2.5 py-1.5 text-sm text-gray-900 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500 disabled:bg-gray-50';
+
+function CostFormFields({
+  spec,
+  values,
+  onChange,
+  disabled,
+}: {
+  spec: CostProviderSpec;
+  values: FieldValues;
+  onChange: (next: FieldValues) => void;
+  disabled: boolean;
+}) {
+  return (
+    <>
+      {spec.fields
+        .filter((f) => !f.showWhen || values[f.showWhen] === true)
+        .map((f) =>
+          f.kind === 'checkbox' ? (
+            <label key={f.name} className="flex items-start gap-2">
+              <input
+                type="checkbox"
+                checked={values[f.name] === true}
+                onChange={(e) =>
+                  onChange({ ...values, [f.name]: e.target.checked })
+                }
+                disabled={disabled}
+                className="mt-0.5 h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+              />
+              <span>
+                <span className="text-sm text-gray-900">{f.label}</span>
+                {f.help && (
+                  <span className="mt-0.5 block text-[11px] text-gray-500">
+                    {f.help}
+                  </span>
+                )}
+              </span>
+            </label>
+          ) : (
+            <label key={f.name} className="block">
+              <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                {f.label}
+                {!f.required && (
+                  <span className="ml-1 font-normal normal-case text-gray-400">
+                    (optional)
+                  </span>
+                )}
+              </span>
+              <input
+                type={f.kind}
+                required={f.required}
+                autoComplete={f.kind === 'password' ? 'new-password' : 'off'}
+                step={f.kind === 'number' ? '0.01' : undefined}
+                min={f.kind === 'number' ? '0' : undefined}
+                value={typeof values[f.name] === 'string' ? (values[f.name] as string) : ''}
+                onChange={(e) =>
+                  onChange({ ...values, [f.name]: e.target.value })
+                }
+                disabled={disabled}
+                placeholder={f.placeholder}
+                className={INPUT_CLASS}
+              />
+              {f.help && (
+                <p className="mt-1 text-[11px] text-gray-500">{f.help}</p>
+              )}
+            </label>
+          ),
+        )}
+    </>
+  );
+}
+
+/** Client-side pre-flight. The backend does the real auth check. */
+function validateCostFields(spec: CostProviderSpec, values: FieldValues): string | null {
+  for (const f of spec.fields) {
+    if (f.showWhen && values[f.showWhen] !== true) continue;
+    if (f.kind === 'checkbox') continue;
+    const value = text(values, f.name);
+    if (f.required && !value) return `${f.label} is required`;
+    if (value && f.minLength && value.length < f.minLength) {
+      return `${f.label} looks too short — paste the full value`;
+    }
+    if (f.kind === 'number' && value && !(Number(value) > 0)) {
+      return `${f.label} must be a positive number`;
+    }
+  }
+  return null;
+}
 
 function JamfFormFields({
   values,
@@ -248,6 +503,8 @@ export default function MdmConnectPage() {
   const [jumpcloud, setJumpcloud] = useState<JumpcloudForm>({
     api_key: '',
   });
+  const [costFields, setCostFields] = useState<FieldValues>({});
+  const costSpec = COST_PROVIDERS[providerSlug];
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -284,8 +541,8 @@ export default function MdmConnectPage() {
           Use the standard install flow
         </h1>
         <p className="mt-3 max-w-prose text-sm text-gray-700">
-          {card.meta.displayName} connects via OAuth, not credential
-          entry. Open the Integrations grid and click{' '}
+          {card.meta.displayName} does not use credential entry. Open the
+          Integrations grid and click{' '}
           <strong>Connect</strong> on the {card.meta.displayName} card
           to start the authorization flow.
         </p>
@@ -332,6 +589,13 @@ export default function MdmConnectPage() {
         return;
       }
       resultPromise = api.jumpcloudConnect(jumpcloud);
+    } else if (costSpec) {
+      const problem = validateCostFields(costSpec, costFields);
+      if (problem) {
+        setError(problem);
+        return;
+      }
+      resultPromise = costSpec.submit(costFields);
     } else {
       setError(`Unknown provider ${providerSlug}`);
       return;
@@ -404,6 +668,14 @@ export default function MdmConnectPage() {
               disabled={submitting}
             />
           )}
+          {costSpec && (
+            <CostFormFields
+              spec={costSpec}
+              values={costFields}
+              onChange={setCostFields}
+              disabled={submitting}
+            />
+          )}
         </div>
 
         {error && (
@@ -432,6 +704,7 @@ export default function MdmConnectPage() {
         </div>
       </form>
 
+      {MDM_PROVIDERS.has(providerSlug) && (
       <p className="mt-4 text-xs text-gray-500">
         After connecting,{' '}
         <Link
@@ -442,6 +715,21 @@ export default function MdmConnectPage() {
         </Link>{' '}
         to push the Promptly extension to your managed devices.
       </p>
+      )}
+      {costSpec && (
+        <p className="mt-4 text-xs text-gray-500">
+          Atlas verifies the key by running one real billing fetch before
+          saving it, so a successful connect means the nightly cost sync
+          will work too. Spend appears in{' '}
+          <Link
+            href="/dashboard/ai-spend"
+            className="font-medium text-primary-600 hover:text-primary-700"
+          >
+            AI spend
+          </Link>{' '}
+          after the next sync.
+        </p>
+      )}
 
       {toast && (
         <div
