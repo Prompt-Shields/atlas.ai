@@ -145,14 +145,12 @@ class Integration(GRCBase, TenantScopedMixin, TestDataMixin):
     #   Intune: {"device_group_ids": [...], "platform_filter": "windows"}
     #   Purview: {"classifier_ids": [...]}
     #   MCAS:    {"app_filter": ["chatgpt.com", "claude.ai"]}
+    # Returned to the browser as IntegrationCard.config, so any secret here
+    # must be ciphertext under a *_encrypted key (redact_config strips those).
     config_json: Mapped[str | None] = mapped_column(
         Text,
         nullable=True,
-        comment=(
-            "JSON object of provider-specific non-secret config. Returned "
-            "to the browser as IntegrationCard.config, so any secret here "
-            "must be ciphertext under a *_encrypted key."
-        ),
+        comment="JSON object of provider-specific non-secret config",
     )
 
     # Last successful sync (worker writes this).
