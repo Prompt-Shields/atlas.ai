@@ -3,7 +3,7 @@
 Promptly Guide is an employee-facing Mac app that guides people through their work apps and AI tools. Its central promise (requirement **E4** in the promptly-guide repository) is that **the employer learns nothing about one person**. Guide's issues #37 and #38 cover how its signals reach Atlas, and this page describes the Atlas side of that.
 
 - Code: `app/routers/guide.py`, `app/services/guide_adoption_service.py`, `app/models/guide_adoption.py`, `app/auth/firebase_token.py`.
-- Migration: `046`.
+- Migration: `047`.
 
 ## The decisions this is built on
 

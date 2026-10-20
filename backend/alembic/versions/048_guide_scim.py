@@ -6,8 +6,8 @@ external ids, active and group names (see ``app/models/guide_scim.py``). Plus th
 SECURITY DEFINER resolver ``grc.resolve_guide_scim_token`` for the pre-tenant token
 lookup, built as 038 built ``grc.resolve_device_by_token``.
 
-Revision ID: 047
-Revises: 046
+Revision ID: 048
+Revises: 047
 Create Date: 2026-10-07
 """
 
@@ -20,8 +20,8 @@ from sqlalchemy.dialects import postgresql
 
 from alembic import op
 
-revision: str = "047"
-down_revision: str | None = "046"
+revision: str = "048"
+down_revision: str | None = "047"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

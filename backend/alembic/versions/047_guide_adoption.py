@@ -11,8 +11,8 @@ and a count updated in the same second could be lined up, and that would tie a
 person's monthly receipt to their team and categories. See
 ``app/models/guide_adoption.py``.
 
-Revision ID: 046
-Revises: 045
+Revision ID: 047
+Revises: 046
 Create Date: 2026-10-05
 """
 
@@ -25,8 +25,8 @@ from sqlalchemy.dialects import postgresql
 
 from alembic import op
 
-revision: str = "046"
-down_revision: str | None = "045"
+revision: str = "047"
+down_revision: str | None = "046"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
