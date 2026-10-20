@@ -320,3 +320,44 @@ export function upsertCostBudget(
 export function deleteCostBudget(budgetId: string): Promise<void> {
   return request<void>(`/cost/budgets/${budgetId}`, { method: 'DELETE' });
 }
+
+// ─── Spend anomalies (slice 5) ──────────────────────────────────────
+
+/**
+ * A day whose spend broke from its own trailing median.
+ *
+ * `baseline_usd` and `baseline_days` travel with the ratio deliberately:
+ * "5x normal" invites the question "normal compared with what?", and a
+ * card that cannot answer it gets read as noise and then ignored. Show
+ * the baseline next to the multiple, and say how many days it came from —
+ * a ratio off 21 days and one off the 7-day floor are not equally
+ * trustworthy.
+ *
+ * Only finalized ledger days are examined, so these are never
+ * partially-reported figures.
+ */
+export interface CostAnomaly {
+  id: string;
+  provider: string | null;
+  usage_date: string;
+  observed_usd: string | number;
+  baseline_usd: string | number;
+  ratio: string | number;
+  baseline_days: number;
+  detected_at: string;
+  acknowledged_at: string | null;
+  acknowledged_by_user_id: string | null;
+}
+
+export function getCostAnomalies(
+  includeAcknowledged = false,
+): Promise<CostAnomaly[]> {
+  const q = includeAcknowledged ? '?include_acknowledged=true' : '';
+  return request<CostAnomaly[]>(`/cost/anomalies${q}`);
+}
+
+export function acknowledgeCostAnomaly(id: string): Promise<CostAnomaly> {
+  return request<CostAnomaly>(`/cost/anomalies/${id}/acknowledge`, {
+    method: 'POST',
+  });
+}

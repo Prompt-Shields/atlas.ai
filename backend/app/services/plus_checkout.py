@@ -1,7 +1,9 @@
 """Stripe Checkout parameters for Promptly Plus (promptly-guide#61). No I/O.
 
 Free-tier users have no Stripe customer: Checkout creates one on upgrade, so
-we pass `customer_creation` rather than a customer id. The yearly plan is
+we pass no customer id. A subscription-mode session always creates the
+customer; `customer_creation` is accepted only in payment and setup mode,
+and Stripe refuses a subscription session that sets it. The yearly plan is
 listed first so it is the default choice, since the fixed card fee weighs
 heavily on a EUR 9 payment.
 """
@@ -9,6 +11,8 @@ heavily on a EUR 9 payment.
 from __future__ import annotations
 
 from typing import Literal
+
+from app.services.billing.tax import checkout_tax_params
 
 Interval = Literal["monthly", "yearly"]
 
@@ -27,8 +31,14 @@ def plus_checkout_params(
     email: str,
     success_url: str,
     cancel_url: str,
+    automatic_tax: bool = False,
 ) -> dict:
-    """Params for `stripe.checkout.Session.create` upgrading a Free user to Plus."""
+    """Params for `stripe.checkout.Session.create` upgrading a Free user to Plus.
+
+    ``automatic_tax`` is `Settings.stripe_automatic_tax`. Plus buyers are
+    consumers, so no VAT ID is collected; Stripe Tax charges them where the
+    account is registered.
+    """
     price = prices.get(interval, "")
     if not price:
         raise ValueError(f"no Stripe price configured for Plus {interval}")
@@ -36,12 +46,12 @@ def plus_checkout_params(
         "mode": "subscription",
         "line_items": [{"price": price, "quantity": 1}],
         "customer_email": email,
-        "customer_creation": "always",
         "payment_method_types": PAYMENT_METHOD_TYPES,
         "client_reference_id": user_id,
         "metadata": {"user_id": user_id, "plan": "plus", "interval": interval},
         "success_url": success_url,
         "cancel_url": cancel_url,
+        **checkout_tax_params(enabled=automatic_tax, business=False),
     }
 
 

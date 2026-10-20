@@ -1,4 +1,5 @@
-"""E2E tests drive a running stack over HTTP and never touch its database directly.
+"""E2E tests drive a running stack over HTTP. The one exception is removing what a test
+made where the API has no way to (test_guide_adoption.py removes its tenant).
 
 The unit-test conftest one level up creates every table before each test and drops
 them after, against DATABASE_URL. Here DATABASE_URL is the running stack's own
