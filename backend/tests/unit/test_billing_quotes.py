@@ -1,0 +1,518 @@
+"""Unit tests for services/billing/quotes.py.
+
+Stripe is mocked at the ``stripe_client`` boundary, as in test_seat_sync.
+
+Tests:
+  - module validation: unknown module, empty list, Suite mixed with singles
+  - prices resolved by lookup_key; a missing key raises
+  - quote: seats on each module, platform fee on the first paid module only
+  - quote: send_invoice, 30-day terms and tenant metadata
+  - quote: explicit platform-fee override skips the Stripe lookup
+  - quote: no platform fee while a draft or open quote carries it; two quotes
+    drafted at once add it only once (Postgres row lock, skipped on SQLite)
+  - quote: automatic_tax follows settings.stripe_automatic_tax
+  - customer created (and stored) only when the tenant has none
+  - finalize delegates to Stripe
+  - accept: bank-transfer payment settings on subscription and first invoice,
+    automatic cash-balance reconciliation
+  - CLI: --modules and --platform-fee parsing reach the service
+"""
+
+from __future__ import annotations
+
+import asyncio
+import threading
+import time
+import uuid
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import NullPool
+
+from app.models.tenant import Tenant
+from app.services.billing import quotes
+from tests.conftest import TEST_DATABASE_URL, TestSessionLocal, ensure_tenant
+
+PRICES = {
+    "promptly_atlas_annual": "price_atlas",
+    "promptly_learn_annual": "price_learn",
+    "promptly_adopt_annual": "price_adopt",
+    "promptly_suite_annual": "price_suite",
+    "promptly_platform_fee_annual": "price_fee",
+}
+
+
+def _tenant(**kw):
+    t = Tenant(name="Acme", slug="acme")
+    t.id = uuid.uuid4()
+    t.stripe_customer_id = "cus_1"
+    for k, v in kw.items():
+        setattr(t, k, v)
+    return t
+
+
+def _sub(status: str, *lookup_keys: str) -> dict:
+    return {
+        "status": status,
+        "items": {"data": [{"price": {"lookup_key": k}} for k in lookup_keys]},
+    }
+
+
+@pytest.fixture
+def fake_stripe(monkeypatch):
+    """Patch every stripe_client call the quote service makes."""
+    calls: dict[str, list] = {}
+
+    def record(name, result):
+        def _fn(*args, **kwargs):
+            calls.setdefault(name, []).append((args, kwargs))
+            return result(*args, **kwargs) if callable(result) else result
+
+        monkeypatch.setattr(f"app.services.billing.stripe_client.{name}", _fn)
+
+    def list_prices(**kw):
+        return {
+            "data": [{"id": PRICES[k], "lookup_key": k} for k in kw["lookup_keys"] if k in PRICES]
+        }
+
+    record("list_prices", list_prices)
+    record("list_subscriptions", {"data": []})
+    record("list_quotes", {"data": []})
+    record("create_customer", {"id": "cus_new"})
+    record("create_quote", lambda **kw: {"id": "qt_1", **kw})
+    record("finalize_quote", {"id": "qt_1", "status": "open"})
+    record("retrieve_quote", {"id": "qt_1", "status": "open"})
+    record(
+        "accept_quote",
+        {"id": "qt_1", "status": "accepted", "customer": "cus_1", "subscription": "sub_1"},
+    )
+    record("modify_cash_balance", {})
+    record("modify_subscription", {"id": "sub_1", "latest_invoice": "in_1"})
+    record("modify_invoice", {"id": "in_1"})
+    return calls
+
+
+# ---------------------------------------------------------------------------
+# Validation and price lookup
+# ---------------------------------------------------------------------------
+
+
+def test_validate_modules_normalises_and_dedupes():
+    assert quotes.validate_modules([" Atlas", "learn", "atlas"]) == ["atlas", "learn"]
+
+
+@pytest.mark.parametrize(
+    "modules",
+    [[], ["guide"], ["suite", "atlas"]],
+)
+def test_validate_modules_rejects(modules):
+    with pytest.raises(quotes.QuoteError):
+        quotes.validate_modules(modules)
+
+
+def test_resolve_prices_by_lookup_key(fake_stripe):
+    got = quotes.resolve_prices(["promptly_atlas_annual", "promptly_platform_fee_annual"])
+    assert got == {
+        "promptly_atlas_annual": "price_atlas",
+        "promptly_platform_fee_annual": "price_fee",
+    }
+    _, kw = fake_stripe["list_prices"][0]
+    assert kw["active"] is True
+
+
+def test_resolve_prices_missing_key_raises(fake_stripe, monkeypatch):
+    monkeypatch.setattr("app.services.billing.stripe_client.list_prices", lambda **kw: {"data": []})
+    with pytest.raises(quotes.QuoteError, match="promptly_learn_annual"):
+        quotes.resolve_prices(["promptly_learn_annual"])
+
+
+# ---------------------------------------------------------------------------
+# Quote creation
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_first_quote_includes_platform_fee(fake_stripe):
+    quote = await quotes.create_module_quote(
+        AsyncMock(), _tenant(), modules=["atlas", "learn"], seats=250
+    )
+    assert quote["line_items"] == [
+        {"price": "price_atlas", "quantity": 250},
+        {"price": "price_learn", "quantity": 250},
+        {"price": "price_fee", "quantity": 1},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_quote_bills_by_invoice_with_30_day_terms(fake_stripe):
+    t = _tenant()
+    quote = await quotes.create_module_quote(AsyncMock(), t, modules=["suite"], seats=50)
+    assert quote["customer"] == "cus_1"
+    assert quote["collection_method"] == "send_invoice"
+    assert quote["invoice_settings"] == {"days_until_due": 30}
+    assert quote["metadata"]["tenant_id"] == str(t.id)
+    assert quote["subscription_data"]["metadata"]["billing_kind"] == quotes.BILLING_KIND
+
+
+@pytest.mark.asyncio
+async def test_no_platform_fee_when_already_billed(fake_stripe, monkeypatch):
+    monkeypatch.setattr(
+        "app.services.billing.stripe_client.list_subscriptions",
+        lambda **kw: {
+            "data": [_sub("active", "promptly_atlas_annual", "promptly_platform_fee_annual")]
+        },
+    )
+    quote = await quotes.create_module_quote(AsyncMock(), _tenant(), modules=["adopt"], seats=10)
+    assert quote["line_items"] == [{"price": "price_adopt", "quantity": 10}]
+
+
+@pytest.mark.asyncio
+async def test_platform_fee_on_canceled_subscription_does_not_count(fake_stripe, monkeypatch):
+    monkeypatch.setattr(
+        "app.services.billing.stripe_client.list_subscriptions",
+        lambda **kw: {"data": [_sub("canceled", "promptly_platform_fee_annual")]},
+    )
+    quote = await quotes.create_module_quote(AsyncMock(), _tenant(), modules=["adopt"], seats=10)
+    assert {"price": "price_fee", "quantity": 1} in quote["line_items"]
+
+
+@pytest.mark.asyncio
+async def test_explicit_platform_fee_override_skips_lookup(fake_stripe):
+    quote = await quotes.create_module_quote(
+        AsyncMock(), _tenant(), modules=["atlas"], seats=5, include_platform_fee=False
+    )
+    assert "list_subscriptions" not in fake_stripe
+    assert quote["line_items"] == [{"price": "price_atlas", "quantity": 5}]
+
+
+@pytest.mark.asyncio
+async def test_platform_fee_marked_on_quote(fake_stripe):
+    quote = await quotes.create_module_quote(AsyncMock(), _tenant(), modules=["atlas"], seats=5)
+    assert quote["metadata"][quotes.PLATFORM_FEE_METADATA] == "true"
+    # The marker is for open quotes only; the subscription does not need it.
+    assert quotes.PLATFORM_FEE_METADATA not in quote["subscription_data"]["metadata"]
+
+
+@pytest.mark.asyncio
+async def test_no_platform_fee_while_pending_quote_carries_it(fake_stripe, monkeypatch):
+    def list_quotes(**kw):
+        if kw["status"] == "open":
+            return {"data": [{"id": "qt_0", "metadata": {"platform_fee": "true"}}]}
+        return {"data": [{"id": "qt_x", "metadata": {}}]}
+
+    monkeypatch.setattr("app.services.billing.stripe_client.list_quotes", list_quotes)
+    quote = await quotes.create_module_quote(AsyncMock(), _tenant(), modules=["learn"], seats=5)
+    assert quote["line_items"] == [{"price": "price_learn", "quantity": 5}]
+    assert quotes.PLATFORM_FEE_METADATA not in quote["metadata"]
+
+
+@pytest.mark.asyncio
+async def test_pending_quote_lookup_lists_draft_and_open(fake_stripe):
+    await quotes.create_module_quote(AsyncMock(), _tenant(), modules=["atlas"], seats=5)
+    statuses = [kw["status"] for _, kw in fake_stripe["list_quotes"]]
+    assert statuses == ["draft", "open"]
+    assert all(kw["customer"] == "cus_1" for _, kw in fake_stripe["list_quotes"])
+
+
+@pytest.mark.asyncio
+async def test_quote_locks_tenant_row(fake_stripe):
+    db = AsyncMock()
+    await quotes.create_module_quote(db, _tenant(), modules=["atlas"], seats=5)
+    stmt = db.execute.await_args.args[0]
+    assert stmt._for_update_arg is not None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("enabled", [True, False])
+async def test_automatic_tax_follows_setting(fake_stripe, monkeypatch, enabled):
+    settings = MagicMock(stripe_automatic_tax=enabled)
+    monkeypatch.setattr("app.services.billing.quotes.get_settings", lambda: settings)
+    quote = await quotes.create_module_quote(AsyncMock(), _tenant(), modules=["atlas"], seats=5)
+    if enabled:
+        assert quote["automatic_tax"] == {"enabled": True}
+    else:
+        assert "automatic_tax" not in quote
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    TEST_DATABASE_URL.startswith("sqlite"), reason="SQLite has no SELECT ... FOR UPDATE"
+)
+async def test_concurrent_quotes_add_platform_fee_once(fake_stripe, monkeypatch):
+    """Two operators draft a quote for one tenant at the same moment.
+
+    Each runs in its own thread with its own event loop and connection, as two
+    script runs would. Stripe's list call is slowed so that, without the row
+    lock, both would check for the fee before either quote exists.
+    """
+    tenant_id = uuid.uuid4()
+    async with TestSessionLocal() as session:
+        tenant = await ensure_tenant(session, tenant_id, name="Acme")
+        tenant.stripe_customer_id = "cus_1"
+        await session.commit()
+
+    created: list[dict] = []
+    lock = threading.Lock()
+
+    def list_quotes(**kw):
+        time.sleep(0.3)
+        with lock:
+            return {
+                "data": [
+                    q
+                    for q in created
+                    if q["status"] == kw["status"] and q["customer"] == kw["customer"]
+                ]
+            }
+
+    def create_quote(**kw):
+        with lock:
+            quote = {"id": f"qt_{len(created) + 1}", "status": "draft", **kw}
+            created.append(quote)
+        return quote
+
+    monkeypatch.setattr("app.services.billing.stripe_client.list_quotes", list_quotes)
+    monkeypatch.setattr("app.services.billing.stripe_client.create_quote", create_quote)
+
+    async def draft(module: str) -> None:
+        eng = create_async_engine(TEST_DATABASE_URL, poolclass=NullPool)
+        try:
+            factory = sessionmaker(eng, class_=AsyncSession, expire_on_commit=False)
+            async with factory() as db:
+                t = await db.get(Tenant, tenant_id)
+                await quotes.create_module_quote(db, t, modules=[module], seats=10)
+                await db.commit()
+        finally:
+            await eng.dispose()
+
+    await asyncio.gather(
+        asyncio.to_thread(asyncio.run, draft("atlas")),
+        asyncio.to_thread(asyncio.run, draft("learn")),
+    )
+
+    assert len(created) == 2
+    with_fee = [q for q in created if {"price": "price_fee", "quantity": 1} in q["line_items"]]
+    assert len(with_fee) == 1
+
+
+@pytest.mark.asyncio
+async def test_zero_seats_rejected(fake_stripe):
+    with pytest.raises(quotes.QuoteError):
+        await quotes.create_module_quote(AsyncMock(), _tenant(), modules=["atlas"], seats=0)
+    assert "create_quote" not in fake_stripe
+
+
+# ---------------------------------------------------------------------------
+# Customer
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_customer_created_when_missing(fake_stripe):
+    t = _tenant(stripe_customer_id=None)
+    db = AsyncMock()
+    quote = await quotes.create_module_quote(
+        db, t, modules=["atlas"], seats=5, billing_email="ap@acme.example"
+    )
+    _, kw = fake_stripe["create_customer"][0]
+    assert kw["email"] == "ap@acme.example"
+    assert kw["metadata"] == {"tenant_id": str(t.id)}
+    assert t.stripe_customer_id == "cus_new"
+    assert quote["customer"] == "cus_new"
+    db.flush.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_missing_customer_without_email_raises(fake_stripe):
+    with pytest.raises(quotes.QuoteError, match="billing email"):
+        await quotes.create_module_quote(
+            AsyncMock(), _tenant(stripe_customer_id=None), modules=["atlas"], seats=5
+        )
+    assert "create_customer" not in fake_stripe
+
+
+@pytest.mark.asyncio
+async def test_existing_customer_not_recreated(fake_stripe):
+    await quotes.create_module_quote(
+        AsyncMock(), _tenant(), modules=["atlas"], seats=5, billing_email="x@acme.example"
+    )
+    assert "create_customer" not in fake_stripe
+
+
+# ---------------------------------------------------------------------------
+# Finalise and accept
+# ---------------------------------------------------------------------------
+
+
+def test_finalize_delegates(fake_stripe):
+    assert quotes.finalize_quote("qt_1")["status"] == "open"
+    assert fake_stripe["finalize_quote"][0][0] == ("qt_1",)
+
+
+def test_accept_sets_bank_transfer_on_subscription_and_invoice(fake_stripe):
+    quotes.accept_quote("qt_1", bank_transfer_country="NL")
+
+    expected = {
+        "payment_method_types": ["customer_balance"],
+        "payment_method_options": {
+            "customer_balance": {
+                "funding_type": "bank_transfer",
+                "bank_transfer": {
+                    "type": "eu_bank_transfer",
+                    "eu_bank_transfer": {"country": "NL"},
+                },
+            }
+        },
+    }
+    args, kw = fake_stripe["modify_subscription"][0]
+    assert args == ("sub_1",)
+    assert kw["payment_settings"] == expected
+
+    args, kw = fake_stripe["modify_invoice"][0]
+    assert args == ("in_1",)
+    assert kw["payment_settings"] == expected
+
+    args, kw = fake_stripe["modify_cash_balance"][0]
+    assert args == ("cus_1",)
+    assert kw == {"settings": {"reconciliation_mode": "automatic"}}
+
+
+def test_accept_uses_configured_country(fake_stripe, monkeypatch):
+    settings = MagicMock(stripe_bank_transfer_country="DE")
+    monkeypatch.setattr("app.services.billing.quotes.get_settings", lambda: settings)
+    quotes.accept_quote("qt_1")
+    _, kw = fake_stripe["modify_subscription"][0]
+    bt = kw["payment_settings"]["payment_method_options"]["customer_balance"]["bank_transfer"]
+    assert bt["eu_bank_transfer"] == {"country": "DE"}
+
+
+def test_accept_without_subscription_raises(fake_stripe, monkeypatch):
+    monkeypatch.setattr(
+        "app.services.billing.stripe_client.accept_quote",
+        lambda qid: {"id": qid, "customer": "cus_1", "subscription": None},
+    )
+    with pytest.raises(quotes.QuoteError):
+        quotes.accept_quote("qt_1", bank_transfer_country="IE")
+    assert "modify_subscription" not in fake_stripe
+
+
+def test_accept_rerun_on_accepted_quote_reapplies_settings(fake_stripe, monkeypatch):
+    """A retry after a failed step must not accept twice, but must finish the job."""
+    monkeypatch.setattr(
+        "app.services.billing.stripe_client.retrieve_quote",
+        lambda qid: {"id": qid, "status": "accepted", "customer": "cus_1", "subscription": "sub_1"},
+    )
+    quotes.accept_quote("qt_1", bank_transfer_country="IE")
+    assert "accept_quote" not in fake_stripe
+    assert fake_stripe["modify_subscription"][0][0] == ("sub_1",)
+    assert fake_stripe["modify_invoice"][0][0] == ("in_1",)
+    assert fake_stripe["modify_cash_balance"][0][0] == ("cus_1",)
+
+
+@pytest.mark.parametrize("country", ["NO", "GB", "XX", ""])
+def test_accept_rejects_unsupported_country_before_accepting(fake_stripe, monkeypatch, country):
+    settings = MagicMock(stripe_bank_transfer_country=country)
+    monkeypatch.setattr("app.services.billing.quotes.get_settings", lambda: settings)
+    with pytest.raises(quotes.QuoteError, match="country"):
+        quotes.accept_quote("qt_1")
+    assert "accept_quote" not in fake_stripe
+    assert "retrieve_quote" not in fake_stripe
+
+
+def test_accept_normalises_country_case(fake_stripe):
+    quotes.accept_quote("qt_1", bank_transfer_country="nl")
+    _, kw = fake_stripe["modify_subscription"][0]
+    bt = kw["payment_settings"]["payment_method_options"]["customer_balance"]["bank_transfer"]
+    assert bt["eu_bank_transfer"] == {"country": "NL"}
+
+
+def test_plain_list_wrappers_are_understood(fake_stripe, monkeypatch):
+    """atlas.ai#16 adds list_prices/list_subscriptions wrappers that return lists.
+
+    If both PRs land, the fee check must still see the fee; reading ``data``
+    off a list would silently find nothing and bill the fee twice.
+    """
+    monkeypatch.setattr(
+        "app.services.billing.stripe_client.list_subscriptions",
+        lambda **kw: [
+            {
+                "status": "active",
+                "items": {"data": [{"price": {"lookup_key": quotes.PLATFORM_FEE_LOOKUP_KEY}}]},
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        "app.services.billing.stripe_client.list_prices",
+        lambda **kw: [{"id": PRICES[k], "lookup_key": k} for k in kw["lookup_keys"]],
+    )
+    assert quotes.has_platform_fee("cus_1") is True
+    assert quotes.resolve_prices(["promptly_atlas_annual"]) == {
+        "promptly_atlas_annual": "price_atlas"
+    }
+
+
+def test_accept_with_expanded_invoice(fake_stripe, monkeypatch):
+    monkeypatch.setattr(
+        "app.services.billing.stripe_client.modify_subscription",
+        lambda sid, **kw: {"id": sid, "latest_invoice": {"id": "in_9"}},
+    )
+    quotes.accept_quote("qt_1", bank_transfer_country="IE")
+    assert fake_stripe["modify_invoice"][0][0] == ("in_9",)
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+
+def test_cli_finalize_and_accept(fake_stripe, capsys):
+    from scripts import stripe_module_quote as cli
+
+    assert cli.main(["finalize", "qt_1"]) == 0
+    assert cli.main(["accept", "qt_1", "--bank-country", "FR"]) == 0
+    _, kw = fake_stripe["modify_subscription"][0]
+    bt = kw["payment_settings"]["payment_method_options"]["customer_balance"]["bank_transfer"]
+    assert bt["eu_bank_transfer"] == {"country": "FR"}
+    assert "sub_1" in capsys.readouterr().out
+
+
+def test_cli_create_passes_options(monkeypatch):
+    from scripts import stripe_module_quote as cli
+
+    seen = {}
+
+    async def fake_create(args):
+        seen.update(vars(args))
+
+    monkeypatch.setattr(cli, "_create", fake_create)
+    assert (
+        cli.main(
+            [
+                "create",
+                "--tenant",
+                "acme",
+                "--modules",
+                "atlas,learn",
+                "--seats",
+                "9",
+                "--no-platform-fee",
+            ]
+        )
+        == 0
+    )
+    assert seen["modules"] == "atlas,learn"
+    assert seen["seats"] == 9
+    assert seen["platform_fee"] is False
+
+
+def test_cli_reports_quote_error(fake_stripe, monkeypatch, capsys):
+    from scripts import stripe_module_quote as cli
+
+    def boom(qid, **kw):
+        raise quotes.QuoteError("nope")
+
+    monkeypatch.setattr(quotes, "accept_quote", boom)
+    assert cli.main(["accept", "qt_1"]) == 1
+    assert "nope" in capsys.readouterr().err

@@ -18,11 +18,8 @@ No existing JSON column fits: `tenant_settings.custom_settings` is a Text blob
 in a table that not every tenant has a row in, and it holds settings a tenant
 admin edits, not state that only Stripe may write.
 
-NOTE: numbered 049 to stay clear of open PRs holding 046-048. Renumber on
-merge so that it follows whatever is then the head.
-
 Revision ID: 049
-Revises: 045
+Revises: 048
 Create Date: 2026-10-13
 """
 
@@ -33,7 +30,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 revision: str = "049"
-down_revision: Union[str, None] = "045"
+down_revision: Union[str, None] = "048"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

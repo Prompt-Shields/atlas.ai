@@ -26,7 +26,7 @@ from app.schemas.billing import (
     PortalSessionResponse,
 )
 from app.services import entitlements as ent
-from app.services.billing import stripe_client
+from app.services.billing import stripe_client, tax
 from app.services.billing import webhooks as wh
 
 router = APIRouter(prefix="/billing", tags=["Billing"])
@@ -91,11 +91,13 @@ async def checkout_session(
         "mode": "subscription",
         "line_items": [{"price": price, "quantity": quantity}],
         "customer_email": user.email,
-        "automatic_tax": {"enabled": True},
         "client_reference_id": str(tenant.id),
         "metadata": {"tenant_id": str(tenant.id)},
         "success_url": settings.billing_checkout_success_url,
         "cancel_url": settings.billing_checkout_cancel_url,
+        # Team is sold to businesses: collect the VAT ID so Stripe Tax can
+        # apply reverse charge. Rates and exemptions are Stripe's call.
+        **tax.checkout_tax_params(enabled=settings.stripe_automatic_tax, business=True),
     }
 
     if tenant.trial_ends_at is not None and now is not None:
