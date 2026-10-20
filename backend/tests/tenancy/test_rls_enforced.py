@@ -990,3 +990,128 @@ async def test_postgres_rls_enforced_on_cost_budgets() -> None:
         await session.execute(text(f"SET LOCAL app.current_tenant_id = '{tenant_b}'"))
         res_b = await session.execute(text("SELECT array_agg(amount_usd) FROM grc.cost_budgets"))
         assert (res_b.scalar() or []) == [Decimal("9999.00")]
+
+
+async def test_postgres_rls_enforced_on_cost_anomalies() -> None:
+    """RLS on grc.cost_anomalies isolates rows by tenant.
+
+    Like cost_budgets, these rows are pushed outward rather than merely read:
+    `detect_and_alert` loads a tenant's anomalies and mails that tenant's
+    admins about them. A cross-tenant read would put another organisation's
+    daily spend, their provider mix and their baseline into an email — a
+    sharper leak than a dashboard, because it leaves the product.
+
+    Mechanics follow test_postgres_rls_enforced_on_cost_budgets exactly.
+    """
+    from tests.conftest import TestSessionLocal
+
+    tenant_a = uuid.UUID("00000000-0000-0000-0000-0000000000a7")
+    tenant_b = uuid.UUID("00000000-0000-0000-0000-0000000000b7")
+
+    async with TestSessionLocal() as session:
+        if session.get_bind().dialect.name != "postgresql":
+            pytest.skip("RLS enforcement requires Postgres")
+
+        await session.execute(text("CREATE SCHEMA IF NOT EXISTS grc"))
+        await session.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS grc.cost_anomalies (
+                    id                      uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+                    tenant_id               uuid NOT NULL,
+                    provider                text,
+                    usage_date              date NOT NULL,
+                    observed_usd            numeric(14, 2) NOT NULL,
+                    baseline_usd            numeric(14, 2) NOT NULL,
+                    ratio                   numeric(10, 2) NOT NULL,
+                    baseline_days           integer NOT NULL,
+                    detected_at             timestamptz NOT NULL DEFAULT now(),
+                    acknowledged_at         timestamptz,
+                    acknowledged_by_user_id uuid,
+                    alerted_at              timestamptz,
+                    created_at              timestamptz NOT NULL DEFAULT now(),
+                    updated_at              timestamptz NOT NULL DEFAULT now()
+                )
+                """
+            )
+        )
+
+        await session.execute(text("ALTER TABLE grc.cost_anomalies ENABLE ROW LEVEL SECURITY"))
+        await session.execute(text("ALTER TABLE grc.cost_anomalies FORCE ROW LEVEL SECURITY"))
+        await session.execute(
+            text("DROP POLICY IF EXISTS tenant_isolation_test ON grc.cost_anomalies")
+        )
+        # Byte-identical to migration 046's tenant_isolation policy.
+        await session.execute(
+            text(
+                """
+                CREATE POLICY tenant_isolation_test ON grc.cost_anomalies
+                USING (tenant_id = current_setting('app.current_tenant_id', TRUE)::uuid)
+                """
+            )
+        )
+
+        await session.execute(
+            text(
+                """
+                DO $$ BEGIN
+                  IF NOT EXISTS (
+                    SELECT 1 FROM pg_roles WHERE rolname = 'rls_check_role'
+                  ) THEN
+                    CREATE ROLE rls_check_role NOLOGIN NOSUPERUSER;
+                  END IF;
+                END $$
+                """
+            )
+        )
+        await session.execute(text("GRANT USAGE ON SCHEMA grc TO rls_check_role"))
+        await session.execute(text("GRANT SELECT ON grc.cost_anomalies TO rls_check_role"))
+        await session.execute(text("GRANT rls_check_role TO CURRENT_USER"))
+
+        row_a_id = str(uuid.uuid4())
+        row_b_id = str(uuid.uuid4())
+
+        async def _seed(row_id: str, tenant_id: uuid.UUID, observed: str) -> None:
+            await set_tenant_guc(session, tenant_id)
+            await session.execute(
+                text(
+                    """
+                    INSERT INTO grc.cost_anomalies
+                        (id, tenant_id, usage_date, observed_usd, baseline_usd,
+                         ratio, baseline_days, detected_at)
+                    VALUES (:id, :tenant_id, DATE '2026-09-14', :observed, 100.00,
+                            5.00, 14, now())
+                    """
+                ),
+                {"id": row_id, "tenant_id": str(tenant_id), "observed": observed},
+            )
+
+        await _seed(row_a_id, tenant_a, "500.00")
+        await _seed(row_b_id, tenant_b, "7777.00")
+
+        await session.execute(
+            text(
+                "SELECT set_config('app.current_tenant_id',"
+                " '00000000-0000-0000-0000-000000000000', true)"
+            )
+        )
+        await session.execute(text("SET LOCAL ROLE rls_check_role"))
+
+        res_unset = await session.execute(
+            text("SELECT count(*) FROM grc.cost_anomalies WHERE id IN (:a, :b)"),
+            {"a": row_a_id, "b": row_b_id},
+        )
+        assert (res_unset.scalar() or 0) == 0
+
+        # The unfiltered read the detector performs before it mails anyone.
+        await session.execute(text(f"SET LOCAL app.current_tenant_id = '{tenant_a}'"))
+        res_a = await session.execute(
+            text("SELECT array_agg(observed_usd) FROM grc.cost_anomalies")
+        )
+        assert (res_a.scalar() or []) == [Decimal("500.00")]
+
+        await session.execute(text(f"SET LOCAL app.current_tenant_id = '{tenant_b}'"))
+        res_b = await session.execute(
+            text("SELECT array_agg(observed_usd) FROM grc.cost_anomalies")
+        )
+        assert (res_b.scalar() or []) == [Decimal("7777.00")]
