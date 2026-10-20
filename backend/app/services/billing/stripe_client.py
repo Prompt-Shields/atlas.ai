@@ -93,6 +93,11 @@ def create_customer(**kwargs):
     return stripe.Customer.create(**kwargs)
 
 
+def modify_cash_balance(customer_id: str, **kwargs):
+    _configure()
+    return stripe.Customer.modify_cash_balance(customer_id, **kwargs)
+
+
 def list_subscriptions(**kwargs) -> list:
     _configure()
     return list(stripe.Subscription.list(**kwargs).auto_paging_iter())
@@ -103,9 +108,44 @@ def create_subscription(**kwargs):
     return stripe.Subscription.create(**kwargs)
 
 
+def retrieve_subscription(subscription_id: str, **kwargs):
+    _configure()
+    return stripe.Subscription.retrieve(subscription_id, **kwargs)
+
+
 def modify_subscription(subscription_id: str, **kwargs):
     _configure()
     return stripe.Subscription.modify(subscription_id, **kwargs)
+
+
+def modify_invoice(invoice_id: str, **kwargs):
+    _configure()
+    return stripe.Invoice.modify(invoice_id, **kwargs)
+
+
+def create_quote(**kwargs):
+    _configure()
+    return stripe.Quote.create(**kwargs)
+
+
+def retrieve_quote(quote_id: str, **kwargs):
+    _configure()
+    return stripe.Quote.retrieve(quote_id, **kwargs)
+
+
+def list_quotes(**kwargs):
+    _configure()
+    return stripe.Quote.list(**kwargs)
+
+
+def finalize_quote(quote_id: str, **kwargs):
+    _configure()
+    return stripe.Quote.finalize_quote(quote_id, **kwargs)
+
+
+def accept_quote(quote_id: str, **kwargs):
+    _configure()
+    return stripe.Quote.accept(quote_id, **kwargs)
 
 
 # --- Tax ids ---------------------------------------------------------------
