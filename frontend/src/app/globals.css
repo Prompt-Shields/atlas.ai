@@ -1,31 +1,487 @@
-@import "tailwindcss";
+@import 'tailwindcss';
+@import 'tw-animate-css';
 
-@theme {
-  --color-primary-50: #eff6ff;
-  --color-primary-100: #dbeafe;
-  --color-primary-200: #bfdbfe;
-  --color-primary-300: #93c5fd;
-  --color-primary-400: #60a5fa;
-  --color-primary-500: #3b82f6;
-  --color-primary-600: #2563eb;
-  --color-primary-700: #1d4ed8;
-  --color-primary-800: #1e40af;
-  --color-primary-900: #1e3a8a;
-  --color-primary-950: #172554;
-}
+@custom-variant dark (&:is(.dark *));
 
 :root {
-  --foreground-rgb: 0, 0, 0;
-  --background-start-rgb: 249, 250, 251;
-  --background-end-rgb: 255, 255, 255;
+  /* Nordic minimal palette (October 2026). Snow, ink, and one colour: a clear
+     blue for action, shared with the macOS app. No second hue — hierarchy comes from space and
+     weight, not colour. */
+  --background: #fafaf9; /* snow */
+  --foreground: #101418; /* ink */
+  --card: #ffffff;
+  --card-foreground: #101418;
+  --popover: #ffffff;
+  --popover-foreground: #101418;
+  --primary: #1a5cff; /* psBlue — the accent in the macOS app (DesignTokens.swift) */
+  --primary-foreground: #ffffff;
+  /* Deep end of primary gradients; as a token it flips with the theme. */
+  --primary-deep: #1550e8;
+  --secondary: #f0f1f2;
+  --secondary-foreground: #101418;
+  --muted: #f3f4f5;
+  --muted-foreground: #5c6670;
+  --accent: #e8eeff;
+  --accent-foreground: #1550e8;
+  /* Brand accent — carries structural work (rules, eyebrows, markers) so the
+     primary can mean "action". Distinct from --accent above, which is shadcn's
+     hover/focus surface and is consumed only by components/ui/*. */
+  --brand-accent: #1a5cff;
+  --brand-accent-foreground: #ffffff;
+  --destructive: #c8443f;
+  --destructive-foreground: #ffffff;
+  --border: #e4e6e8;
+  --input: #e4e6e8;
+  --ring: #1a5cff;
+  --chart-1: #4f9a7c;
+  --chart-2: #1a5cff;
+  --chart-3: #d08a3c;
+  --chart-4: #6f97ff;
+  --chart-5: #7c858f;
+  --radius: 0.625rem;
+  --sidebar: #fafaf9;
+  --sidebar-foreground: #101418;
+  --sidebar-primary: #1a5cff;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #f0f1f2;
+  --sidebar-accent-foreground: #101418;
+  --sidebar-border: #e4e6e8;
+  --sidebar-ring: #1a5cff;
+  --shadow-x: 0px;
+  --shadow-y: 1px;
+  --shadow-blur: 2px;
+  --shadow-spread: 0px;
+  --shadow-opacity: 0.06;
+  --shadow-color: #101418;
 }
 
-body {
-  color: rgb(var(--foreground-rgb));
-  background: linear-gradient(
-      to bottom,
-      transparent,
-      rgb(var(--background-end-rgb))
-    )
-    rgb(var(--background-start-rgb));
+.dark {
+  --background: #0e1116;
+  --foreground: #eceef2;
+  --card: #161a21;
+  --card-foreground: #eceef2;
+  --popover: #161a21;
+  --popover-foreground: #eceef2;
+  --primary: #8fb0ff;
+  --primary-foreground: #0e1116;
+  --primary-deep: #6f97ff;
+  --secondary: #1e232c;
+  --secondary-foreground: #eceef2;
+  --muted: #1e232c;
+  --muted-foreground: #98a1ae;
+  --accent: #14224a;
+  --accent-foreground: #b3c9ff;
+  --brand-accent: #8fb0ff;
+  --brand-accent-foreground: #0e1116;
+  --destructive: #f0817c;
+  --destructive-foreground: #ffffff;
+  --border: #272d38;
+  --input: #272d38;
+  --ring: #8fb0ff;
+  --chart-1: #6fc09e;
+  --chart-2: #8fb0ff;
+  --chart-3: #e3a868;
+  --chart-4: #8fb0ff;
+  --chart-5: #98a1ae;
+  --sidebar: #0e1116;
+  --sidebar-foreground: #eceef2;
+  --sidebar-primary: #8fb0ff;
+  --sidebar-primary-foreground: #0e1116;
+  --sidebar-accent: #1e232c;
+  --sidebar-accent-foreground: #8fb0ff;
+  --sidebar-border: #272d38;
+  --sidebar-ring: #8fb0ff;
+  --shadow-x: 0px;
+  --shadow-y: 1px;
+  --shadow-blur: 2px;
+  --shadow-spread: 0px;
+  --shadow-opacity: 0.3;
+  --shadow-color: #000000;
+}
+
+@theme inline {
+  --font-sans: 'Schibsted Grotesk', 'Schibsted Grotesk Fallback';
+  --font-mono: 'IBM Plex Mono', 'IBM Plex Mono Fallback';
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary-deep: var(--primary-deep);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-brand-accent: var(--brand-accent);
+  --color-brand-accent-foreground: var(--brand-accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --font-serif: 'Lora', 'Lora Fallback';
+  /* computed shadow variables below - do not modify */
+  --shadow-2xs: var(--shadow-x) var(--shadow-y) color-mix(in srgb, var(--shadow-color) calc(var(--shadow-opacity) * 100%), transparent);
+  --shadow-xs: var(--shadow-x) var(--shadow-y) var(--shadow-blur) var(--shadow-spread) color-mix(in srgb, var(--shadow-color) calc(var(--shadow-opacity) * 100%), transparent);
+  --shadow-sm: var(--shadow-x) var(--shadow-y) calc(var(--shadow-blur) * 1.5) var(--shadow-spread) color-mix(in srgb, var(--shadow-color) calc(var(--shadow-opacity) * 100%), transparent);
+  --shadow-md: calc(var(--shadow-x) * 2) calc(var(--shadow-y) * 2) calc(var(--shadow-blur) * 3) calc(var(--shadow-spread) - 1px) color-mix(in srgb, var(--shadow-color) calc(var(--shadow-opacity) * 100%), transparent);
+  --shadow-lg: calc(var(--shadow-x) * 4) calc(var(--shadow-y) * 4) calc(var(--shadow-blur) * 5) calc(var(--shadow-spread) - 3px) color-mix(in srgb, var(--shadow-color) calc(var(--shadow-opacity) * 100%), transparent);
+  --shadow-xl: calc(var(--shadow-x) * 6) calc(var(--shadow-y) * 6) calc(var(--shadow-blur) * 7) calc(var(--shadow-spread) - 5px) color-mix(in srgb, var(--shadow-color) calc(var(--shadow-opacity) * 100%), transparent);
+  --shadow-2xl: calc(var(--shadow-x) * 8) calc(var(--shadow-y) * 8) calc(max(0px, var(--shadow-blur) * 9 - 8px)) calc(var(--shadow-spread) - 12px) color-mix(in srgb, var(--shadow-color) calc(var(--shadow-opacity) * 250%), transparent);
+  --shadow: var(--shadow-md);
+  --color-shadow-color: var(--shadow-color);
+  --shadow-opacity: var(--shadow-opacity);
+  --shadow-spread: var(--shadow-spread);
+  --shadow-blur: var(--shadow-blur);
+  --shadow-y: var(--shadow-y);
+  --shadow-x: var(--shadow-x);
+}
+
+/* The existing screens use a numbered primary scale (bg-primary-600,
+   text-primary-700, focus:ring-primary-500, ...) in a few hundred places. The
+   scale is redrawn around psBlue so they take the new colour without touching
+   every screen: 600 is --primary, 700 is --primary-deep, and the light end
+   meets --accent. */
+@theme {
+  --color-primary-50: #f3f6ff;
+  --color-primary-100: #e8eeff;
+  --color-primary-200: #cdd9ff;
+  --color-primary-300: #a8bfff;
+  --color-primary-400: #6f97ff;
+  --color-primary-500: #3d74ff;
+  --color-primary-600: #1a5cff;
+  --color-primary-700: #1550e8;
+  --color-primary-800: #1342bd;
+  --color-primary-900: #133894;
+  --color-primary-950: #0e2360;
+}
+
+/* Likewise the neutrals: gray and slate (about 1,800 uses, often page and card
+   backgrounds, borders and secondary text) are redrawn on the theme's snow and
+   ink, so 50 is --background, 100 --muted, 200 --border, 500 --muted-foreground
+   and 900 --foreground. Text contrast on white is the same as Tailwind's or
+   higher at every step (500: 5.9:1). */
+@theme {
+  --color-gray-50: #fafaf9;
+  --color-gray-100: #f3f4f5;
+  --color-gray-200: #e4e6e8;
+  --color-gray-300: #cdd1d5;
+  --color-gray-400: #98a1ae;
+  --color-gray-500: #5c6670;
+  --color-gray-600: #4a535c;
+  --color-gray-700: #343b43;
+  --color-gray-800: #1e232c;
+  --color-gray-900: #101418;
+  --color-gray-950: #0a0d10;
+  --color-slate-50: #fafaf9;
+  --color-slate-100: #f3f4f5;
+  --color-slate-200: #e4e6e8;
+  --color-slate-300: #cdd1d5;
+  --color-slate-400: #98a1ae;
+  --color-slate-500: #5c6670;
+  --color-slate-600: #4a535c;
+  --color-slate-700: #343b43;
+  --color-slate-800: #1e232c;
+  --color-slate-900: #101418;
+  --color-slate-950: #0a0d10;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  /* Headings sit tight and quiet; the grotesk does the work, not the weight. */
+  h1,
+  h2,
+  h3 {
+    letter-spacing: -0.022em;
+  }
+}
+
+/* ==========================================================================
+   Partner / backer logo marquee
+   Continuous horizontal scroll. The track is rendered twice in the component;
+   translating by -50% of the doubled track produces a seamless loop.
+   Pauses on hover so users can read individual logos. Respects
+   prefers-reduced-motion.
+   ========================================================================== */
+
+@keyframes marquee {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+
+.animate-marquee {
+  animation: marquee 32s linear infinite;
+  will-change: transform;
+}
+
+.animate-marquee:hover,
+.animate-marquee:focus-within {
+  animation-play-state: paused;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-marquee {
+    animation: none;
+  }
+}
+
+/* ==========================================================================
+   Blog article prose
+   Editorial typography for long-form reading: comfortable line length,
+   generous rhythm, tasteful drop-cap, accented section headings,
+   and custom-styled lists.
+   ========================================================================== */
+
+.blog-prose {
+  /* Comfortable max line length (~70 chars) for body copy */
+  max-width: 42rem;
+  font-size: 1.0625rem;
+  line-height: 1.8;
+  color: var(--muted-foreground);
+}
+
+@media (min-width: 768px) {
+  .blog-prose {
+    font-size: 1.125rem;
+  }
+}
+
+/* ----- Paragraphs ------------------------------------------------------- */
+.blog-prose > p {
+  margin-bottom: 1.5rem;
+  text-wrap: pretty;
+}
+
+/* Lead paragraph — first paragraph in the article gets editorial weight */
+.blog-prose > p:first-of-type {
+  font-size: 1.25rem;
+  line-height: 1.7;
+  color: var(--foreground);
+  margin-bottom: 2rem;
+}
+
+@media (min-width: 768px) {
+  .blog-prose > p:first-of-type {
+    font-size: 1.375rem;
+  }
+}
+
+/* Tasteful drop-cap on the first paragraph */
+.blog-prose > p:first-of-type::first-letter {
+  float: left;
+  font-size: 3.75rem;
+  line-height: 0.9;
+  font-weight: 600;
+  color: var(--primary);
+  margin: 0.35rem 0.75rem 0 0;
+  font-feature-settings: "ss01";
+}
+
+/* ----- Inline emphasis -------------------------------------------------- */
+.blog-prose strong {
+  color: var(--foreground);
+  font-weight: 600;
+}
+
+.blog-prose em {
+  color: var(--foreground);
+  font-style: italic;
+}
+
+/* ----- Section headings (h2) ------------------------------------------- */
+.blog-prose > h2 {
+  position: relative;
+  font-size: 1.75rem;
+  line-height: 1.2;
+  font-weight: 600;
+  letter-spacing: -0.025em;
+  color: var(--foreground);
+  margin-top: 4rem;
+  margin-bottom: 1.5rem;
+  scroll-margin-top: 6rem;
+}
+
+@media (min-width: 768px) {
+  .blog-prose > h2 {
+    font-size: 2rem;
+  }
+}
+
+/* Hairline accent rule above each h2. A 1px line in the brand accent reads
+   quieter than a 3px rounded bar and leaves the primary free for links. */
+.blog-prose > h2::before {
+  content: "";
+  display: block;
+  width: 1.5rem;
+  height: 1px;
+  background: var(--brand-accent);
+  margin-bottom: 1.25rem;
+}
+
+/* ----- Sub-headings (h3) ----------------------------------------------- */
+.blog-prose > h3 {
+  font-size: 1.25rem;
+  line-height: 1.3;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  color: var(--foreground);
+  margin-top: 2.75rem;
+  margin-bottom: 1rem;
+  scroll-margin-top: 6rem;
+}
+
+@media (min-width: 768px) {
+  .blog-prose > h3 {
+    font-size: 1.5rem;
+  }
+}
+
+/* ----- Bulleted lists --------------------------------------------------- */
+.blog-prose > ul {
+  margin: 1.5rem 0 1.75rem;
+  padding-left: 0;
+  list-style: none;
+}
+
+.blog-prose > ul > li {
+  position: relative;
+  padding-left: 1.75rem;
+  margin-bottom: 1rem;
+  line-height: 1.85;
+}
+
+/* Dash markers rather than dots — a column of dashes sits flatter on the page. */
+.blog-prose > ul > li::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0.95rem;
+  width: 0.7rem;
+  height: 1px;
+  background: var(--brand-accent);
+}
+
+/* ----- Numbered lists with circular markers ---------------------------- */
+.blog-prose > ol {
+  margin: 1.5rem 0 1.75rem;
+  padding-left: 0;
+  list-style: none;
+  counter-reset: blog-section;
+}
+
+.blog-prose > ol > li {
+  position: relative;
+  padding-left: 3rem;
+  margin-bottom: 1rem;
+  line-height: 1.75;
+  counter-increment: blog-section;
+}
+
+.blog-prose > ol > li::before {
+  content: counter(blog-section);
+  position: absolute;
+  left: 0;
+  top: 0.15rem;
+  width: 2rem;
+  height: 2rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  background: color-mix(in srgb, var(--primary) 12%, transparent);
+  color: var(--primary);
+  font-size: 0.875rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ----- Nested lists inside list items ---------------------------------- */
+.blog-prose li > ul {
+  margin: 0.75rem 0 0.5rem;
+  padding-left: 0;
+  list-style: none;
+}
+
+.blog-prose li > ul > li {
+  position: relative;
+  padding-left: 1.25rem;
+  margin-bottom: 0.4rem;
+  font-size: 0.97em;
+  color: var(--muted-foreground);
+  line-height: 1.7;
+}
+
+.blog-prose li > ul > li::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0.75rem;
+  width: 0.4rem;
+  height: 1px;
+  background: var(--muted-foreground);
+  opacity: 0.5;
+}
+
+/* ----- Inline links ----------------------------------------------------- */
+.blog-prose a {
+  color: var(--primary);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 4px;
+  transition: opacity 0.15s ease, text-decoration-thickness 0.15s ease;
+}
+
+.blog-prose a:hover {
+  opacity: 0.85;
+  text-decoration-thickness: 2px;
+}
+
+/* ----- Blockquote (for future use) ------------------------------------- */
+.blog-prose blockquote {
+  margin: 2rem 0;
+  padding: 0.5rem 0 0.5rem 1.5rem;
+  border-left: 3px solid var(--primary);
+  background: color-mix(in srgb, var(--primary) 4%, transparent);
+  border-radius: 0 0.75rem 0.75rem 0;
+  color: var(--foreground);
+  font-style: italic;
+}
+
+.blog-prose blockquote p {
+  margin-bottom: 0.5rem;
+}
+
+/* ----- Horizontal rule ------------------------------------------------- */
+.blog-prose hr {
+  margin: 3rem 0;
+  border: 0;
+  height: 1px;
+  background: var(--border);
 }

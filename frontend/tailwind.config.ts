@@ -1,22 +1,24 @@
 import type { Config } from "tailwindcss";
 
+// Tailwind v4 reads the theme from src/app/globals.css; this file is not loaded
+// (there is no @config). Its scale is kept equal to the CSS one.
 const config: Config = {
   content: ["./src/**/*.{js,ts,jsx,tsx,mdx}"],
   theme: {
     extend: {
       colors: {
         primary: {
-          50: "#eff6ff",
-          100: "#dbeafe",
-          200: "#bfdbfe",
-          300: "#93c5fd",
-          400: "#60a5fa",
-          500: "#3b82f6",
-          600: "#2563eb",
-          700: "#1d4ed8",
-          800: "#1e40af",
-          900: "#1e3a8a",
-          950: "#172554",
+          50: "#f3f6ff",
+          100: "#e8eeff",
+          200: "#cdd9ff",
+          300: "#a8bfff",
+          400: "#6f97ff",
+          500: "#3d74ff",
+          600: "#1a5cff",
+          700: "#1550e8",
+          800: "#1342bd",
+          900: "#133894",
+          950: "#0e2360",
         },
       },
     },

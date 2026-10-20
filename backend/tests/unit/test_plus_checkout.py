@@ -29,7 +29,10 @@ def test_picks_price_per_interval() -> None:
 
 def test_creates_customer_at_upgrade_and_offers_link_and_cards() -> None:
     p = _params()
-    assert p["customer_creation"] == "always" and "customer" not in p
+    # Subscription mode creates the customer itself; Stripe refuses
+    # customer_creation outside payment and setup mode.
+    assert "customer" not in p and "customer_creation" not in p
+    assert p["mode"] == "subscription"
     assert p["payment_method_types"] == ["card", "link"]
 
 
