@@ -41,6 +41,7 @@ from app.routers import (
     dispatch,
     endpoints,
     extension,
+    guide,
     handbook,
     integrations,
     invites,
@@ -53,6 +54,7 @@ from app.routers import (
     pii,
     risks,
     saas_vendor,
+    scim,
     sentinel_connect,
     signup,
     slack,
@@ -182,6 +184,8 @@ def create_app() -> FastAPI:
     app.include_router(defender_import.router, prefix=api_v1)
     app.include_router(pii.router, prefix=api_v1)
     app.include_router(adoption.router, prefix=api_v1)
+    app.include_router(guide.router, prefix=api_v1)
+    app.include_router(scim.router, prefix=api_v1)
     app.include_router(admin.router, prefix=api_v1)
     app.include_router(developer.router, prefix=api_v1)
     app.include_router(telemetry.router, prefix=api_v1)
