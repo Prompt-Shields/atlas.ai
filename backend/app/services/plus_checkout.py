@@ -1,7 +1,9 @@
 """Stripe Checkout parameters for Promptly Plus (promptly-guide#61). No I/O.
 
 Free-tier users have no Stripe customer: Checkout creates one on upgrade, so
-we pass `customer_creation` rather than a customer id. The yearly plan is
+we pass no customer id. A subscription-mode session always creates the
+customer; `customer_creation` is accepted only in payment and setup mode,
+and Stripe refuses a subscription session that sets it. The yearly plan is
 listed first so it is the default choice, since the fixed card fee weighs
 heavily on a EUR 9 payment.
 """
@@ -36,7 +38,6 @@ def plus_checkout_params(
         "mode": "subscription",
         "line_items": [{"price": price, "quantity": 1}],
         "customer_email": email,
-        "customer_creation": "always",
         "payment_method_types": PAYMENT_METHOD_TYPES,
         "client_reference_id": user_id,
         "metadata": {"user_id": user_id, "plan": "plus", "interval": interval},
