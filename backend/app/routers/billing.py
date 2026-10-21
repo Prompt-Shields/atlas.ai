@@ -61,6 +61,31 @@ async def _is_email_verified(db: AsyncSession, user: AuthUser) -> bool:
     return bool(u and u.is_email_verified)
 
 
+def checkout_customer_params(
+    *, stripe_customer_id: str | None, email: str, automatic_tax_enabled: bool
+) -> dict:
+    """Return the Checkout parameters that say which Stripe customer pays.
+
+    A tenant has one Stripe customer. It may already have one from an earlier
+    checkout, an enterprise subscription or a quote; Checkout must then reuse
+    it. Without ``customer``, a subscription-mode session creates a new
+    customer, and the webhook would point the tenant at it, so the first
+    customer's invoices and events would stop reaching the tenant.
+
+    Stripe rejects ``customer`` together with ``customer_email``; an existing
+    customer's email is prefilled anyway. Automatic tax with an existing
+    customer needs ``customer_update`` so that Checkout may save the address
+    and name it collects; Stripe accepts ``customer_update`` only alongside
+    ``customer``.
+    """
+    if not stripe_customer_id:
+        return {"customer_email": email}
+    params: dict = {"customer": stripe_customer_id}
+    if automatic_tax_enabled:
+        params["customer_update"] = {"address": "auto", "name": "auto"}
+    return params
+
+
 @router.post("/checkout-session", response_model=CheckoutSessionResponse)
 async def checkout_session(
     body: CheckoutSessionRequest,
@@ -91,11 +116,17 @@ async def checkout_session(
     params: dict = {
         "mode": "subscription",
         "line_items": [{"price": price, "quantity": quantity}],
-        "customer_email": user.email,
         "client_reference_id": str(tenant.id),
         "metadata": {"tenant_id": str(tenant.id)},
         "success_url": settings.billing_checkout_success_url,
         "cancel_url": settings.billing_checkout_cancel_url,
+        # An existing customer needs customer_update whenever Checkout collects
+        # tax details, and business=True below always collects the VAT ID.
+        **checkout_customer_params(
+            stripe_customer_id=tenant.stripe_customer_id,
+            email=user.email,
+            automatic_tax_enabled=True,
+        ),
         # Team is sold to businesses: collect the VAT ID so Stripe Tax can
         # apply reverse charge. Rates and exemptions are Stripe's call.
         **tax.checkout_tax_params(enabled=settings.stripe_automatic_tax, business=True),

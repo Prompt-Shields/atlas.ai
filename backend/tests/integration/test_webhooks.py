@@ -6,6 +6,7 @@ Tests cover:
 - Bad signature → 400
 - Unknown event type → 200 acknowledge no-op
 - Tenant routing via client_reference_id
+- checkout.session.completed never overwrites an existing stripe_customer_id
 - Module entitlements from subscription items' price lookup_keys
 """
 
@@ -242,6 +243,38 @@ async def test_checkout_completed_routes_via_client_reference_id(client, monkeyp
         t = await db.scalar(select(Tenant).where(Tenant.id == tid))
         assert t.plan == Plan.TEAM
         assert t.stripe_customer_id == "cus_ref"
+
+
+@pytest.mark.asyncio
+async def test_checkout_completed_keeps_existing_customer(client, monkeypatch):
+    """A tenant with a customer keeps it, and later events for it still route."""
+    tid = await _seed_trialing(customer_id="cus_enterprise")
+    ev = _checkout_completed_event(tid, event_id="evt_co_keep")  # carries cus_1
+    _patch_both(monkeypatch, ev)
+
+    resp = await client.post(
+        "/api/v1/webhooks/stripe",
+        content=b"{}",
+        headers={"Stripe-Signature": "t=1,v1=abc"},
+    )
+    assert resp.status_code == 200
+
+    async with TestSessionLocal() as db:
+        t = await db.scalar(select(Tenant).where(Tenant.id == tid))
+        assert t.stripe_customer_id == "cus_enterprise"
+        assert t.plan == Plan.TEAM
+
+    # An invoice for the original customer still reaches the tenant.
+    _patch_both(monkeypatch, _invoice_payment_failed_event("cus_enterprise", "evt_inv_keep"))
+    resp = await client.post(
+        "/api/v1/webhooks/stripe",
+        content=b"{}",
+        headers={"Stripe-Signature": "t=1,v1=abc"},
+    )
+    assert resp.status_code == 200
+    async with TestSessionLocal() as db:
+        t = await db.scalar(select(Tenant).where(Tenant.id == tid))
+        assert t.subscription_status == SubscriptionStatus.PAST_DUE
 
 
 @pytest.mark.asyncio
