@@ -1,4 +1,4 @@
-"""Billing routes: checkout, portal, entitlements.
+"""Billing routes: checkout, portal, entitlements, Work client grace.
 
 Two routers are exported from this module:
 - ``router``:          prefix=/billing  — authenticated billing endpoints
@@ -13,7 +13,7 @@ from fastapi import APIRouter, Request, Response
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.dependencies import AuthUser
+from app.auth.dependencies import AuthUser, TenantAdmin
 from app.config import get_settings
 from app.database import DB_SESSION
 from app.errors import AppException, ForbiddenError, NotFoundError
@@ -24,6 +24,7 @@ from app.schemas.billing import (
     CheckoutSessionResponse,
     EntitlementsResponse,
     PortalSessionResponse,
+    WorkClientUpdate,
 )
 from app.services import entitlements as ent
 from app.services.billing import stripe_client, tax
@@ -129,17 +130,12 @@ async def portal_session(
     return PortalSessionResponse(url=session.url)
 
 
-@router.get("/entitlements", response_model=EntitlementsResponse)
-async def get_entitlements(
-    user: AuthUser,
-    db: AsyncSession = DB_SESSION,
-) -> EntitlementsResponse:
-    """Return the tenant's current plan entitlements and lock state."""
-    tenant = await _load_tenant(db, user)
+async def _entitlements(db: AsyncSession, tenant: Tenant) -> EntitlementsResponse:
     # Source `now` from the DB server (never Python datetime.now())
     now = await db.scalar(select(func.now()))
     activated = await _activated_count(db, tenant.id)
     caps = [c.value for c in ent.PLAN_ENTITLEMENTS.get(tenant.plan, set())]
+    grace = ent.free_client_grace(tenant, now=now)
     return EntitlementsResponse(
         plan=tenant.plan.value,
         subscription_status=(
@@ -151,7 +147,46 @@ async def get_entitlements(
         capabilities=caps,
         hard_locked=ent.hard_locked(tenant, now=now),
         modules=sorted(m.value for m in ent.modules(tenant)),
+        free_client_status=grace.status.value if grace.status else None,
+        work_client_started_at=grace.started_at,
+        work_client_days=grace.days_since_start,
+        free_client_grace_ends_at=grace.grace_ends_at,
+        paid_module_active=grace.paid_module_active,
+        own_endpoint_declared=grace.own_endpoint_declared,
     )
+
+
+@router.get("/entitlements", response_model=EntitlementsResponse)
+async def get_entitlements(
+    user: AuthUser,
+    db: AsyncSession = DB_SESSION,
+) -> EntitlementsResponse:
+    """Return the tenant's current plan entitlements, lock state and Work client grace."""
+    tenant = await _load_tenant(db, user)
+    return await _entitlements(db, tenant)
+
+
+@router.patch("/work-client", response_model=EntitlementsResponse)
+async def update_work_client(
+    body: WorkClientUpdate,
+    user: TenantAdmin,
+    db: AsyncSession = DB_SESSION,
+) -> EntitlementsResponse:
+    """Record that the Work client started, or declare the organisation's own endpoint.
+
+    Inputs to the 90-day rule (promptly-guide#52). Until Guide signs in to
+    Atlas on its own, an admin records day 0 here.
+    """
+    tenant = await _load_tenant(db, user)
+    now = await db.scalar(select(func.now()))
+    if body.started and tenant.work_client_started_at is None:
+        tenant.work_client_started_at = now
+    if body.own_endpoint_declared is True and tenant.own_endpoint_declared_at is None:
+        tenant.own_endpoint_declared_at = now
+    elif body.own_endpoint_declared is False:
+        tenant.own_endpoint_declared_at = None
+    await db.flush()
+    return await _entitlements(db, tenant)
 
 
 # ---------------------------------------------------------------------------
