@@ -410,3 +410,124 @@ async def test_entitlements_lists_modules_from_module_subscriptions(client):
     resp = await client.get("/api/v1/billing/entitlements", headers=auth_header(token))
     assert resp.status_code == 200
     assert resp.json()["modules"] == ["adopt", "atlas", "learn", "work_client"]
+
+
+# ---------------------------------------------------------------------------
+# Work client 90-day rule (promptly-guide#52)
+# ---------------------------------------------------------------------------
+
+
+async def _set_work_client(tid: uuid.UUID, *, started_days_ago: float | None) -> None:
+    async with TestSessionLocal() as db:
+        t = await db.get(Tenant, tid)
+        t.work_client_started_at = (
+            None
+            if started_days_ago is None
+            else datetime.now(UTC) - timedelta(days=started_days_ago)
+        )
+        await db.commit()
+
+
+@pytest.mark.asyncio
+async def test_entitlements_free_client_status_absent_before_start(client):
+    _, token = await _seed_tenant_admin(email_verified=True)
+    body = (await client.get("/api/v1/billing/entitlements", headers=auth_header(token))).json()
+    assert body["free_client_status"] is None
+    assert body["work_client_started_at"] is None
+    assert body["paid_module_active"] is False
+    assert body["own_endpoint_declared"] is False
+
+
+@pytest.mark.asyncio
+async def test_entitlements_endpoint_required_after_90_days(client):
+    tid, token = await _seed_tenant_admin(email_verified=True)
+    await _set_work_client(tid, started_days_ago=91)
+    body = (await client.get("/api/v1/billing/entitlements", headers=auth_header(token))).json()
+    assert body["free_client_status"] == "endpoint_required"
+    assert body["work_client_days"] == 91
+
+
+@pytest.mark.asyncio
+async def test_work_client_patch_starts_and_declares_endpoint(client):
+    tid, token = await _seed_tenant_admin(email_verified=True)
+    resp = await client.patch(
+        "/api/v1/billing/work-client", json={"started": True}, headers=auth_header(token)
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["free_client_status"] == "active"
+    assert body["work_client_days"] == 0
+
+    # Day 0 is not moved by a second start.
+    await _set_work_client(tid, started_days_ago=95)
+    resp = await client.patch(
+        "/api/v1/billing/work-client", json={"started": True}, headers=auth_header(token)
+    )
+    assert resp.json()["free_client_status"] == "endpoint_required"
+
+    resp = await client.patch(
+        "/api/v1/billing/work-client",
+        json={"own_endpoint_declared": True},
+        headers=auth_header(token),
+    )
+    body = resp.json()
+    assert body["own_endpoint_declared"] is True
+    assert body["free_client_status"] == "active"
+
+    resp = await client.patch(
+        "/api/v1/billing/work-client",
+        json={"own_endpoint_declared": False},
+        headers=auth_header(token),
+    )
+    assert resp.json()["free_client_status"] == "endpoint_required"
+
+
+@pytest.mark.asyncio
+async def test_work_client_patch_rejects_unstart(client):
+    _, token = await _seed_tenant_admin(email_verified=True)
+    resp = await client.patch(
+        "/api/v1/billing/work-client", json={"started": False}, headers=auth_header(token)
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("role", [Role.ORG_ADMIN, Role.ANALYST, Role.VIEWER])
+async def test_work_client_patch_requires_tenant_admin(client, role):
+    tid, _ = await _seed_tenant_admin(email_verified=True)
+    token = create_access_token(
+        user_id=uuid.uuid4(),
+        email="member@acme.test",
+        roles=[role.value],
+        tenant_id=tid,
+        org_id=None,
+    )
+    resp = await client.patch(
+        "/api/v1/billing/work-client",
+        json={"started": True, "own_endpoint_declared": True},
+        headers=auth_header(token),
+    )
+    assert resp.status_code == 403
+    async with TestSessionLocal() as db:
+        t = await db.get(Tenant, tid)
+        assert t.work_client_started_at is None
+        assert t.own_endpoint_declared_at is None
+
+
+@pytest.mark.asyncio
+async def test_work_client_patch_only_touches_the_admins_own_tenant(client):
+    tid_a, token_a = await _seed_tenant_admin(email_verified=True)
+    tid_b, _ = await _seed_tenant_admin(email_verified=True)
+    resp = await client.patch(
+        "/api/v1/billing/work-client",
+        json={"started": True, "own_endpoint_declared": True},
+        headers=auth_header(token_a),
+    )
+    assert resp.status_code == 200
+    async with TestSessionLocal() as db:
+        a = await db.get(Tenant, tid_a)
+        b = await db.get(Tenant, tid_b)
+        assert a.work_client_started_at is not None
+        assert a.own_endpoint_declared_at is not None
+        assert b.work_client_started_at is None
+        assert b.own_endpoint_declared_at is None
