@@ -116,3 +116,32 @@ def test_tax_id_wrappers_delegate(monkeypatch):
         ("list", "cus_1", {"limit": 100}),
         ("create", "cus_1", {"type": "eu_vat", "value": "DE123456789"}),
     ]
+
+
+def test_portal_configuration_wrappers_delegate(monkeypatch):
+    """Portal configuration wrappers call stripe.billing_portal.Configuration."""
+    import stripe
+
+    calls = []
+    page = MagicMock()
+    page.auto_paging_iter.return_value = iter([{"id": "bpc_1"}])
+    monkeypatch.setattr(stripe.billing_portal.Configuration, "list", lambda **kw: page)
+    monkeypatch.setattr(
+        stripe.billing_portal.Configuration,
+        "create",
+        lambda **kw: calls.append(("create", kw)) or {"id": "bpc_2"},
+    )
+    monkeypatch.setattr(
+        stripe.billing_portal.Configuration,
+        "modify",
+        lambda cid, **kw: calls.append(("modify", cid, kw)) or {"id": cid},
+    )
+    monkeypatch.setattr(stripe.Price, "retrieve", lambda pid: {"id": pid, "product": "prod"})
+
+    from app.services.billing import stripe_client
+
+    assert stripe_client.list_portal_configurations() == [{"id": "bpc_1"}]
+    assert stripe_client.create_portal_configuration(features={})["id"] == "bpc_2"
+    assert stripe_client.modify_portal_configuration("bpc_1", active=True)["id"] == "bpc_1"
+    assert stripe_client.retrieve_price("price_1")["product"] == "prod"
+    assert calls == [("create", {"features": {}}), ("modify", "bpc_1", {"active": True})]
