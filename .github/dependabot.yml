@@ -31,8 +31,19 @@ updates:
       day: monday
     open-pull-requests-limit: 3
     groups:
+      # The OpenTelemetry packages pin each other exactly (api/sdk 1.x, the
+      # instrumentation 0.xxb0 betas, and the Azure Monitor exporter beta that pins
+      # api/sdk), so one alone never resolves: they come as one pull request, of any
+      # update type. Listed first, because a dependency joins the first group it matches.
+      opentelemetry:
+        patterns:
+          - "opentelemetry-*"
+          - "azure-monitor-opentelemetry*"
       python-minor-and-patch:
         update-types: [minor, patch]
+        exclude-patterns:
+          - "opentelemetry-*"
+          - "azure-monitor-opentelemetry*"
     commit-message:
       prefix: "deps(python)"
 
