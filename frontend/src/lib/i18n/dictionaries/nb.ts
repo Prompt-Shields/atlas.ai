@@ -41,6 +41,7 @@ const nb: Dictionary = {
     developer: 'Utvikler',
     promptActivity: 'Prompt-aktivitet',
     pilotReport: 'Pilotrapport',
+    workClient: 'Work-klient',
     admin: 'Administrasjon',
   },
   dashboardHome: {
@@ -59,6 +60,60 @@ const nb: Dictionary = {
       reviewRisks: 'Gjennomgå risikoer',
       governanceCorrelations: 'Styringskorrelasjoner',
       adminTools: 'Administrasjonsverktøy',
+    },
+  },
+  workClient: {
+    title: 'Work-klient',
+    subtitle: 'Den gratis Work-klienten i Promptly Guide og 90-dagersregelen.',
+    loading: 'Laster…',
+    loadError: 'Kunne ikke hente status for Work-klienten: {error}',
+    saveError: 'Kunne ikke lagre: {error}',
+    status: {
+      heading: 'Status',
+      notStarted: 'Ikke startet',
+      notStartedBody: 'Dag 0 er ikke registrert, så de 90 dagene har ikke begynt.',
+      counting: 'Dag {day} av {total}',
+      daysLeft: '{days} dager igjen, til {date}.',
+      daysLeftOne: '1 dag igjen, til {date}.',
+      warning: 'Dag 90 nærmer seg',
+      warningBody:
+        'Koble til deres eget endepunkt eller legg til en betalt modul før {date} for å beholde den gratis klienten.',
+      endpointRequired: 'Eget endepunkt kreves',
+      endpointRequiredBody:
+        'De 90 dagene var over {date}, og det er verken en betalt modul eller et erklært endepunkt.',
+      exemptPaid: 'Beholdt: en betalt modul er aktiv',
+      exemptPaidBody: 'En betalt modul beholder den gratis klienten uansett dag. I dag er dag {day}.',
+      exemptOwn: 'Beholdt: eget endepunkt tilkoblet',
+      exemptOwnBody:
+        'Det erklærte endepunktet beholder den gratis klienten uansett dag. I dag er dag {day}.',
+    },
+    start: {
+      button: 'Registrer i dag som dag 0',
+      note: 'Gjør dette når organisasjonen begynner å bruke Work-klienten. Dag 0 kan ikke flyttes eller slettes etterpå, så de 90 dagene kan ikke startes på nytt.',
+      confirm: 'Registrere i dag som dag 0 for Work-klienten? Dette kan ikke angres.',
+    },
+    connected: {
+      heading: 'Hva «tilkoblet» betyr',
+      body: 'Tilkoblet betyr at en administrator har erklært her at Guide svarer fra organisasjonens eget modellendepunkt. Atlas ser aldri endepunktet eller nøkkelen, så det kan ikke kontrollere dette: det registrerer erklæringen.',
+      declared: 'Erklært: Guide svarer fra vårt eget modellendepunkt.',
+      notDeclared: 'Ikke erklært.',
+      declare: 'Erklær eget endepunkt',
+      withdraw: 'Trekk tilbake erklæringen',
+      withdrawConfirm:
+        'Trekke tilbake erklæringen? Uten en betalt modul gjelder 90-dagersregelen igjen.',
+    },
+    howTo: {
+      heading: 'Slik kobler dere til eget endepunkt',
+      step1: 'Åpne innstillingene i Guide på hver Mac og gå til «Cloud model (optional)».',
+      step2: 'Velg organisasjonens leverandør: Azure OpenAI, Amazon Bedrock, Anthropic eller et OpenAI-kompatibelt endepunkt. Fyll inn endepunkt, modell og dataregion.',
+      step3: 'Fyll inn nøkkelen. Den blir i nøkkelringen på denne Macen og når aldri Atlas.',
+      step4: 'Kom tilbake hit og erklær eget endepunkt.',
+      note: 'En konfigurasjonsprofil kan slå skymodellen av, men aldri på, så den slås på i Guide på hver Mac.',
+    },
+    dayNinety: {
+      heading: 'Hva skjer på dag 90',
+      rule: 'Er det verken en betalt modul eller et erklært endepunkt på dag 90, markerer Atlas Work-klienten «Eget endepunkt kreves». En betalt modul eller en erklæring gjør den aktiv igjen når som helst.',
+      today: 'Ingenting slås av i dag. Promptly har ingen egen modell ennå: Guide svarer på Macen, eller fra et endepunkt organisasjonen setter opp, og begge fortsetter å virke.',
     },
   },
 };

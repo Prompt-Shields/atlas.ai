@@ -41,6 +41,7 @@ const fr: Dictionary = {
     developer: 'Développeur',
     promptActivity: 'Activité des invites',
     pilotReport: 'Rapport de pilote',
+    workClient: 'Client Work',
     admin: 'Administration',
   },
   dashboardHome: {
@@ -59,6 +60,61 @@ const fr: Dictionary = {
       reviewRisks: 'Examiner les risques',
       governanceCorrelations: 'Corrélations de gouvernance',
       adminTools: "Outils d'administration",
+    },
+  },
+  workClient: {
+    title: 'Client Work',
+    subtitle: 'Le client Work gratuit de Promptly Guide et sa règle des 90 jours.',
+    loading: 'Chargement…',
+    loadError: 'Impossible de charger l’état du client Work : {error}',
+    saveError: 'Enregistrement impossible : {error}',
+    status: {
+      heading: 'État',
+      notStarted: 'Pas commencé',
+      notStartedBody: 'Le jour 0 n’a pas été enregistré : les 90 jours n’ont pas commencé.',
+      counting: 'Jour {day} sur {total}',
+      daysLeft: 'Encore {days} jours, jusqu’au {date}.',
+      daysLeftOne: 'Encore 1 jour, jusqu’au {date}.',
+      warning: 'Le jour 90 approche',
+      warningBody:
+        'Connectez votre propre point de terminaison ou ajoutez un module payant avant le {date} pour garder le client gratuit.',
+      endpointRequired: 'Point de terminaison propre requis',
+      endpointRequiredBody:
+        'Les 90 jours ont pris fin le {date}, sans module payant ni point de terminaison déclaré.',
+      exemptPaid: 'Conservé : un module payant est actif',
+      exemptPaidBody:
+        'Un module payant conserve le client gratuit, quel que soit le jour. Nous sommes au jour {day}.',
+      exemptOwn: 'Conservé : point de terminaison propre connecté',
+      exemptOwnBody:
+        'Votre point de terminaison déclaré conserve le client gratuit, quel que soit le jour. Nous sommes au jour {day}.',
+    },
+    start: {
+      button: 'Enregistrer aujourd’hui comme jour 0',
+      note: 'À faire quand votre organisation commence à utiliser le client Work. Le jour 0 ne peut ensuite être ni déplacé ni effacé : les 90 jours ne peuvent pas recommencer.',
+      confirm: 'Enregistrer aujourd’hui comme jour 0 du client Work ? Cette action est irréversible.',
+    },
+    connected: {
+      heading: 'Ce que « connecté » veut dire',
+      body: 'Connecté signifie qu’un administrateur a déclaré ici que Guide répond depuis le point de terminaison de modèle de votre organisation. Atlas ne voit jamais ce point de terminaison ni sa clé et ne peut donc pas le vérifier : il enregistre votre déclaration.',
+      declared: 'Déclaré : Guide répond depuis notre propre point de terminaison.',
+      notDeclared: 'Non déclaré.',
+      declare: 'Déclarer notre point de terminaison',
+      withdraw: 'Retirer la déclaration',
+      withdrawConfirm:
+        'Retirer la déclaration ? Sans module payant, la règle des 90 jours s’applique de nouveau.',
+    },
+    howTo: {
+      heading: 'Connecter votre propre point de terminaison',
+      step1: 'Sur chaque Mac, ouvrez les réglages de Guide, section « Cloud model (optional) ».',
+      step2: 'Choisissez le fournisseur de votre organisation : Azure OpenAI, Amazon Bedrock, Anthropic ou un point de terminaison compatible OpenAI. Saisissez le point de terminaison, le modèle et la région des données.',
+      step3: 'Saisissez la clé. Elle reste dans le trousseau de ce Mac et n’arrive jamais à Atlas.',
+      step4: 'Revenez ici et déclarez votre point de terminaison.',
+      note: 'Un profil de configuration peut désactiver le modèle cloud, jamais l’activer : il s’active dans Guide, sur chaque Mac.',
+    },
+    dayNinety: {
+      heading: 'Ce qui se passe au jour 90',
+      rule: 'Sans module payant ni point de terminaison déclaré au jour 90, Atlas marque le client Work « Point de terminaison propre requis ». Un module payant ou une déclaration le rend de nouveau actif à tout moment.',
+      today: 'Rien n’est coupé aujourd’hui. Promptly n’héberge pas encore de modèle : Guide répond sur le Mac, ou depuis un point de terminaison mis en place par votre organisation, et les deux continuent de fonctionner.',
     },
   },
 };

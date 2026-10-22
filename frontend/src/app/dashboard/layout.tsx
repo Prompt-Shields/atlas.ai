@@ -46,6 +46,7 @@ const navigation = [
   { key: 'developer', href: '/dashboard/developer', icon: '🛠️' },
   { key: 'promptActivity', href: '/dashboard/prompt-activity', icon: '💬' },
   { key: 'pilotReport', href: '/dashboard/pilot-report', icon: '🧪' },
+  { key: 'workClient', href: '/dashboard/work-client', icon: '🧩', roles: ['SUPER_ADMIN', 'TENANT_ADMIN'] },
   { key: 'admin', href: '/dashboard/admin', icon: '🔧', roles: ['SUPER_ADMIN'] },
 ];
 
