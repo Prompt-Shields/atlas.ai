@@ -279,11 +279,11 @@ def test_interrupted_replace_is_repaired_on_next_run(fake, monkeypatch):
 
     def failing_modify(price_id, **kw):
         if price_id == old["id"] and kw.get("active") is False:
-            raise stripe.error.APIConnectionError("network down")
+            raise stripe.APIConnectionError("network down")
         return real_modify(price_id, **kw)
 
     monkeypatch.setattr(stripe_client, "modify_price", failing_modify)
-    with pytest.raises(stripe.error.APIConnectionError):
+    with pytest.raises(stripe.APIConnectionError):
         catalog.sync_catalog(new_amounts)
     # The broken state: the key moved, but the old price is still active.
     assert old["lookup_key"] is None
@@ -368,7 +368,7 @@ def test_price_id_raises_when_catalogue_missing(fake):
 
 def test_retrieve_product_returns_none_when_missing(monkeypatch):
     def missing(product_id):
-        raise stripe.error.InvalidRequestError("No such product", "id", code="resource_missing")
+        raise stripe.InvalidRequestError("No such product", "id", code="resource_missing")
 
     monkeypatch.setattr(stripe.Product, "retrieve", missing)
     assert stripe_client.retrieve_product("promptly_atlas") is None
@@ -376,10 +376,10 @@ def test_retrieve_product_returns_none_when_missing(monkeypatch):
 
 def test_retrieve_product_reraises_other_errors(monkeypatch):
     def bad(product_id):
-        raise stripe.error.InvalidRequestError("bad", "id", code="parameter_invalid")
+        raise stripe.InvalidRequestError("bad", "id", code="parameter_invalid")
 
     monkeypatch.setattr(stripe.Product, "retrieve", bad)
-    with pytest.raises(stripe.error.InvalidRequestError):
+    with pytest.raises(stripe.InvalidRequestError):
         stripe_client.retrieve_product("promptly_atlas")
 
 
