@@ -135,6 +135,24 @@ def has_module(tenant: Tenant, module: Module) -> bool:
     return module in modules(tenant)
 
 
+WORK_CLIENT_LOOKUP_KEY = "promptly_work_client"
+
+
+def work_client_seats(tenant: Tenant) -> int:
+    """Provisioned users on the tenant's Work client, 0 when it has none.
+
+    The quantity of the Work client item, on the subscriptions that still
+    grant the Work client (as modules() reads them). If more than one does,
+    the largest quantity, so a second subscription never shrinks the pool.
+    """
+    seats = 0
+    for sub in (tenant.stripe_subscriptions or {}).values():
+        items = sub.get("items") or {}
+        if Module.WORK_CLIENT in _granted_by(items, sub.get("status")):
+            seats = max(seats, items.get(WORK_CLIENT_LOOKUP_KEY) or 0)
+    return seats
+
+
 # ---------------------------------------------------------------------------
 # Free Work client: the 90-day rule (promptly-guide#52)
 # ---------------------------------------------------------------------------
