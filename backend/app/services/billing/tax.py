@@ -75,12 +75,35 @@ def _valid_no_org_number(digits: str) -> bool:
     return check != 10 and check == int(digits[8])
 
 
+def automatic_tax_params(enabled: bool) -> dict:
+    """The ``automatic_tax`` param for a Stripe create or update call.
+
+    ``enabled`` is `Settings.stripe_automatic_tax`. Every call that creates
+    or changes a subscription or quote takes its Stripe Tax setting from
+    here, so they all follow the one flag:
+
+    * Checkout sessions (Team and Plus), through ``checkout_tax_params``;
+    * module quotes (``quotes.create_module_quote``), and the subscription a
+      quote creates when ``quotes.accept_quote`` sets it up;
+    * the enterprise Work client subscription (``enterprise``), when it is
+      created and on every change to its items or metadata.
+
+    Off sends nothing rather than ``enabled: false``. Off exists for test
+    accounts without a head-office address, which cannot turn Stripe Tax on
+    at all, so nothing there has it to turn off; and leaving the param out
+    keeps an update call from changing what a subscription already has.
+    """
+    return {"automatic_tax": {"enabled": True}} if enabled else {}
+
+
 def checkout_tax_params(*, enabled: bool, business: bool) -> dict:
     """Extra `checkout.Session.create` params for Stripe Tax.
 
     In subscription mode the session's ``automatic_tax`` carries over to the
-    subscription it creates and to that subscription's invoices. Atlas
-    creates subscriptions only through Checkout, so this covers them all.
+    subscription it creates and to that subscription's invoices. Checkout is
+    one of three ways Atlas creates a subscription: module quotes and the
+    enterprise Work client subscription are the others, and they take the
+    same setting from ``automatic_tax_params``.
 
     ``business`` adds VAT ID collection and a required billing address: the
     VAT ID is what lets Stripe apply reverse charge, and an invoice to a
@@ -89,14 +112,13 @@ def checkout_tax_params(*, enabled: bool, business: bool) -> dict:
     switched on.
 
     All three params are valid in both ``payment`` and ``subscription``
-    mode. Both callers pass ``customer_email``, not an existing
-    ``customer``; a caller that passes ``customer`` must also send
-    ``customer_update={"address": "auto", "name": "auto"}``, or Stripe
-    rejects ``automatic_tax`` and ``tax_id_collection``.
+    mode. Plus checkout passes ``customer_email``. Team checkout passes the
+    tenant's existing ``customer`` when it has one, and a caller that does
+    must also send ``customer_update={"address": "auto", "name": "auto"}``,
+    or Stripe rejects ``automatic_tax`` and ``tax_id_collection``; see
+    ``routers.billing.checkout_customer_params``.
     """
-    params: dict = {}
-    if enabled:
-        params["automatic_tax"] = {"enabled": True}
+    params = automatic_tax_params(enabled)
     if business:
         params["tax_id_collection"] = {"enabled": True}
         params["billing_address_collection"] = "required"

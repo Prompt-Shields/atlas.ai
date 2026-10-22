@@ -7,6 +7,7 @@ key on each item, which is what the service matches on.
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from unittest.mock import AsyncMock, MagicMock
 
@@ -338,6 +339,50 @@ def test_remove_absent_module_is_a_no_op(stripe_mock):
 
 
 # ---------------------------------------------------------------------------
+# Stripe Tax on changes (promptly-guide#50)
+# ---------------------------------------------------------------------------
+
+
+def _start_quantity(t):
+    asyncio.run(enterprise.start_work_client(AsyncMock(), t, provisioned_users=1200))
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+@pytest.mark.parametrize(
+    "change",
+    [
+        _start_quantity,
+        lambda t: enterprise.add_module(t, "learn", licensed_users=300),
+        lambda t: enterprise.add_module(t, "atlas", licensed_users=800),
+        lambda t: enterprise.remove_module(t, "atlas"),
+        enterprise.end_pilot,
+    ],
+    ids=["provisioned_users", "add_module", "module_quantity", "remove_module", "end_pilot"],
+)
+def test_every_change_follows_automatic_tax(stripe_mock, monkeypatch, change, enabled):
+    """Each modify call carries the same setting as the create call.
+
+    A subscription created while the flag was off then picks Stripe Tax up
+    with its next change, as a Team or quoted one would.
+    """
+    settings = MagicMock(stripe_automatic_tax=enabled)
+    monkeypatch.setattr("app.services.billing.enterprise.get_settings", lambda: settings)
+    t = _tenant(stripe_customer_id="cus_1")
+    stripe_mock.subscriptions = [
+        _sub(_item(catalog.WORK_CLIENT, 1000), _item(catalog.ATLAS_ANNUAL, 500), pilot=True)
+    ]
+
+    change(t)
+
+    stripe_mock.modify_subscription.assert_called_once()
+    kw = stripe_mock.modify_subscription.call_args.kwargs
+    if enabled:
+        assert kw["automatic_tax"] == {"enabled": True}
+    else:
+        assert "automatic_tax" not in kw
+
+
+# ---------------------------------------------------------------------------
 # end_pilot (#47: fee waived for pilots)
 # ---------------------------------------------------------------------------
 
@@ -358,6 +403,7 @@ def test_end_pilot_without_modules_only_clears_flag(stripe_mock):
     stripe_mock.subscriptions = [_sub(_item(catalog.WORK_CLIENT, 50), pilot=True)]
     enterprise.end_pilot(t)
     kw = stripe_mock.modify_subscription.call_args.kwargs
+    kw.pop("automatic_tax", None)  # covered by test_every_change_follows_automatic_tax
     assert kw == {"metadata": {enterprise.PILOT_KEY: "false"}}
 
 

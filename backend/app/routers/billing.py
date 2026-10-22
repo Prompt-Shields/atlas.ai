@@ -120,8 +120,11 @@ async def checkout_session(
         "metadata": {"tenant_id": str(tenant.id)},
         "success_url": settings.billing_checkout_success_url,
         "cancel_url": settings.billing_checkout_cancel_url,
-        # An existing customer needs customer_update whenever Checkout collects
-        # tax details, and business=True below always collects the VAT ID.
+        # Deliberately True whatever stripe_automatic_tax says (#21). With an
+        # existing customer, Stripe rejects tax_id_collection unless
+        # customer_update.name is "auto", and business=True below always
+        # collects the VAT ID. address="auto" is harmless with Stripe Tax
+        # off, and it is what automatic_tax needs when it is on.
         **checkout_customer_params(
             stripe_customer_id=tenant.stripe_customer_id,
             email=user.email,

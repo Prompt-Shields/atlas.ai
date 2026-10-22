@@ -18,7 +18,9 @@ The Team-plan columns (``stripe_subscription_id`` and
 self-serve checkout and seat sync keep working as before.
 
 Every change to items is one ``Subscription.modify`` call, so a module and
-the platform fee are added together or not at all.
+the platform fee are added together or not at all. Each create and modify
+call carries the Stripe Tax setting (``_tax``), so a subscription created
+while ``stripe_automatic_tax`` was off picks it up with its next change.
 
 These functions let Stripe errors propagate: they are called from admin or
 sales actions, where a failure should be visible, not retried silently.
@@ -30,7 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.models.tenant import Tenant
-from app.services.billing import catalog, stripe_client
+from app.services.billing import catalog, stripe_client, tax
 
 # Subscription metadata. The webhook handlers use KIND_KEY to tell this
 # subscription apart from a Team-plan one on the same customer.
@@ -56,8 +58,12 @@ class ModuleConflict(EnterpriseBillingError):
     pass
 
 
-def is_enterprise_subscription(obj: dict | None) -> bool:
-    return ((obj or {}).get("metadata") or {}).get(KIND_KEY) == KIND_ENTERPRISE
+def _tax() -> dict:
+    """Stripe Tax params for every create and modify call (promptly-guide#50).
+
+    Set on the subscription, so the modules added to it are taxed too.
+    """
+    return tax.automatic_tax_params(get_settings().stripe_automatic_tax)
 
 
 def is_pilot(subscription) -> bool:
@@ -168,17 +174,15 @@ async def start_work_client(
             existing["id"],
             items=[{"id": item["id"], "quantity": provisioned_users}],
             proration_behavior="none",
+            **_tax(),
         )
 
-    # Stripe Tax follows the account-wide flag (promptly-guide#50). It is set
-    # on the subscription, so the modules added to it later are taxed too.
-    tax = {"automatic_tax": {"enabled": True}} if get_settings().stripe_automatic_tax else {}
     return stripe_client.create_subscription(
         customer=customer_id,
         items=[{"price": catalog.price_id(catalog.WORK_CLIENT), "quantity": provisioned_users}],
         collection_method="send_invoice",
         days_until_due=DAYS_UNTIL_DUE,
-        **tax,
+        **_tax(),
         metadata={
             KIND_KEY: KIND_ENTERPRISE,
             "tenant_id": str(tenant.id),
@@ -228,7 +232,7 @@ def add_module(tenant: Tenant, module: str, *, licensed_users: int):
     if not is_pilot(sub) and catalog.PLATFORM_FEE_ANNUAL not in items:
         changes.append({"price": catalog.price_id(catalog.PLATFORM_FEE_ANNUAL), "quantity": 1})
 
-    params: dict = {"items": changes}
+    params: dict = {"items": changes, **_tax()}
     if first_paid:
         params["billing_cycle_anchor"] = "now"
         params["proration_behavior"] = "create_prorations"
@@ -253,6 +257,7 @@ def remove_module(tenant: Tenant, module: str, *, proration_behavior: str = "non
         sub["id"],
         items=[{"id": item["id"], "deleted": True}],
         proration_behavior=proration_behavior,
+        **_tax(),
     )
 
 
@@ -260,7 +265,7 @@ def end_pilot(tenant: Tenant):
     """Mark a pilot as converted; add the platform fee if a module is already paid."""
     sub = _require_subscription(tenant)
     items = _items_by_lookup_key(sub)
-    params: dict = {"metadata": {PILOT_KEY: "false"}}
+    params: dict = {"metadata": {PILOT_KEY: "false"}, **_tax()}
     if _paid_module_keys(items) and catalog.PLATFORM_FEE_ANNUAL not in items:
         params["items"] = [{"price": catalog.price_id(catalog.PLATFORM_FEE_ANNUAL), "quantity": 1}]
         params["proration_behavior"] = "always_invoice"
