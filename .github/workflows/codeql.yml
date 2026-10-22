@@ -1,0 +1,54 @@
+# CodeQL static analysis (Prompt-Shields/promptly-guide#88, E18: secure development,
+# ISO A.8.8 and A.8.28). One job per language this repository has that CodeQL reads
+# without a build: the backend's and worker's Python, the frontend's TypeScript, and these
+# workflows themselves. Bicep under infra/ is not a CodeQL language. Results go to the
+# Security tab (code scanning); a pull request shows new alerts as review annotations.
+#
+# This is the "advanced" setup, kept in the repository so it is reviewable evidence.
+# Do not also switch on code scanning's default setup in settings: GitHub refuses
+# results from this workflow while default setup is on.
+name: CodeQL
+
+on:
+  pull_request:
+    branches: [main, develop]
+  push:
+    branches: [main, develop]
+  schedule:
+    # Weekly, so new queries run against code that has not changed.
+    - cron: "17 4 * * 1"
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  actions: read
+  security-events: write
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [python, javascript-typescript, actions]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+          queries: security-extended
+          config: |
+            paths-ignore:
+              - frontend/node_modules
+              - "**/tests/**"
+
+      - uses: github/codeql-action/analyze@v4
+        with:
+          category: /language:${{ matrix.language }}

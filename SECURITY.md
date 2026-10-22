@@ -4,9 +4,17 @@
 
 **Please do not open a public GitHub issue for security vulnerabilities.**
 
-Report suspected vulnerabilities privately to **security@promptshields.com**, or
-via GitHub's [private vulnerability reporting][gh-pvr] on this repository
-(Security → Report a vulnerability).
+Report suspected vulnerabilities through GitHub's
+[private vulnerability reporting][gh-pvr] on this repository:
+<https://github.com/Prompt-Shields/atlas.ai/security/advisories/new>
+(Security → Report a vulnerability). Only you and the maintainers see the report.
+You may also write to the team mailbox, **security@promptshields.com**.
+
+If the form is not available to you, open an issue that says only that you have a
+security report and asks for a private channel. Put no details in it.
+
+Reports about **Promptly Guide** (the Mac and Windows app, whose repository is
+private) come here too: start the title with "Guide:".
 
 Please include:
 
@@ -40,6 +48,14 @@ Out of scope:
   control
 - Vulnerabilities in third-party dependencies — please report those upstream,
   though we appreciate a heads-up so we can bump the pin
+
+## How we look for problems ourselves
+
+- `.github/workflows/codeql.yml` runs CodeQL on the Python, TypeScript and workflow
+  code on every pull request, every push to `main` and weekly.
+- `.github/dependabot.yml` opens weekly update pull requests for the workflow
+  actions, the backend's and worker's Python packages and the frontend's npm packages.
+- `.pre-commit-config.yaml` runs gitleaks and private-key detection before a commit.
 
 ## Handling secrets
 
