@@ -14,7 +14,8 @@ Tests:
   - customer created (and stored) only when the tenant has none
   - finalize delegates to Stripe
   - accept: bank-transfer payment settings on subscription and first invoice,
-    automatic cash-balance reconciliation
+    automatic cash-balance reconciliation; automatic_tax follows the setting
+    on the subscription and is left alone on the invoice
   - CLI: --modules and --platform-fee parsing reach the service
 """
 
@@ -409,6 +410,21 @@ def test_accept_rerun_on_accepted_quote_reapplies_settings(fake_stripe, monkeypa
     assert fake_stripe["modify_subscription"][0][0] == ("sub_1",)
     assert fake_stripe["modify_invoice"][0][0] == ("in_1",)
     assert fake_stripe["modify_cash_balance"][0][0] == ("cus_1",)
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+def test_accept_automatic_tax_follows_setting(fake_stripe, monkeypatch, enabled):
+    """The subscription gets the flag; the first invoice keeps what Stripe gave it."""
+    settings = MagicMock(stripe_automatic_tax=enabled, stripe_bank_transfer_country="IE")
+    monkeypatch.setattr("app.services.billing.quotes.get_settings", lambda: settings)
+    quotes.accept_quote("qt_1")
+    _, kw = fake_stripe["modify_subscription"][0]
+    if enabled:
+        assert kw["automatic_tax"] == {"enabled": True}
+    else:
+        assert "automatic_tax" not in kw
+    _, kw = fake_stripe["modify_invoice"][0]
+    assert "automatic_tax" not in kw
 
 
 @pytest.mark.parametrize("country", ["NO", "GB", "XX", ""])

@@ -40,6 +40,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.billing import StripeWebhookEvent
 from app.models.tenant import Plan, SubscriptionStatus, Tenant
 from app.models.user import User
+from app.services.billing import enterprise, quotes
 from app.services.entitlements import LOOKUP_KEY_MODULES, subscription_items_from_stripe
 
 log = structlog.get_logger()
@@ -96,15 +97,13 @@ async def _tenant_by_customer(
 # Module subscriptions
 # ---------------------------------------------------------------------------
 
-# Metadata markers set by the code that creates each module subscription.
-# They must match those writers exactly:
-#   enterprise Work client subscription: promptly_subscription=enterprise
-#     (KIND_KEY / KIND_ENTERPRISE in app/services/billing/enterprise.py)
-#   subscription created by an accepted module Quote: billing_kind=enterprise_modules
-#     (BILLING_KIND in app/services/billing/quotes.py)
+# Metadata markers set by the code that creates each module subscription,
+# imported from those writers so the two cannot drift apart:
+#   the enterprise Work client subscription (enterprise.py);
+#   the subscription an accepted module Quote creates (quotes.py).
 _MODULE_SUBSCRIPTION_MARKERS: dict[str, str] = {
-    "promptly_subscription": "enterprise",
-    "billing_kind": "enterprise_modules",
+    enterprise.KIND_KEY: enterprise.KIND_ENTERPRISE,
+    quotes.BILLING_KIND_KEY: quotes.BILLING_KIND,
 }
 
 

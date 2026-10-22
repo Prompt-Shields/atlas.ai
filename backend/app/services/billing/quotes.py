@@ -30,7 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.models.tenant import Tenant
-from app.services.billing import stripe_client
+from app.services.billing import stripe_client, tax
 
 log = structlog.get_logger()
 
@@ -48,8 +48,10 @@ _SUITE = "suite"
 
 DAYS_UNTIL_DUE = 30
 
-# Marks the subscription a quote creates, so other billing code can tell it
-# apart from the self-serve Team subscription stored on the tenant.
+# Marks the subscription a quote creates, so other billing code (the webhook
+# handlers) can tell it apart from the self-serve Team subscription stored on
+# the tenant: metadata[BILLING_KIND_KEY] == BILLING_KIND.
+BILLING_KIND_KEY = "billing_kind"
 BILLING_KIND = "enterprise_modules"
 
 # Countries Stripe can issue the virtual IBAN in for eu_bank_transfer.
@@ -235,7 +237,7 @@ async def create_module_quote(
 
     metadata = {
         "tenant_id": str(tenant.id),
-        "billing_kind": BILLING_KIND,
+        BILLING_KIND_KEY: BILLING_KIND,
         "modules": ",".join(chosen),
     }
     quote_metadata = dict(metadata)
@@ -243,7 +245,6 @@ async def create_module_quote(
         quote_metadata[PLATFORM_FEE_METADATA] = "true"
     # Stripe Tax follows the account-wide flag (promptly-guide#50). The quote's
     # setting carries over to the subscription and its invoices.
-    tax = {"automatic_tax": {"enabled": True}} if get_settings().stripe_automatic_tax else {}
     quote = stripe_client.create_quote(
         customer=customer_id,
         line_items=line_items,
@@ -251,7 +252,7 @@ async def create_module_quote(
         invoice_settings={"days_until_due": DAYS_UNTIL_DUE},
         metadata=quote_metadata,
         subscription_data={"metadata": metadata},
-        **tax,
+        **tax.automatic_tax_params(get_settings().stripe_automatic_tax),
     )
     log.info(
         "stripe_quote_created",
@@ -285,7 +286,8 @@ def accept_quote(quote_id: str, *, bank_transfer_country: str | None = None):
     second acceptance. The country is checked before anything is accepted, so
     a typo cannot leave an accepted quote whose invoice has no bank details.
     """
-    country = (bank_transfer_country or get_settings().stripe_bank_transfer_country).upper()
+    settings = get_settings()
+    country = (bank_transfer_country or settings.stripe_bank_transfer_country).upper()
     if country not in EU_BANK_TRANSFER_COUNTRIES:
         raise QuoteError(
             f"Bank-transfer country {country!r} is not one Stripe issues EU IBANs in; "
@@ -304,8 +306,16 @@ def accept_quote(quote_id: str, *, bank_transfer_country: str | None = None):
         raise QuoteError(f"Quote {quote_id} was accepted but has no subscription")
 
     stripe_client.modify_cash_balance(customer_id, settings={"reconciliation_mode": "automatic"})
+    # The subscription already has the quote's Stripe Tax setting. Sending
+    # the flag again matters only if it was switched on between drafting and
+    # acceptance, and keeps this update in line with every other one. The
+    # first invoice is left as Stripe made it: automatic_tax changes its
+    # amounts, which Stripe allows only on a draft, and a rerun may find it
+    # finalised.
     subscription = stripe_client.modify_subscription(
-        subscription_id, payment_settings=payment_settings
+        subscription_id,
+        payment_settings=payment_settings,
+        **tax.automatic_tax_params(settings.stripe_automatic_tax),
     )
 
     invoice = _get(subscription, "latest_invoice")

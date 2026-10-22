@@ -48,6 +48,14 @@ def test_never_sets_tax_exempt_or_rates():
             assert not {"tax_exempt", "tax_rates", "default_tax_rates"} & set(p)
 
 
+def test_automatic_tax_params_sends_nothing_when_off():
+    """Off leaves the param out, so an update never turns tax off by accident."""
+    assert tax.automatic_tax_params(True) == {"automatic_tax": {"enabled": True}}
+    assert tax.automatic_tax_params(False) == {}
+    # A fresh dict each time: callers add their own keys to it.
+    assert tax.automatic_tax_params(True) is not tax.automatic_tax_params(True)
+
+
 def test_config_flag_defaults_on():
     # main sent automatic_tax on every Team checkout; the default keeps that.
     from app.config import get_settings
