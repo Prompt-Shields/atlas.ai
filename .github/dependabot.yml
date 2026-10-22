@@ -1,0 +1,49 @@
+# Dependency update pull requests (Prompt-Shields/promptly-guide#88, E18: vulnerability
+# management, ISO A.8.8). One entry per ecosystem this repository has: the workflow
+# actions, the backend's and worker's Python (pyproject.toml) and the frontend's npm.
+# Weekly, grouped and few at a time, so a small team can keep up. Minor and patch
+# updates come as one pull request per ecosystem; a major update comes on its own,
+# because it is the one that needs reading.
+#
+# Docker base images are left out: the Dockerfiles use moving tags (python:3.12-slim,
+# node:20-alpine) that pick up patched images on every build, and Dependabot would only
+# propose new language versions, which are decisions, not updates.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: "deps(actions)"
+
+  - package-ecosystem: pip
+    directories:
+      - /backend
+      - /worker
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    groups:
+      python-minor-and-patch:
+        update-types: [minor, patch]
+    commit-message:
+      prefix: "deps(python)"
+
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    groups:
+      npm-minor-and-patch:
+        update-types: [minor, patch]
+    commit-message:
+      prefix: "deps(npm)"
