@@ -3,7 +3,8 @@
 # actions, the backend's and worker's Python (pyproject.toml) and the frontend's npm.
 # Weekly, grouped and few at a time, so a small team can keep up. Minor and patch
 # updates come as one pull request per ecosystem; a major update comes on its own,
-# because it is the one that needs reading.
+# because it is the one that needs reading. Majors of the SDKs and frameworks listed
+# under `ignore` do not come at all: those are migrations, done on purpose.
 #
 # Docker base images are left out: the Dockerfiles use moving tags (python:3.12-slim,
 # node:20-alpine) that pick up patched images on every build, and Dependabot would only
@@ -44,6 +45,18 @@ updates:
         exclude-patterns:
           - "opentelemetry-*"
           - "azure-monitor-opentelemetry*"
+    # SDKs and frameworks whose majors are migrations, not updates: they are upgraded
+    # deliberately, on a branch that reads the changelog. Our billing tests fake the
+    # Stripe client, so a green major Stripe PR proves nothing about the real SDK.
+    ignore:
+      - dependency-name: "stripe"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "fastapi"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "pydantic"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "sqlalchemy"
+        update-types: ["version-update:semver-major"]
     commit-message:
       prefix: "deps(python)"
 
@@ -56,5 +69,28 @@ updates:
     groups:
       npm-minor-and-patch:
         update-types: [minor, patch]
+    # Framework-level majors (the compiler, Next.js, React and the lint stack built on
+    # them) need a migration and move together; they are upgraded deliberately.
+    ignore:
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "next"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "eslint-config-next"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "react"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "react-dom"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@types/react"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@types/react-dom"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "eslint"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "tailwindcss"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@tailwindcss/postcss"
+        update-types: ["version-update:semver-major"]
     commit-message:
       prefix: "deps(npm)"
