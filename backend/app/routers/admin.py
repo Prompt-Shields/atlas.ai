@@ -9,6 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import SuperAdmin
 from app.database import DB_SESSION
+from app.schemas.conversion import ConversionReportResponse
+from app.services import conversion_report
 from app.services.testing_service import purge_test_data, run_e2e_test_pipeline
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
@@ -80,3 +82,24 @@ async def purge_test(
         correlation_id=getattr(request.state, "correlation_id", None),
     )
     return {"message": "Test data purged", "counts": counts}
+
+
+@router.get("/conversion", response_model=ConversionReportResponse)
+async def get_conversion_report(
+    user: SuperAdmin,
+    db: AsyncSession = DB_SESSION,
+) -> ConversionReportResponse:
+    """Free-to-paid conversion by Work client cohort (super admin only).
+
+    From billing and tenant records only (promptly-guide#43): no usage
+    telemetry, no users, no adoption figures. One row per company and one per
+    cohort month. `not_from_atlas` lists what still needs Stripe.
+    """
+    report = await conversion_report.build_report(db)
+    return ConversionReportResponse(
+        generated_at=report.generated_at,
+        min_companies_for_rate=conversion_report.MIN_COMPANIES_FOR_RATE,
+        cohorts=[vars(c) for c in report.cohorts],
+        companies=[vars(c) for c in report.companies],
+        not_from_atlas=report.not_from_atlas,
+    )
