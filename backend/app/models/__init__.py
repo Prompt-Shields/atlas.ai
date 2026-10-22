@@ -73,6 +73,7 @@ from app.models.guide_scim import (  # noqa: F401
     GuideScimToken,
     GuideScimUser,
 )
+from app.models.guided_step import GuidedStepCount, GuidedStepReceipt  # noqa: F401
 from app.models.handbook import (  # noqa: F401
     HandbookAcknowledgement,
     HandbookReminderLog,

@@ -196,6 +196,20 @@ def accept_quote(quote_id: str, **kwargs):
     return _plain(stripe.Quote.accept(quote_id, **kwargs))
 
 
+# --- Conversion report, read only (conversion_stripe.py) ------------------
+
+
+def list_invoices(**kwargs) -> list:
+    _configure()
+    return list(stripe.Invoice.list(**kwargs).auto_paging_iter())
+
+
+def list_all_quotes(**kwargs) -> list:
+    """Every quote matching ``kwargs``, across pages (``list_quotes`` returns one page)."""
+    _configure()
+    return list(stripe.Quote.list(**kwargs).auto_paging_iter())
+
+
 # --- Tax ids ---------------------------------------------------------------
 
 
