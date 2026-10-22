@@ -27,7 +27,7 @@ from app.schemas.billing import (
     WorkClientUpdate,
 )
 from app.services import entitlements as ent
-from app.services.billing import stripe_client, tax
+from app.services.billing import portal, stripe_client, tax
 from app.services.billing import webhooks as wh
 
 router = APIRouter(prefix="/billing", tags=["Billing"])
@@ -149,7 +149,13 @@ async def portal_session(
     user: AuthUser,
     db: AsyncSession = DB_SESSION,
 ) -> PortalSessionResponse:
-    """Create a Stripe Customer Portal session for the tenant."""
+    """Create a Stripe Customer Portal session for the tenant.
+
+    Enterprise tenants get the enterprise portal configuration: invoices and
+    payment details only, since seats change in the admin console
+    (promptly-guide#64). The tenant's Stripe customer is reused; none is
+    ever created here.
+    """
     tenant = await _load_tenant(db, user)
     if not tenant.stripe_customer_id:
         raise AppException(
@@ -158,8 +164,7 @@ async def portal_session(
             status_code=409,
         )
     session = stripe_client.create_portal_session(
-        customer=tenant.stripe_customer_id,
-        return_url=get_settings().billing_portal_return_url,
+        **portal.tenant_portal_params(tenant, get_settings())
     )
     return PortalSessionResponse(url=session.url)
 

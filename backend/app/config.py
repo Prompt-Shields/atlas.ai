@@ -135,6 +135,19 @@ class Settings(BaseSettings):
     # (BE, DE, ES, FR, IE or NL).
     stripe_bank_transfer_country: str = "IE"
     billing_portal_return_url: str = "http://localhost:3000/dashboard/billing"
+    # Customer portal configurations (promptly-guide#64), ids such as
+    # "bpc_…" printed by scripts/stripe_portal.py. Empty means Stripe's
+    # default configuration. Enterprise customers see invoices and payment
+    # details only; Plus customers can also switch plan and cancel.
+    stripe_portal_configuration_enterprise: str = ""
+    stripe_portal_configuration_plus: str = ""
+    # Where the portal sends a Plus customer back to (promptly-guide#64): the
+    # Personal account page, which promptly-guide#63 has still to build.
+    billing_portal_return_url_plus: str = "http://localhost:3000/account"
+    # Promptly Plus price ids (promptly-guide#61), offered as plan switches in
+    # the Plus portal. Ids only: amounts live in Stripe, never in this repo.
+    stripe_price_plus_monthly: str = ""
+    stripe_price_plus_yearly: str = ""
     billing_checkout_success_url: str = "http://localhost:3000/dashboard/billing?upgraded=1"
     billing_checkout_cancel_url: str = "http://localhost:3000/dashboard/billing"
     # Stripe Tax (promptly-guide#50). On by default, because main already

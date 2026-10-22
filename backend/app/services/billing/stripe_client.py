@@ -26,6 +26,24 @@ def create_portal_session(**kwargs):
     return stripe.billing_portal.Session.create(**kwargs)
 
 
+# --- Customer portal configurations (portal.py, scripts/stripe_portal.py) ---
+
+
+def list_portal_configurations() -> list:
+    _configure()
+    return list(stripe.billing_portal.Configuration.list(limit=100).auto_paging_iter())
+
+
+def create_portal_configuration(**kwargs):
+    _configure()
+    return stripe.billing_portal.Configuration.create(**kwargs)
+
+
+def modify_portal_configuration(configuration_id: str, **kwargs):
+    _configure()
+    return stripe.billing_portal.Configuration.modify(configuration_id, **kwargs)
+
+
 def modify_subscription_item(item_id: str, **kwargs):
     _configure()
     return stripe.SubscriptionItem.modify(item_id, **kwargs)
@@ -53,6 +71,11 @@ def create_product(**kwargs):
 def modify_product(product_id: str, **kwargs):
     _configure()
     return stripe.Product.modify(product_id, **kwargs)
+
+
+def retrieve_price(price_id: str):
+    _configure()
+    return stripe.Price.retrieve(price_id)
 
 
 def list_prices(**kwargs) -> list:

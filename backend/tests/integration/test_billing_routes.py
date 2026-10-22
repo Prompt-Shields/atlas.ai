@@ -37,6 +37,7 @@ async def _seed_tenant_admin(
     sub_id: str | None = None,
     stripe_customer_id: str | None = None,
     activated_users: int = 0,
+    plan: Plan = Plan.FREE,
 ) -> tuple[uuid.UUID, str]:
     """Create a tenant + admin user; return (tenant_id, JWT token)."""
     tid = uuid.uuid4()
@@ -50,7 +51,7 @@ async def _seed_tenant_admin(
             name="Acme",
             slug=f"acme-{tid.hex[:8]}",
             is_active=True,
-            plan=Plan.FREE,
+            plan=plan,
             subscription_status=SubscriptionStatus.TRIALING,
             trial_ends_at=trial_ends,
             stripe_subscription_id=sub_id,
@@ -330,6 +331,29 @@ async def test_portal_returns_url_when_customer_present(client, monkeypatch):
     )
     assert resp.status_code == 200
     assert resp.json() == {"url": "https://portal.stripe.test/xyz"}
+
+
+@pytest.mark.asyncio
+async def test_portal_enterprise_tenant_gets_enterprise_configuration(client, monkeypatch):
+    """Enterprise tenant → its existing customer and the invoices-only configuration (#64)."""
+    from app.config import get_settings
+
+    seen: dict = {}
+
+    def fake_create(**kw):
+        seen.update(kw)
+        return type("S", (), {"url": "https://portal.stripe.test/ent"})()
+
+    monkeypatch.setattr("app.services.billing.stripe_client.create_portal_session", fake_create)
+    monkeypatch.setattr(get_settings(), "stripe_portal_configuration_enterprise", "bpc_ent")
+
+    _, token = await _seed_tenant_admin(
+        email_verified=True, stripe_customer_id="cus_ent", plan=Plan.ENTERPRISE
+    )
+    resp = await client.post("/api/v1/billing/portal-session", headers=auth_header(token))
+    assert resp.status_code == 200
+    assert seen["customer"] == "cus_ent"
+    assert seen["configuration"] == "bpc_ent"
 
 
 # ---------------------------------------------------------------------------
