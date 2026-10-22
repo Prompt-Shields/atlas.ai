@@ -16,6 +16,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    false,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -125,6 +126,12 @@ class Tenant(GRCBase, TestDataMixin):
     # endpoint. A declaration, not a check: Atlas never sees the endpoint.
     own_endpoint_declared_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
+    )
+    # Guided steps (promptly-guide #62, added by 051): whether the Work client
+    # pool is a hard cap. Off by default: steps above the pool are served and
+    # billed as overage. On: hosted steps stop at the pool until the month turns.
+    guided_step_hard_cap: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=false(), nullable=False
     )
 
     # Relationships
