@@ -34,7 +34,7 @@ dependencies = [
     "structlog~=25.5.0",
     "tenacity~=9.1.4",
     "croniter~=6.0.0",
-    "stripe~=10.0",
+    "stripe>=10,<17",
 ]
 
 [project.optional-dependencies]
