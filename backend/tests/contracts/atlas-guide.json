@@ -4,7 +4,8 @@
     "The canonical copy is promptly-guide's contracts/atlas-guide.json. atlas.ai keeps an identical copy at backend/tests/contracts/atlas-guide.json; Scripts/check-atlas-contract.py compares the two.",
     "Guide's side (Tests/GuideAdoptionTests/AtlasContractTests.swift): each request is exactly what Guide builds, and each response reads as guide_reads.",
     "Atlas's side (backend/tests/unit/test_guide_contract.py): with what given describes set up, each request gets a response with the status, and a body that holds the one here (objects may have more keys, lists are exact).",
-    "A contribution is for a finished month, and Atlas takes it only until that month's intake closes, at 00:00 UTC on the 7th of the month after. A contribution's given.now is the moment it is sent: Atlas's side sets its clock to it, and Guide's side checks that it would send the month then, or would not."
+    "A contribution is for a finished month, and Atlas takes it only until that month's intake closes, at 00:00 UTC on the 7th of the month after. A contribution's given.now is the moment it is sent: Atlas's side sets its clock to it, and Guide's side checks that it would send the month then, or would not.",
+    "The work client's 90 days (#52): given.work_client_days is how long ago, in days, Atlas recorded the organisation's day 0 (none: not recorded), and given.own_endpoint_declared that the organisation declared its own model endpoint. Atlas answers organisation-wide facts only, the status and the days left, and Guide's side reads them at the moment it asks."
   ],
   "version": 2,
   "interactions": [
@@ -144,6 +145,41 @@
       "request": {"method": "GET", "path": "api/v1/guide/groups"},
       "response": {"status": 200, "body": {"groups": ["Finance", "Sales"]}},
       "guide_reads": ["Finance", "Sales"]
+    },
+    {
+      "name": "the work client's 90 days, not begun",
+      "given": {"offered_kinds": ["app"]},
+      "request": {"method": "GET", "path": "api/v1/guide/work-client"},
+      "response": {"status": 200, "body": {"free_client_status": null, "days_left": null}},
+      "guide_reads": {"status": null, "days_left": null}
+    },
+    {
+      "name": "the work client's 90 days, ending",
+      "given": {"offered_kinds": ["app"], "work_client_days": 80},
+      "request": {"method": "GET", "path": "api/v1/guide/work-client"},
+      "response": {"status": 200, "body": {"free_client_status": "grace_ending", "days_left": 10}},
+      "guide_reads": {"status": "grace_ending", "days_left": 10}
+    },
+    {
+      "name": "the work client's 90 days, over",
+      "given": {"offered_kinds": ["app"], "work_client_days": 95},
+      "request": {"method": "GET", "path": "api/v1/guide/work-client"},
+      "response": {"status": 200, "body": {"free_client_status": "endpoint_required", "days_left": 0}},
+      "guide_reads": {"status": "endpoint_required", "days_left": 0}
+    },
+    {
+      "name": "the work client's 90 days, over, kept by the organisation's own endpoint",
+      "given": {"offered_kinds": ["app"], "work_client_days": 95, "own_endpoint_declared": true},
+      "request": {"method": "GET", "path": "api/v1/guide/work-client"},
+      "response": {"status": 200, "body": {"free_client_status": "active", "days_left": 0}},
+      "guide_reads": {"status": "active", "days_left": 0}
+    },
+    {
+      "name": "the work client's 90 days, for an organisation that has not connected Guide",
+      "given": {"connected": false},
+      "request": {"method": "GET", "path": "api/v1/guide/work-client"},
+      "response": {"status": 401},
+      "guide_reads": null
     }
   ]
 }
