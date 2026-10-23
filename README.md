@@ -211,10 +211,13 @@ Once a month, whoever holds that key runs, from `backend/` with `DATABASE_URL` a
 ```bash
 python -m scripts.stripe_conversion --dry-run   # what it would read; no calls
 STRIPE_SECRET_KEY=<read-only key> python -m scripts.stripe_conversion --live > conversion-YYYY-MM.csv
+STRIPE_SECRET_KEY=<read-only key> python -m scripts.stripe_conversion --live --cohorts > conversion-cohorts-YYYY-MM.csv
 ```
 
-It changes nothing in Stripe and reads the database in a read-only transaction. Keep
-the CSV in the finance folder and nothing else.
+The first prints one row per company; `--cohorts` prints the funnel per cohort month
+(started, connected, quoted, converted, paid, lost), with counts and no rate until a
+cohort has ten companies. Either changes nothing in Stripe and reads the database in a
+read-only transaction. Keep the CSVs in the finance folder and nothing else.
 
 ---
 
