@@ -8,12 +8,13 @@ Two routers are exported from this module:
 from __future__ import annotations
 
 import math
+from datetime import UTC
 
-from fastapi import APIRouter, Request, Response
+from fastapi import APIRouter, Depends, Request, Response
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.dependencies import AuthUser, TenantAdmin
+from app.auth.dependencies import AuthUser, TenantAdmin, get_tenant_db_session
 from app.config import get_settings
 from app.database import DB_SESSION
 from app.errors import AppException, ForbiddenError, NotFoundError
@@ -23,10 +24,14 @@ from app.schemas.billing import (
     CheckoutSessionRequest,
     CheckoutSessionResponse,
     EntitlementsResponse,
+    GuidedStepHardCapUpdate,
+    GuidedStepsResponse,
     PortalSessionResponse,
     WorkClientUpdate,
 )
 from app.services import entitlements as ent
+from app.services import guided_step_meter
+from app.services.audit import log_audit_event
 from app.services.billing import portal, stripe_client, tax
 from app.services.billing import webhooks as wh
 
@@ -226,6 +231,78 @@ async def update_work_client(
         tenant.own_endpoint_declared_at = None
     await db.flush()
     return await _entitlements(db, tenant)
+
+
+# ---------------------------------------------------------------------------
+# Guided steps: the Work client's month and hard cap (promptly-guide#62)
+# ---------------------------------------------------------------------------
+
+
+async def _guided_steps(db: AsyncSession, tenant: Tenant) -> GuidedStepsResponse:
+    # The month comes from the DB server's clock, as the meter requires.
+    now = await db.scalar(select(func.now()))
+    if now.tzinfo is None:  # SQLite returns a naive UTC time
+        now = now.replace(tzinfo=UTC)
+    status = await guided_step_meter.pool_status(db, tenant, now=now)
+    return GuidedStepsResponse(
+        period=status.period,
+        used=status.used,
+        pool=status.pool,
+        remaining=status.remaining,
+        overage=status.overage,
+        hard_cap=status.hard_cap,
+        own_endpoint=status.own_endpoint,
+        work_client=status.work_client,
+    )
+
+
+@router.get("/guided-steps", response_model=GuidedStepsResponse)
+async def get_guided_steps(
+    user: TenantAdmin,
+    db: AsyncSession = Depends(get_tenant_db_session),
+) -> GuidedStepsResponse:
+    """This month's hosted guided steps against the Work client's pool.
+
+    Step counts only, for the whole organisation: no money, and nothing about
+    who used a step, because nothing records that (E4).
+    """
+    tenant = await _load_tenant(db, user)
+    return await _guided_steps(db, tenant)
+
+
+@router.put("/guided-steps/hard-cap", response_model=GuidedStepsResponse)
+async def put_guided_step_hard_cap(
+    body: GuidedStepHardCapUpdate,
+    user: TenantAdmin,
+    db: AsyncSession = Depends(get_tenant_db_session),
+) -> GuidedStepsResponse:
+    """Turn the hard cap on or off. Tenant admins only, and audited.
+
+    On, hosted steps stop once the month's pool is used, until the month turns.
+    Off (the default), steps above the pool are served and counted as overage.
+    A change is written to the audit log with the old and new setting; setting
+    the value it already has writes nothing.
+    """
+    tenant = await _load_tenant(db, user)
+    previous = bool(tenant.guided_step_hard_cap)
+    if body.hard_cap != previous:
+        tenant.guided_step_hard_cap = body.hard_cap
+        await log_audit_event(
+            db,
+            event_type="billing.guided_step_hard_cap.updated",
+            action="update",
+            actor_id=user.user_id,
+            actor_email=user.email,
+            tenant_id=tenant.id,
+            resource_type="tenant",
+            resource_id=str(tenant.id),
+            details={"previous": previous, "current": body.hard_cap},
+        )
+    # Read before the commit: the tenant setting for RLS lasts one transaction.
+    # Committed before the response, so the gateway's next check() sees it.
+    result = await _guided_steps(db, tenant)
+    await db.commit()
+    return result
 
 
 # ---------------------------------------------------------------------------
