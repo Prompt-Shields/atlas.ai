@@ -116,14 +116,16 @@ const en = {
       note: 'A configuration profile can turn the cloud model off, but never on, so it is turned on in Guide on each Mac.',
     },
     steps: {
-      heading: 'Guided steps this month',
-      loadError: 'Could not load this month’s guided steps: {error}',
+      heading: 'Guided steps',
+      loadError: 'Could not load the guided steps: {error}',
       noWorkClient: 'There is no Work client, so there is no pool of guided steps.',
       ownEndpoint:
         'Guide answers from your organisation’s own model endpoint, so no guided steps are counted here.',
-      used: '{used} of {pool} steps used',
-      remaining: '{remaining} steps left in the pool. The pool starts again on {date}.',
-      overage: '{overage} steps above the pool this month. They are billed as overage.',
+      pool: 'The pool is {pool} steps a month.',
+      openMonth: '{month}: the count is available after the month ends, on {date}. It is shown only for whole months, so that it cannot show one person’s use.',
+      closedHeading: 'Months that have ended',
+      closedUsed: '{used} steps',
+      noClosedMonths: 'No hosted steps were counted in a month that has ended.',
       capLabel: 'Stop at the pool (hard cap)',
       capOff:
         'Off: when the pool is used, Guide keeps answering with hosted steps, and the steps above the pool are billed as overage.',
@@ -132,7 +134,7 @@ const en = {
       capOnConfirm: 'Turn the hard cap on? Hosted steps will stop once this month’s pool is used.',
       capOffConfirm:
         'Turn the hard cap off? Steps above the pool will be served and billed as overage.',
-      note: 'A guided step is one screen read with an answer from Promptly’s hosted model. Steps answered on the Mac or by your own endpoint are never counted. The count is for the whole organisation: Atlas does not record who used a step. Promptly does not host a model yet, so the count stays at 0 until it does.',
+      note: 'A guided step is one screen read with an answer from Promptly’s hosted model. Steps answered on the Mac or by your own endpoint are never counted. The count is for the whole organisation: Atlas does not record who used a step. Promptly does not host a model yet, so nothing is counted until it does.',
     },
     dayNinety: {
       heading: 'What happens at day 90',

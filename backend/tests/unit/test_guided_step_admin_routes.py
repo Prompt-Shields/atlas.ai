@@ -1,6 +1,7 @@
 """The administrator's view of the guided-step pool, and the hard cap (promptly-guide #62).
 
-`GET /billing/guided-steps` shows the month as step counts only;
+`GET /billing/guided-steps` shows the pool and closed months' totals as step
+counts only, and never the open month's count (promptly-guide decision P9);
 `PUT /billing/guided-steps/hard-cap` turns the hard cap on or off. Both are for
 tenant admins, scoped to the admin's own tenant, and a change is audited.
 
@@ -19,10 +20,18 @@ from sqlalchemy import func, select
 
 from app.auth.jwt import create_access_token
 from app.models.audit_log import AuditLog
+from app.models.guided_step import GuidedStepCount
 from app.models.tenant import Tenant
 from app.models.user import Role, User, UserRole
 from app.services.entitlements import WORK_CLIENT_LOOKUP_KEY
-from app.services.guided_step_meter import Refusal, check, record
+from app.services.guided_step_meter import (
+    CLOSED_MONTHS_SHOWN,
+    Refusal,
+    check,
+    period_of,
+    pool_status,
+    record,
+)
 from app.services.guided_steps import enterprise_pool
 from tests.conftest import TestSessionLocal, auth_header
 
@@ -32,16 +41,9 @@ STATUS = "/api/v1/billing/guided-steps"
 HARD_CAP = "/api/v1/billing/guided-steps/hard-cap"
 SEATS = 3
 EVENT = "billing.guided_step_hard_cap.updated"
-FIELDS = {
-    "period",
-    "used",
-    "pool",
-    "remaining",
-    "overage",
-    "hard_cap",
-    "own_endpoint",
-    "work_client",
-}
+FIELDS = {"period", "pool", "hard_cap", "own_endpoint", "work_client", "closed_months"}
+# A count no pool, period or other figure in the reply could equal by chance.
+OPEN_MONTH_STEPS = 7919
 
 
 def _subs(seats: int = SEATS) -> dict:
@@ -86,6 +88,25 @@ async def _seed(
     return tid, token
 
 
+async def _counts(tid: uuid.UUID, counts: dict[str, int]) -> None:
+    """Hosted steps already counted for `tid`, by month ("YYYY-MM")."""
+    async with TestSessionLocal() as db:
+        for period, steps in counts.items():
+            db.add(GuidedStepCount(id=uuid.uuid4(), tenant_id=tid, period=period, steps=steps))
+        await db.commit()
+
+
+async def _open_period() -> str:
+    async with TestSessionLocal() as db:
+        return period_of(await _db_now(db))
+
+
+def _months_before(period: str, n: int) -> str:
+    year, month = map(int, period.split("-"))
+    index = year * 12 + (month - 1) - n
+    return f"{index // 12:04d}-{index % 12 + 1:02d}"
+
+
 async def _db_now(db):
     now = await db.scalar(select(func.now()))
     return now if now.tzinfo else now.replace(tzinfo=UTC)
@@ -107,51 +128,104 @@ async def _audit(tid: uuid.UUID) -> list[AuditLog]:
 # ── The month ──────────────────────────────────────────────────────────────
 
 
-async def test_admin_sees_the_month_in_steps(client: AsyncClient) -> None:
+async def test_admin_sees_the_pool_and_not_the_open_months_count(client: AsyncClient) -> None:
     pool = enterprise_pool(SEATS)
     _, token = await _seed(steps=pool - 1)
     resp = await client.get(STATUS, headers=auth_header(token))
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert set(body) == FIELDS
-    assert body["used"] == pool - 1
     assert body["pool"] == pool
-    assert body["remaining"] == 1
-    assert body["overage"] == 0
     assert body["hard_cap"] is False
     assert body["work_client"] is True
     assert body["own_endpoint"] is False
-    assert len(body["period"]) == 7 and body["period"][4] == "-"
+    assert body["period"] == await _open_period()
+    assert body["closed_months"] == []
 
 
-async def test_steps_above_the_pool_show_as_overage_in_steps(client: AsyncClient) -> None:
+async def test_the_open_months_count_never_appears_in_the_reply(client: AsyncClient) -> None:
+    tid, token = await _seed()
+    period = await _open_period()
+    await _counts(tid, {period: OPEN_MONTH_STEPS, _months_before(period, 1): 3})
+    replies = [
+        await client.get(STATUS, headers=auth_header(token)),
+        await client.put(HARD_CAP, json={"hard_cap": True}, headers=auth_header(token)),
+        await client.put(HARD_CAP, json={"hard_cap": False}, headers=auth_header(token)),
+    ]
+    for resp in replies:
+        assert resp.status_code == 200, resp.text
+        assert str(OPEN_MONTH_STEPS) not in resp.text
+        body = resp.json()
+        for key in ("used", "remaining", "overage"):
+            assert key not in body
+        assert [m["period"] for m in body["closed_months"]] == [_months_before(period, 1)]
+
+
+async def test_the_open_month_is_still_counted_exactly_for_billing(client: AsyncClient) -> None:
     pool = enterprise_pool(SEATS)
-    _, token = await _seed(steps=pool + 4)
+    tid, token = await _seed(steps=pool + 4)
+    assert "used" not in (await client.get(STATUS, headers=auth_header(token))).json()
+    async with TestSessionLocal() as db:
+        status = await pool_status(db, await db.get(Tenant, tid), now=await _db_now(db))
+    assert status.used == pool + 4
+    assert status.overage == 4
+
+
+async def test_closed_months_show_their_totals_newest_first(client: AsyncClient) -> None:
+    tid, token = await _seed()
+    period = await _open_period()
+    await _counts(
+        tid,
+        {
+            period: OPEN_MONTH_STEPS,
+            _months_before(period, 1): 41,
+            _months_before(period, 3): 12,
+        },
+    )
     body = (await client.get(STATUS, headers=auth_header(token))).json()
-    assert body["remaining"] == 0
-    assert body["overage"] == 4
+    assert body["closed_months"] == [
+        {"period": _months_before(period, 1), "used": 41},
+        {"period": _months_before(period, 3), "used": 12},
+    ]
+
+
+async def test_only_the_latest_closed_months_are_listed(client: AsyncClient) -> None:
+    tid, token = await _seed()
+    period = await _open_period()
+    extra = 2
+    await _counts(
+        tid, {_months_before(period, n): n for n in range(1, CLOSED_MONTHS_SHOWN + extra + 1)}
+    )
+    months = (await client.get(STATUS, headers=auth_header(token))).json()["closed_months"]
+    assert [m["used"] for m in months] == list(range(1, CLOSED_MONTHS_SHOWN + 1))
 
 
 async def test_the_reply_carries_counts_never_money(client: AsyncClient) -> None:
-    _, token = await _seed(steps=1)
+    tid, token = await _seed()
+    await _counts(tid, {_months_before(await _open_period(), 1): 5})
     body = (await client.get(STATUS, headers=auth_header(token))).json()
-    for key in body:
+    keys = set(body) | {key for month in body["closed_months"] for key in month}
+    for key in keys:
         assert not any(word in key for word in ("price", "amount", "cost", "eur", "usd"))
-    for key in ("used", "pool", "remaining", "overage"):
-        assert isinstance(body[key], int)
+    assert isinstance(body["pool"], int)
+    assert all(isinstance(m["used"], int) for m in body["closed_months"])
 
 
 async def test_no_work_client_has_no_pool(client: AsyncClient) -> None:
     _, token = await _seed(work_client=False)
     body = (await client.get(STATUS, headers=auth_header(token))).json()
     assert body["work_client"] is False
-    assert body["pool"] == 0 and body["used"] == 0
+    assert body["pool"] == 0 and body["closed_months"] == []
 
 
 async def test_admin_sees_only_their_own_tenant(client: AsyncClient) -> None:
-    _, token_a = await _seed(steps=2)
-    await _seed(steps=7)
-    assert (await client.get(STATUS, headers=auth_header(token_a))).json()["used"] == 2
+    tid_a, token_a = await _seed()
+    tid_b, _ = await _seed()
+    previous = _months_before(await _open_period(), 1)
+    await _counts(tid_a, {previous: 2})
+    await _counts(tid_b, {previous: 7})
+    months = (await client.get(STATUS, headers=auth_header(token_a))).json()["closed_months"]
+    assert months == [{"period": previous, "used": 2}]
 
 
 # ── The hard cap ───────────────────────────────────────────────────────────
