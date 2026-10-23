@@ -13,6 +13,7 @@
       <string id="SkillPacks">Skill packs</string>
       <string id="Knowledge">Knowledge</string>
       <string id="Adoption">Adoption figures</string>
+      <string id="WorkClient">Work client</string>
       <string id="SignIn">Sign-in</string>
       <string id="CloudModelDisabled">Turn off the cloud model</string>
       <string id="CloudModelDisabled_Explain">Enabled: Guide answers with the on-device model only. Disabled or not configured: each person decides. Only Enabled restricts; no policy turns the cloud model on.
@@ -58,6 +59,10 @@ Registry: HKLM\SOFTWARE\Policies\PromptShields\PromptlyGuide, value AdoptionTeam
       <string id="AtlasURL_Explain">Where adoption figures go, for the people who opted in. https only.
 
 Registry: HKLM\SOFTWARE\Policies\PromptShields\PromptlyGuide, value AtlasURL.</string>
+      <string id="WorkClientNotices">Show the Work client's 90-day notices</string>
+      <string id="WorkClientNotices_Explain">Enabled: this PC is an admin's, and gets one notice each at 14, 7 and 1 days left of the free Work client's 90 days and one when they end. Set it only in the policy for the PCs of the people who look after Guide: an employee's PC never gets one. Reads and sends nothing.
+
+Registry: HKLM\SOFTWARE\Policies\PromptShields\PromptlyGuide, value WorkClientNotices.</string>
       <string id="SSOFirebaseAPIKey">Firebase web API key</string>
       <string id="SSOFirebaseAPIKey_Explain">From docs/sso.md.
 
@@ -94,6 +99,10 @@ Registry: HKLM\SOFTWARE\Policies\PromptShields\PromptlyGuide, value SSOGroupsCla
       <string id="SSOGroupsValidForHours_Explain">1 to 168. Not configured: 12.
 
 Registry: HKLM\SOFTWARE\Policies\PromptShields\PromptlyGuide, value SSOGroupsValidForHours.</string>
+      <string id="GroupsFromAtlas">Groups come from Atlas.AI over SCIM</string>
+      <string id="GroupsFromAtlas_Explain">Enabled: your directory provisions people and groups into your Atlas.AI over SCIM, and Guide asks Atlas for a signed-in person's groups. Disabled or not configured: Guide never asks, since the request names the person to Atlas.
+
+Registry: HKLM\SOFTWARE\Policies\PromptShields\PromptlyGuide, value GroupsFromAtlas.</string>
       <string id="PolicyGroups">Groups this PC is in</string>
       <string id="PolicyGroups_Explain">The groups this PC is in, which decide its knowledge sources. Set in one policy per combination of groups: two policies setting it would conflict.
 
