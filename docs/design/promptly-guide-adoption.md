@@ -128,6 +128,11 @@ Atlas hosts a SCIM 2.0 endpoint at `/api/v1/scim/v2`. The customer's Entra ID pr
 
   Entra also sends names, emails, titles, managers and phone numbers. Atlas accepts them and stores none of them.
 - **What Guide reads.** `GET /api/v1/guide/groups` uses the Guide caller's Firebase token. Atlas reads the token's email for this endpoint only, matches it, case-insensitively, against a provisioned, active `userName`, and returns that person's group names. Someone deprovisioned (`active` false) or never provisioned gets no groups. So does a sign-in whose token does not say `email_verified: true`: a Firebase project may let people sign in with an address nobody checked, and that must not get them another person's groups. The answer is an empty list rather than a `403`, because Guide drops its groups at once on an empty list but keeps the last ones, until they lapse, on any refusal. Nothing about what Guide does is joined to these tables.
+- **Audit.** Each change is written to `audit.audit_logs` in the same transaction as the change. The events are `scim.user.created|updated|deleted`, `scim.group.created|updated|deleted`, and `scim.token.created|revoked`.
+  - **Actor.** Changes from the identity provider have no actor. Token changes record the admin who made them.
+  - **Details.** Only directory data: `userName`, `externalId`, `active` and `displayName`, as from and to values for an update. Membership changes are the SCIM ids of the members added and removed, up to 100 of each with a count. The token and its hash are never recorded.
+  - **No-ops.** A PATCH or PUT that changes nothing writes no entry, and neither does a refused write. Entra re-sends the same values on every cycle.
+  - **Not recorded.** Nothing about Guide use: this is the directory as the identity provider sent it.
 - **Checking it end to end.** `backend/scripts/scim_entra_lifecycle.py` replays Entra's provisioning pattern for two test people, in this order:
   - look up, create, and add to groups;
   - move between groups, rename a group, and change an email;
