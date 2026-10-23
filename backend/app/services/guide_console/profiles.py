@@ -1,6 +1,7 @@
 """Promptly Guide's admin console, as configuration profiles (promptly-guide N1, option A).
 
-Ported from promptly-guide ``Scripts/console/make-profiles.py`` (main at cec96d4), the
+Ported from promptly-guide ``Scripts/console/make-profiles.py`` (main after promptly-guide#310 and the
+``cloudEndpoint`` field, promptly-guide#40), the
 file console's reference: the same console document in, the same profiles out, byte for
 byte. ``tests/unit/test_guide_console_profiles.py`` holds that against profiles the
 file console wrote. Change the file console first, then this, never only this.
@@ -46,6 +47,14 @@ KEY_MEMORY_DISABLED = "MemoryDisabled"
 # sends anything: only a person who opted in on their own Mac is ever counted.
 KEY_ATLAS_URL = "AtlasURL"
 KEY_ADOPTION_TEAM = "AdoptionTeam"
+# The Work client's 90-day notices (promptly-guide#52): on for the Macs of the people who
+# look after Guide, by group only, so no employee ever sees one. Reads and sends nothing.
+KEY_WORK_CLIENT_NOTICES = "WorkClientNotices"
+NOTICES_FIELD = "workClientNotices"
+# The organisation provisions its directory into Atlas.AI over SCIM (#58), so signed-in
+# Macs ask Atlas for each person's groups. Without it they never ask: the request names
+# the person to Atlas, and an organisation that does not use SCIM would get nothing back.
+KEY_GROUPS_FROM_ATLAS = "GroupsFromAtlas"
 LIST_KEYS = {
     "excludedApps": "ExcludedApps",
     "excludedWindowTitles": "ExcludedWindowTitles",
@@ -98,6 +107,54 @@ SIGN_IN_RULES = {
     ),
 }
 
+# The organisation's own model endpoint (promptly-guide#40, E7): the console field and the
+# key Guide reads (promptly-guide Sources/GuideCloud/ManagedEndpoint.swift). The keys pin
+# where the cloud model may send and never turn it on: each person still turns it on in
+# Settings, consents, and saves the key themselves.
+CLOUD_ENDPOINT_KEYS = {
+    "provider": "CloudProvider",
+    "endpoint": "CloudEndpoint",
+    "model": "CloudModelID",
+    "apiVersion": "CloudAPIVersion",
+    "region": "CloudRegion",
+    "dataRegion": "CloudDataRegion",
+    "processingArea": "CloudProcessingArea",
+    "acceptsImages": "CloudAcceptsImages",
+    "zeroRetentionConfirmed": "CloudZeroRetentionConfirmed",
+}
+# The providers a profile can pin, and what each needs. Kimi is for internal testing only
+# and cannot be pinned. Left out, the endpoint, model and api-version are Guide's default
+# for the provider, where it has one; these have none, so the console asks for them.
+CLOUD_PROVIDERS = {
+    "azure-openai": {"needs": {"endpoint", "model"}, "only": {"endpoint", "apiVersion"}},
+    "bedrock": {"needs": {"model", "region"}, "only": {"region"}},
+    "anthropic": {"needs": set(), "only": {"endpoint"}},
+    "openai-compatible": {"needs": {"endpoint", "model"}, "only": {"endpoint"}},
+}
+# Fields that apply to some providers only; a value for another provider would be pinned
+# and never used, so it is refused rather than written.
+CLOUD_PROVIDER_ONLY = {"endpoint", "apiVersion", "region"}
+# The same rules as CloudProviders.make in promptly-guide's Providers.swift, which a pin
+# must pass or Guide keeps the cloud model off. Stricter where that is plainer.
+CLOUD_RULES = {
+    # https, a host, no user, query or fragment: the same shape as atlas.url.
+    "endpoint": (
+        re.compile(r"^https://[A-Za-z0-9.-]+(:\d{1,5})?(/[A-Za-z0-9._~/-]*)?$"),
+        "an https address such as https://your-resource.openai.azure.com, with no user, "
+        "query or fragment",
+    ),
+    "model": (re.compile(r"^[!-~]{1,200}$"), "a model id, with no spaces"),
+    "apiVersion": (re.compile(r"^[A-Za-z0-9.-]{1,40}$"), "an api-version such as 2024-10-21"),
+    "region": (re.compile(r"^[A-Za-z0-9-]{1,40}$"), "an AWS region such as eu-north-1"),
+    "processingArea": (
+        re.compile(r"^(eu|eea|adequacy|elsewhere)$"),
+        "one of eu, eea, adequacy, elsewhere (where the provider processes)",
+    ),
+}
+# Azure's deployment becomes one path segment of the request: nothing that could add another.
+AZURE_DEPLOYMENT = re.compile(r"^[A-Za-z0-9._-]{1,200}$")
+CLOUD_SWITCHES = {"acceptsImages", "zeroRetentionConfirmed"}
+
 # The skill packs Guide ships. Tests/console check this against Sources/GuidePacks.
 KNOWN_PACKS = {"chatgpt", "claude", "claude-code", "m365-copilot"}
 
@@ -113,8 +170,8 @@ EVERYONE_FIELDS = {
     *LIST_KEYS,
     *WINDOWS_FIELDS,
 }
-GROUP_FIELDS = {"memoryOff", "adoptionTeam", *LIST_KEYS, *WINDOWS_FIELDS}
-ATLAS_FIELDS = {"url"}
+GROUP_FIELDS = {"memoryOff", "adoptionTeam", NOTICES_FIELD, *LIST_KEYS, *WINDOWS_FIELDS}
+ATLAS_FIELDS = {"url", "scimGroups"}
 SOURCE_FIELDS = {"id", "name", "folder", "enabled", "groups"}
 TOP_FIELDS = {
     "organisation",
@@ -124,6 +181,7 @@ TOP_FIELDS = {
     "groups",
     "signIn",
     "atlas",
+    "cloudEndpoint",
 }
 
 NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
@@ -280,7 +338,8 @@ def _team(section, where):
 
 def _atlas(section):
     """The Atlas.AI address, for the everyone profile: https, a host, nothing else that
-    could carry a credential."""
+    could carry a credential. With scimGroups, also GroupsFromAtlas: the organisation's
+    groups come from Atlas over SCIM, so Guide asks Atlas for them."""
     if not isinstance(section, dict):
         raise ConsoleError("atlas: must be an object.")
     _unknown(section, ATLAS_FIELDS, "atlas")
@@ -292,7 +351,85 @@ def _atlas(section):
             f"atlas.url: {value!r} is not an https address such as "
             "https://atlas.example.com, with no user, query or fragment."
         )
-    return {KEY_ATLAS_URL: url}
+    out = {KEY_ATLAS_URL: url}
+    if _switch(section, "scimGroups", "atlas"):
+        out[KEY_GROUPS_FROM_ATLAS] = True
+    return out
+
+
+def _cloud_endpoint(section):
+    """The organisation's own model endpoint, for the everyone profile. One endpoint for
+    the whole organisation, so there is no group variant. It pins where the cloud model
+    may send and never turns it on: there is no field that would."""
+    if not isinstance(section, dict):
+        raise ConsoleError("cloudEndpoint: must be an object.")
+    if "enabled" in section:
+        raise ConsoleError(
+            "cloudEndpoint.enabled: the console pins the endpoint and cannot turn the "
+            "cloud model on. Each person turns it on in Settings, sees what leaves "
+            "their Mac, and saves the key themselves."
+        )
+    _unknown(section, set(CLOUD_ENDPOINT_KEYS), "cloudEndpoint")
+    if "provider" not in section:
+        raise ConsoleError(
+            f"cloudEndpoint.provider missing: one of {', '.join(sorted(CLOUD_PROVIDERS))}."
+        )
+    provider = section["provider"]
+    if not isinstance(provider, str):
+        raise ConsoleError(
+            f"cloudEndpoint.provider: {provider!r} is not one of "
+            f"{', '.join(sorted(CLOUD_PROVIDERS))}."
+        )
+    if provider == "kimi":
+        raise ConsoleError(
+            "cloudEndpoint.provider: Kimi is for internal testing only and cannot be pinned."
+        )
+    if provider not in CLOUD_PROVIDERS:
+        raise ConsoleError(
+            f"cloudEndpoint.provider: {provider!r} is not one of "
+            f"{', '.join(sorted(CLOUD_PROVIDERS))}."
+        )
+    rules = CLOUD_PROVIDERS[provider]
+    unused = sorted((CLOUD_PROVIDER_ONLY & set(section)) - rules["only"])
+    if unused:
+        raise ConsoleError(f"cloudEndpoint.{unused[0]}: {provider} does not use it. Leave it out.")
+    missing = sorted(rules["needs"] - set(section))
+    if missing:
+        raise ConsoleError(
+            f"cloudEndpoint: {', '.join(missing)} missing; {provider} has no default "
+            "for it. docs/admin-console.md says what each provider needs."
+        )
+    out = {CLOUD_ENDPOINT_KEYS["provider"]: provider}
+    for field, value in section.items():
+        if field == "provider":
+            continue
+        if field in CLOUD_SWITCHES:
+            # Both values pin: false says the image is not sent, or the agreement is not
+            # confirmed, and the person cannot change it in Settings.
+            if not isinstance(value, bool):
+                raise ConsoleError(f"cloudEndpoint.{field}: true or false.")
+            out[CLOUD_ENDPOINT_KEYS[field]] = value
+            continue
+        text = value.strip() if isinstance(value, str) else None
+        if field == "dataRegion":
+            if not text or len(text) > 100 or any(ord(c) < 32 or ord(c) == 127 for c in text):
+                raise ConsoleError(
+                    f"cloudEndpoint.dataRegion: {value!r} is not where the provider "
+                    'processes, as people should read it, such as "EU (Sweden '
+                    'Central)" (1 to 100 characters, one line).'
+                )
+            out[CLOUD_ENDPOINT_KEYS[field]] = text
+            continue
+        rule, what = CLOUD_RULES[field]
+        if field == "model" and provider == "azure-openai":
+            rule, what = (
+                AZURE_DEPLOYMENT,
+                "an Azure deployment name: letters, digits, dots, dashes, underscores",
+            )
+        if text is None or not rule.match(text):
+            raise ConsoleError(f"cloudEndpoint.{field}: {value!r} is not {what}.")
+        out[CLOUD_ENDPOINT_KEYS[field]] = text
+    return out
 
 
 def build(console):
@@ -312,6 +449,11 @@ def build(console):
     everyone = console.get("everyone", {})
     if not isinstance(everyone, dict):
         raise ConsoleError("everyone: must be an object.")
+    if NOTICES_FIELD in everyone:
+        raise ConsoleError(
+            f"everyone.{NOTICES_FIELD}: the 90-day notices are for admins only. Set it "
+            f"in the group of people who look after Guide (groups.<name>.{NOTICES_FIELD})."
+        )
     _unknown(everyone, EVERYONE_FIELDS, "everyone")
     settings = {}
     for field, key in (
@@ -329,6 +471,8 @@ def build(console):
         settings.update(_atlas(console["atlas"]))
     if "signIn" in console:
         settings.update(_sign_in(console["signIn"]))
+    if "cloudEndpoint" in console:
+        settings.update(_cloud_endpoint(console["cloudEndpoint"]))
 
     groups_section = console.get("groups", {})
     if not isinstance(groups_section, dict):
@@ -368,6 +512,8 @@ def build(console):
         group_settings = {KEY_GROUP_PREFIX + name: True}
         if _switch(section, "memoryOff", f"groups.{name}"):
             group_settings[f"{KEY_MEMORY_DISABLED}.{name}"] = True
+        if _switch(section, NOTICES_FIELD, f"groups.{name}"):
+            group_settings[f"{KEY_WORK_CLIENT_NOTICES}.{name}"] = True
         team = _team(section, f"groups.{name}")
         if team is not None:
             group_settings[f"{KEY_ADOPTION_TEAM}.{name}"] = team

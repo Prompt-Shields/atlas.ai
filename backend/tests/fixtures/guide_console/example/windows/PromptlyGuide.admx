@@ -30,6 +30,9 @@
     <category name="Adoption" displayName="$(string.Adoption)">
       <parentCategory ref="PromptlyGuide" />
     </category>
+    <category name="WorkClient" displayName="$(string.WorkClient)">
+      <parentCategory ref="PromptlyGuide" />
+    </category>
     <category name="SignIn" displayName="$(string.SignIn)">
       <parentCategory ref="PromptlyGuide" />
     </category>
@@ -121,6 +124,16 @@
         <text id="AtlasURL_Text" valueName="AtlasURL" required="true" />
       </elements>
     </policy>
+    <policy name="WorkClientNotices" class="Machine" displayName="$(string.WorkClientNotices)" explainText="$(string.WorkClientNotices_Explain)" key="SOFTWARE\Policies\PromptShields\PromptlyGuide" valueName="WorkClientNotices">
+      <parentCategory ref="WorkClient" />
+      <supportedOn ref="SUPPORTED_Guide" />
+      <enabledValue>
+        <decimal value="1" />
+      </enabledValue>
+      <disabledValue>
+        <delete />
+      </disabledValue>
+    </policy>
     <policy name="SSOFirebaseAPIKey" class="Machine" displayName="$(string.SSOFirebaseAPIKey)" explainText="$(string.SSOFirebaseAPIKey_Explain)" presentation="$(presentation.SSOFirebaseAPIKey)" key="SOFTWARE\Policies\PromptShields\PromptlyGuide">
       <parentCategory ref="SignIn" />
       <supportedOn ref="SUPPORTED_Guide" />
@@ -189,6 +202,16 @@
       <elements>
         <decimal id="SSOGroupsValidForHours_Number" valueName="SSOGroupsValidForHours" required="true" minValue="1" maxValue="168" />
       </elements>
+    </policy>
+    <policy name="GroupsFromAtlas" class="Machine" displayName="$(string.GroupsFromAtlas)" explainText="$(string.GroupsFromAtlas_Explain)" key="SOFTWARE\Policies\PromptShields\PromptlyGuide" valueName="GroupsFromAtlas">
+      <parentCategory ref="SignIn" />
+      <supportedOn ref="SUPPORTED_Guide" />
+      <enabledValue>
+        <decimal value="1" />
+      </enabledValue>
+      <disabledValue>
+        <delete />
+      </disabledValue>
     </policy>
     <policy name="PolicyGroups" class="Machine" displayName="$(string.PolicyGroups)" explainText="$(string.PolicyGroups_Explain)" presentation="$(presentation.PolicyGroups)" key="SOFTWARE\Policies\PromptShields\PromptlyGuide\PolicyGroups">
       <parentCategory ref="Knowledge" />

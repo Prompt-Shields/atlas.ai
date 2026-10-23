@@ -1,6 +1,6 @@
 """Windows registry policy from the same console document (promptly-guide #73).
 
-Ported from promptly-guide ``Scripts/console/make-windows-policy.py`` (main at cec96d4):
+Ported from promptly-guide ``Scripts/console/make-windows-policy.py`` (main after promptly-guide#310 and #315):
 the ADMX template and its en-US ADML that an admin imports into Intune ("Import ADMX")
 or the Group Policy central store, and ``.reg`` files with the values a PC would end up
 with, for trying a build on a test PC. ``tests/unit/test_guide_console_profiles.py``
@@ -176,6 +176,16 @@ POLICIES = [
         "Atlas.AI address",
         "Where adoption figures go, for the people who opted in. https only.",
     ),
+    (
+        mp.KEY_WORK_CLIENT_NOTICES,
+        "switch",
+        "WorkClient",
+        "Show the Work client's 90-day notices",
+        "Enabled: this PC is an admin's, and gets one notice each at 14, 7 and 1 days left of the "
+        "free Work client's 90 days and one when they end. Set it only in the policy for the PCs "
+        "of the people who look after Guide: an employee's PC never gets one. Reads and sends "
+        "nothing.",
+    ),
     ("SSOFirebaseAPIKey", "text", "SignIn", "Firebase web API key", "From docs/sso.md."),
     ("SSOFirebaseProjectID", "text", "SignIn", "Firebase project id", "From docs/sso.md."),
     ("SSOProvider", "text", "SignIn", "Identity provider", "oidc.<name> or saml.<name>."),
@@ -201,6 +211,15 @@ POLICIES = [
         "SignIn",
         "Hours a sign-in's groups stay in force",
         "1 to 168. Not configured: 12.",
+    ),
+    (
+        mp.KEY_GROUPS_FROM_ATLAS,
+        "switch",
+        "SignIn",
+        "Groups come from Atlas.AI over SCIM",
+        "Enabled: your directory provisions people and groups into your Atlas.AI over SCIM, and "
+        "Guide asks Atlas for a signed-in person's groups. Disabled or not configured: Guide never "
+        "asks, since the request names the person to Atlas.",
     ),
 ]
 PROCESSING_AREAS = [
@@ -231,15 +250,25 @@ CATEGORIES = [
     ("SkillPacks", "Skill packs"),
     ("Knowledge", "Knowledge"),
     ("Adoption", "Adoption figures"),
+    ("WorkClient", "Work client"),
     ("SignIn", "Sign-in"),
 ]
 SIGN_IN = set(mp.SIGN_IN_KEYS.values())
 # The keys a group can set a variant of: the group fields' keys.
-VARIANT_KEYS = [mp.KEY_MEMORY_DISABLED, mp.KEY_ADOPTION_TEAM, *mp.LIST_KEYS.values()]
+VARIANT_KEYS = [
+    mp.KEY_MEMORY_DISABLED,
+    mp.KEY_ADOPTION_TEAM,
+    mp.KEY_WORK_CLIENT_NOTICES,
+    *mp.LIST_KEYS.values(),
+]
 
-# Keys the Mac profile writes that Windows does not carry, and why. Empty while every key
-# has a mapping; ExcludedApps maps, but from excludedWindowsApps, not the bundle ids.
-MAC_ONLY = {}
+# Keys the Mac profile writes that Windows does not carry, and why. They are left out of
+# every .reg file. ExcludedApps maps, but from excludedWindowsApps, not the bundle ids.
+MAC_ONLY = dict.fromkeys(
+    mp.CLOUD_ENDPOINT_KEYS.values(),
+    "The organisation's own model endpoint (#40) pins the Mac's cloud model setup "
+    "(ManagedEndpoint.swift); the Windows core has no cloud model setup to pin yet.",
+)
 # Mac keys written under another name or shape on Windows.
 RENAMED = {
     mp.KEY_GROUP_PREFIX: "PolicyGroups entry (PolicyGroups) or KnowledgeGroup.<name> (perGroup)"
@@ -311,6 +340,8 @@ def _translate(settings, windows_apps, notes, where):
     out = {}
     for key, value in settings.items():
         base = _base(key)
+        if base in MAC_ONLY:
+            continue
         if base == "ExcludedApps":
             if not windows_apps.get(key):
                 notes.append(
@@ -398,6 +429,11 @@ def build_windows(console, combinations=()):
         notes,
         "everyone",
     )
+    if "cloudEndpoint" in console:
+        notes.append(
+            "cloudEndpoint pins the Mac's cloud model only. Windows PCs have no cloud model "
+            "setup to pin yet, so it is left out of every .reg file."
+        )
     groups = {}
     for file_name, profile in profiles.items():
         if file_name == mp.EVERYONE_FILE:

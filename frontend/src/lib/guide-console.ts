@@ -17,6 +17,8 @@ export interface ConsoleSection {
   cloudModelDisabled?: boolean;
   requireEUProcessing?: boolean;
   memoryOff?: boolean;
+  /** Groups only: the Work client's 90-day notices on these Macs, an admin's. Mac only. */
+  workClientNotices?: boolean;
   adoptionTeam?: string;
   excludedApps?: string[];
   excludedWindowsApps?: string[];
@@ -45,6 +47,74 @@ export interface SignIn {
   groupsValidForHours?: number;
 }
 
+/** The providers a profile can pin (promptly-guide make-profiles.py CLOUD_PROVIDERS). */
+export const CLOUD_PROVIDERS = ['azure-openai', 'bedrock', 'anthropic', 'openai-compatible'] as const;
+export type CloudProvider = (typeof CLOUD_PROVIDERS)[number];
+
+/**
+ * The organisation's own model endpoint (promptly-guide#40). It pins where Guide's
+ * optional cloud model may send, on Macs, and never turns it on: there is no field that
+ * would. Each person still turns it on in Settings and saves the key themselves.
+ */
+export interface CloudEndpoint {
+  provider: CloudProvider;
+  endpoint?: string;
+  model?: string;
+  apiVersion?: string;
+  region?: string;
+  dataRegion?: string;
+  processingArea?: string;
+  /** Both values pin: false says the image is never sent. */
+  acceptsImages?: boolean;
+  /** Both values pin: false says the agreement is not in place. */
+  zeroRetentionConfirmed?: boolean;
+}
+
+export type CloudEndpointText = 'endpoint' | 'model' | 'apiVersion' | 'region' | 'dataRegion';
+
+/**
+ * The text fields each provider takes, in the order the page shows them. The backend
+ * refuses a field the provider does not use (an endpoint for Bedrock, say), so the page
+ * shows only these and drops the rest when the provider changes.
+ */
+export const CLOUD_PROVIDER_FIELDS: Record<CloudProvider, CloudEndpointText[]> = {
+  'azure-openai': ['endpoint', 'model', 'apiVersion', 'dataRegion'],
+  bedrock: ['region', 'model', 'dataRegion'],
+  anthropic: ['endpoint', 'model', 'dataRegion'],
+  'openai-compatible': ['endpoint', 'model', 'dataRegion'],
+};
+
+export const PROCESSING_AREAS = ['eu', 'eea', 'adequacy', 'elsewhere'] as const;
+
+/** The endpoint with `provider` chosen, keeping what that provider also takes. */
+export function withProvider(current: CloudEndpoint | undefined, provider: CloudProvider): CloudEndpoint {
+  const next: CloudEndpoint = { provider };
+  const keep = new Set<keyof CloudEndpoint>([
+    ...CLOUD_PROVIDER_FIELDS[provider],
+    'processingArea',
+    'acceptsImages',
+    'zeroRetentionConfirmed',
+  ]);
+  for (const [key, value] of Object.entries(current ?? {}) as [keyof CloudEndpoint, unknown][]) {
+    if (key !== 'provider' && keep.has(key) && value !== undefined) {
+      (next as unknown as Record<string, unknown>)[key] = value;
+    }
+  }
+  return next;
+}
+
+/** A copy of the endpoint with a pin set, or left out when undefined: false is kept. */
+export function withPin(
+  current: CloudEndpoint,
+  field: 'acceptsImages' | 'zeroRetentionConfirmed',
+  value: boolean | undefined,
+): CloudEndpoint {
+  const next = { ...current };
+  if (value === undefined) delete next[field];
+  else next[field] = value;
+  return next;
+}
+
 export interface ConsoleDocument {
   organisation: string;
   identifier: string;
@@ -52,7 +122,10 @@ export interface ConsoleDocument {
   groups?: Record<string, ConsoleSection>;
   knowledgeSources?: KnowledgeSource[];
   signIn?: SignIn;
-  atlas?: { url: string };
+  /** scimGroups: people's groups come from Atlas over SCIM, so signed-in Macs ask for them. */
+  atlas?: { url: string; scimGroups?: boolean };
+  /** Macs only: Windows PCs have no cloud model setup to pin yet. */
+  cloudEndpoint?: CloudEndpoint;
 }
 
 export interface ConsoleFile {

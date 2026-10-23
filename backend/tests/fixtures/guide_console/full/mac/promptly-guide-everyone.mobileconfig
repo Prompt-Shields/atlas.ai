@@ -18,9 +18,25 @@
 								<string>Everyone</string>
 								<key>AtlasURL</key>
 								<string>https://atlas.nordlys.no</string>
+								<key>CloudAPIVersion</key>
+								<string>2024-10-21</string>
+								<key>CloudAcceptsImages</key>
+								<false/>
+								<key>CloudDataRegion</key>
+								<string>EU (Sweden Central)</string>
+								<key>CloudEndpoint</key>
+								<string>https://nordlys.openai.azure.com</string>
 								<key>CloudModelDisabled</key>
 								<true/>
+								<key>CloudModelID</key>
+								<string>guide-deployment</string>
+								<key>CloudProcessingArea</key>
+								<string>eu</string>
+								<key>CloudProvider</key>
+								<string>azure-openai</string>
 								<key>CloudRequireEUProcessing</key>
+								<true/>
+								<key>CloudZeroRetentionConfirmed</key>
 								<true/>
 								<key>ExcludedApps</key>
 								<array>
@@ -34,6 +50,8 @@
 								<array>
 									<string>Disciplinary *</string>
 								</array>
+								<key>GroupsFromAtlas</key>
+								<true/>
 								<key>KnowledgeSources</key>
 								<array>
 									<dict>

@@ -3,14 +3,21 @@
 import { useEffect, useState } from 'react';
 import { useLocale } from '@/lib/i18n/provider';
 import {
+  CLOUD_PROVIDERS,
+  CLOUD_PROVIDER_FIELDS,
   KNOWN_PACKS,
   LIST_FIELDS,
+  PROCESSING_AREAS,
   SIGN_IN_FIELDS,
   emptyDocument,
   fromLines,
   guideConsoleApi,
   toLines,
   withField,
+  withPin,
+  withProvider,
+  type CloudEndpoint,
+  type CloudProvider,
   type ConsoleDocument,
   type ConsoleSection,
   type GuideConsole,
@@ -79,6 +86,13 @@ function SectionFields({
           checked={section.memoryOff === true}
           onChange={(on) => set('memoryOff', on)}
         />
+        {!everyone && (
+          <Switch
+            label={t('guideConsole.fields.workClientNotices')}
+            checked={section.workClientNotices === true}
+            onChange={(on) => set('workClientNotices', on)}
+          />
+        )}
       </div>
 
       <fieldset>
@@ -119,6 +133,124 @@ function SectionFields({
         />
         <span className="text-xs font-normal text-gray-500">{t('guideConsole.hints.adoptionTeam')}</span>
       </label>
+    </div>
+  );
+}
+
+// The dictionary keys for each provider's name: dictionary keys have no dashes.
+const PROVIDER_LABEL: Record<CloudProvider, string> = {
+  'azure-openai': 'azureOpenai',
+  bedrock: 'bedrock',
+  anthropic: 'anthropic',
+  'openai-compatible': 'openaiCompatible',
+};
+
+/** A pin that can also be left to the person: unset, yes or no. */
+function PinSelect({
+  label,
+  value,
+  onChange,
+  t,
+}: {
+  label: string;
+  value: boolean | undefined;
+  onChange: (value: boolean | undefined) => void;
+  t: Translate;
+}) {
+  return (
+    <label className="text-sm text-gray-900">
+      {label}
+      <select
+        className={INPUT}
+        value={value === undefined ? '' : value ? 'yes' : 'no'}
+        onChange={(e) => onChange(e.target.value === '' ? undefined : e.target.value === 'yes')}
+      >
+        <option value="">{t('guideConsole.endpoint.pin.unset')}</option>
+        <option value="yes">{t('guideConsole.endpoint.pin.yes')}</option>
+        <option value="no">{t('guideConsole.endpoint.pin.no')}</option>
+      </select>
+    </label>
+  );
+}
+
+/**
+ * The organisation's own model endpoint (promptly-guide#40). It pins where the cloud
+ * model may send and never turns it on, so there is no switch for that here.
+ */
+function EndpointFields({
+  endpoint,
+  onChange,
+  t,
+}: {
+  endpoint: CloudEndpoint | undefined;
+  onChange: (next: CloudEndpoint | undefined) => void;
+  t: Translate;
+}) {
+  return (
+    <div className="grid gap-3 sm:grid-cols-2">
+      <label className="text-sm text-gray-900 sm:col-span-2">
+        {t('guideConsole.endpoint.provider')}
+        <select
+          className={INPUT}
+          value={endpoint?.provider ?? ''}
+          onChange={(e) =>
+            onChange(e.target.value === '' ? undefined : withProvider(endpoint, e.target.value as CloudProvider))
+          }
+        >
+          <option value="">{t('guideConsole.endpoint.none')}</option>
+          {CLOUD_PROVIDERS.map((provider) => (
+            <option key={provider} value={provider}>
+              {t(`guideConsole.endpoint.providers.${PROVIDER_LABEL[provider]}`)}
+            </option>
+          ))}
+        </select>
+      </label>
+      {endpoint && (
+        <>
+          {CLOUD_PROVIDER_FIELDS[endpoint.provider].map((field) => (
+            <label key={field} className="text-sm text-gray-900">
+              {t(`guideConsole.endpoint.${field}`)}
+              <input
+                className={INPUT}
+                value={endpoint[field] ?? ''}
+                onChange={(e) =>
+                  onChange(
+                    withField(endpoint, field, field === 'dataRegion' ? e.target.value : e.target.value.trim()),
+                  )
+                }
+              />
+            </label>
+          ))}
+          <label className="text-sm text-gray-900">
+            {t('guideConsole.endpoint.processingArea')}
+            <select
+              className={INPUT}
+              value={endpoint.processingArea ?? ''}
+              onChange={(e) => onChange(withField(endpoint, 'processingArea', e.target.value))}
+            >
+              <option value="">{t('guideConsole.endpoint.pin.unset')}</option>
+              {PROCESSING_AREAS.map((area) => (
+                <option key={area} value={area}>
+                  {t(`guideConsole.endpoint.areas.${area}`)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <PinSelect
+            label={t('guideConsole.endpoint.acceptsImages')}
+            value={endpoint.acceptsImages}
+            onChange={(v) => onChange(withPin(endpoint, 'acceptsImages', v))}
+            t={t}
+          />
+          <PinSelect
+            label={t('guideConsole.endpoint.zeroRetentionConfirmed')}
+            value={endpoint.zeroRetentionConfirmed}
+            onChange={(v) => onChange(withPin(endpoint, 'zeroRetentionConfirmed', v))}
+            t={t}
+          />
+          <p className="text-xs text-gray-500 sm:col-span-2">{t('guideConsole.endpoint.hint')}</p>
+        </>
+      )}
     </div>
   );
 }
@@ -458,10 +590,31 @@ export default function GuideSettingsPage() {
                 className={INPUT}
                 value={doc.atlas?.url ?? ''}
                 placeholder="https://atlas.example.com"
-                onChange={(e) => edit({ ...doc, atlas: { url: e.target.value.trim() } })}
+                onChange={(e) => edit({ ...doc, atlas: { ...doc.atlas, url: e.target.value.trim() } })}
               />
               <span className="text-xs font-normal text-gray-500">{t('guideConsole.atlas.hint')}</span>
             </label>
+            <div className="mt-3">
+              <Switch
+                label={t('guideConsole.atlas.scimGroups')}
+                checked={doc.atlas?.scimGroups === true}
+                onChange={(on) => edit({ ...doc, atlas: withField(doc.atlas ?? { url: '' }, 'scimGroups', on) })}
+              />
+            </div>
+          </section>
+
+          <section className="mt-6 rounded-lg border border-gray-200 bg-white p-6" data-testid="guide-console-endpoint">
+            <h2 className="text-lg font-semibold text-gray-900">{t('guideConsole.endpoint.heading')}</h2>
+            <p className="mb-3 mt-1 text-sm text-gray-500">{t('guideConsole.endpoint.body')}</p>
+            <EndpointFields
+              endpoint={doc.cloudEndpoint}
+              t={t}
+              onChange={(next) => {
+                const rest = { ...doc };
+                delete rest.cloudEndpoint;
+                edit(next ? { ...rest, cloudEndpoint: next } : rest);
+              }}
+            />
           </section>
 
           <section className="mt-6 rounded-lg border border-gray-200 bg-white p-6">
