@@ -24,9 +24,11 @@ added here, so it cannot ship without being held to the same rules.
 
 from __future__ import annotations
 
+import json
 import re
 import uuid
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -66,6 +68,13 @@ EMPLOYER = {
     ("GET", f"{GUIDE}/pilot-report"),
     ("POST", f"{GUIDE}/scim-token"),
     ("DELETE", f"{GUIDE}/scim-token"),
+    # Guide's settings and the profiles made from them (promptly-guide N1, option A):
+    # the organisation's settings only, nothing that came from a Mac.
+    ("GET", f"{GUIDE}/console"),
+    ("PUT", f"{GUIDE}/console"),
+    ("GET", f"{GUIDE}/console/profiles.zip"),
+    ("GET", f"{GUIDE}/console/profiles/{{file_name}}"),
+    ("GET", f"{GUIDE}/console/windows.zip"),
 }
 PERSON = {
     ("GET", f"{GUIDE}/offer"),
@@ -138,7 +147,13 @@ ALLOWED_NUMBERS = {
     # small: a count of those would say whether a team of one took part (E4).
     "suppressed": lambda n: n >= 0,
     "suppressed_categories": lambda n: n >= 0,
+    # How many times the organisation's Guide settings were saved: about admins' edits,
+    # never about the people Guide runs for.
+    "revision": lambda n: n >= 0,
 }
+CONSOLE_FILE = (
+    Path(__file__).resolve().parents[1] / "fixtures" / "guide_console" / "example" / "console.json"
+)
 
 
 @pytest.fixture(autouse=True)
@@ -404,6 +419,24 @@ async def test_no_guide_route_hands_the_employer_anything_about_one_person(
             assert r.status_code == 400, f"{path}?{name}= answered {r.status_code}"
             assert r.json()["error"]["code"] == "ADOPTION_IS_BY_TEAM"
             await employer("GET", path, r)
+
+    # -- Guide's settings and the files made from them -------------------------------
+    await employer("GET", f"{GUIDE}/console", await client.get(f"{GUIDE}/console", headers=h))
+    console = json.loads(CONSOLE_FILE.read_text(encoding="utf-8"))
+    saved = await client.put(f"{GUIDE}/console", json={"console": console}, headers=h)
+    assert saved.status_code == 200, saved.text
+    await employer("PUT", f"{GUIDE}/console", saved)
+    for template, path in (
+        (f"{GUIDE}/console/profiles.zip", f"{GUIDE}/console/profiles.zip"),
+        (
+            f"{GUIDE}/console/profiles/{{file_name}}",
+            f"{GUIDE}/console/profiles/promptly-guide-everyone.mobileconfig",
+        ),
+        (f"{GUIDE}/console/windows.zip", f"{GUIDE}/console/windows.zip"),
+    ):
+        r = await client.get(path, headers=h)
+        assert r.status_code == 200, r.text
+        await employer("GET", template, r)
 
     # -- The person's own Guide -----------------------------------------------------
     kari = SUPPORT[0]
