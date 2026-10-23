@@ -157,3 +157,29 @@ A figure is still a share of the people who opted in, in a team of ten or more, 
 ## Lessons people finished (promptly-guide #78)
 
 `lesson` is a kind like the others: offered by the tenant, agreed to by each person, counted by team and month through the same gate. A category is a pack and one of its lessons, for example `chatgpt/custom-instructions-what-to-write`, with the same id rules as a topic. A figure says what share of a team of ten or more finished that lesson, in a band; a lesson fewer than ten finished is left out. Nothing says who finished one, how long it took or what they answered: Guide does not send it. The pilot report shows lessons as their own section, "Lessons people finished".
+
+## Guide's settings, as profiles for the MDM (promptly-guide N1, option A)
+
+Atlas holds the same settings as Guide's file console (promptly-guide
+`docs/admin-console.md`) and turns them into the files an admin uploads to the MDM. It
+never writes to a Mac itself, and calls no MDM API: the MDM stays the only channel that
+changes a Mac. Writing through the MDM's API is a later step.
+
+- **Settings.** `GET` and `PUT /api/v1/guide/console` (TenantAdmin) hold one console
+  document per organisation, in the file console's own shape
+  (`deploy/console.example.json`), in `grc.guide_console_settings`. A document the file
+  console would refuse is refused with its words (`422 GUIDE_CONSOLE_INVALID`). The
+  document can only switch things off or name the organisation's content (exclusions,
+  packs off, pack folders, knowledge sources, groups, sign-in, where adoption figures
+  go); there is no field that turns on anything that reads, so the person's opt-ins stay
+  in their own `privacy.json`.
+- **Files.** `GET /api/v1/guide/console/profiles.zip`, `/profiles/<file>` (one
+  `.mobileconfig`) and `/windows.zip` (ADMX, en-US ADML, test `.reg` files). They are the
+  bytes promptly-guide's `make-profiles.py` and `make-windows-policy.py` write for the
+  same document: `app/services/guide_console` is a port of their pure parts, and
+  `tests/unit/test_guide_console_profiles.py` compares its output with files those scripts
+  wrote (`tests/fixtures/guide_console`). Change the file console first, then the port.
+- **Audit.** Every save that changes something is `guide.console.updated`, with each
+  changed key's old and new value per profile, the document's hash and the admin's note.
+  Every download is `guide.console.downloaded`, with the revision and each file's hash,
+  so a profile found in the MDM can be traced to the settings it came from.

@@ -1,0 +1,68 @@
+{
+  "organisation": "Nordlys AS",
+  "identifier": "no.nordlys.promptly",
+  "everyone": {
+    "cloudModelDisabled": false,
+    "requireEUProcessing": true,
+    "excludedApps": [
+      "no.nordlys.casebook"
+    ],
+    "excludedWindowsApps": [
+      "casebook.exe"
+    ],
+    "excludedWindowTitles": [
+      "Disciplinary *"
+    ],
+    "excludedSites": [
+      "hr.nordlys.no"
+    ],
+    "skillPacksOff": [],
+    "packFolders": [
+      "/Library/Application Support/Nordlys/Packs"
+    ]
+  },
+  "signIn": {
+    "firebaseApiKey": "AIzaSyNordlysExampleKey0123456789abcd",
+    "firebaseProjectId": "nordlys-promptly",
+    "provider": "oidc.entra",
+    "signInHost": "nordlys-promptly.firebaseapp.com",
+    "processingArea": "eu"
+  },
+  "knowledgeSources": [
+    {
+      "id": "handbook",
+      "name": "Employee handbook",
+      "folder": "~/Library/CloudStorage/OneDrive-Nordlys/Handbook"
+    },
+    {
+      "id": "finance",
+      "name": "Finance procedures",
+      "folder": "~/Library/CloudStorage/OneDrive-Nordlys/Finance",
+      "groups": [
+        "finance"
+      ]
+    },
+    {
+      "id": "it-runbooks",
+      "name": "IT runbooks",
+      "folder": "/Library/Application Support/Nordlys/Runbooks",
+      "enabled": false
+    }
+  ],
+  "groups": {
+    "finance": {
+      "excludedSites": [
+        "ledger.nordlys.no"
+      ],
+      "packFolders": [
+        "~/Library/CloudStorage/OneDrive-Nordlys/Finance packs"
+      ]
+    },
+    "sales": {
+      "skillPacksOff": [
+        "claude-code"
+      ],
+      "memoryOff": false
+    }
+  }
+}

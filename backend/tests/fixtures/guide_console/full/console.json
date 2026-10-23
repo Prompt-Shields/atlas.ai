@@ -1,0 +1,83 @@
+{
+  "organisation": "Nordlys AS",
+  "identifier": "no.nordlys.promptly",
+  "everyone": {
+    "cloudModelDisabled": true,
+    "requireEUProcessing": true,
+    "memoryOff": true,
+    "adoptionTeam": "Everyone",
+    "excludedApps": [
+      "no.nordlys.casebook"
+    ],
+    "excludedWindowsApps": [
+      "casebook.exe"
+    ],
+    "excludedWindowTitles": [
+      "Disciplinary *"
+    ],
+    "excludedSites": [
+      "hr.nordlys.no"
+    ],
+    "skillPacksOff": [
+      "claude"
+    ],
+    "packFolders": [
+      "~/Packs"
+    ]
+  },
+  "signIn": {
+    "firebaseApiKey": "AIzaSyNordlysExampleKey0123456789abcd",
+    "firebaseProjectId": "nordlys-promptly",
+    "provider": "saml.entra",
+    "tenantId": "staff-1a2b",
+    "signInHost": "nordlys-promptly.firebaseapp.com",
+    "processingArea": "eea",
+    "groupsClaim": "groups",
+    "groupsValidForHours": 24
+  },
+  "atlas": {
+    "url": "https://atlas.nordlys.no"
+  },
+  "knowledgeSources": [
+    {
+      "id": "handbook",
+      "name": "Håndbok \"A\"",
+      "folder": "~/Handbook\\x",
+      "enabled": true,
+      "groups": [
+        "finance"
+      ]
+    }
+  ],
+  "groups": {
+    "finance": {
+      "memoryOff": true,
+      "adoptionTeam": "Finance",
+      "excludedApps": [
+        "com.ledger"
+      ],
+      "excludedWindowsApps": [
+        "ledger.exe"
+      ],
+      "excludedWindowTitles": [
+        "Payroll *"
+      ],
+      "excludedSites": [
+        "ledger.nordlys.no"
+      ],
+      "skillPacksOff": [
+        "chatgpt"
+      ],
+      "packFolders": [
+        "~/Finance packs"
+      ]
+    },
+    "sales": {
+      "adoptionTeam": "Sales",
+      "excludedSites": [
+        "crm.nordlys.no",
+        "hr.nordlys.no"
+      ]
+    }
+  }
+}

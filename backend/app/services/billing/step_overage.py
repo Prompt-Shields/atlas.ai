@@ -37,7 +37,6 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
-import stripe
 import structlog
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -46,20 +45,23 @@ from app.database import set_tenant_guc
 from app.models.billing import BillingOutbox
 from app.models.tenant import Tenant
 from app.services import guided_step_meter
-from app.services.billing import stripe_client
+from app.services.billing import outbox, stripe_client
 from app.services.billing.catalog import GUIDED_STEP_EVENT
 
 log = structlog.get_logger()
 
 OPERATION = "guided_step_overage"
 
-# Stripe keeps an idempotency key for 24 hours and enforces a meter event
-# identifier's uniqueness for at least 24 hours. A row still failing after
-# this long is dead-lettered rather than retried past the point where Stripe
-# could tell a retry from a new event.
-RETRY_WINDOW = timedelta(hours=20)
-MAX_BACKOFF = timedelta(hours=1)
-BATCH = 100
+# The retry rules are the outbox's (``outbox.RETRY_WINDOW``): Stripe keeps an
+# idempotency key for 24 hours and enforces a meter event identifier's
+# uniqueness for at least 24 hours, and a row still failing after this long is
+# dead-lettered rather than retried past that point.
+RETRY_WINDOW = outbox.RETRY_WINDOW
+MAX_BACKOFF = outbox.MAX_BACKOFF
+BATCH = outbox.BATCH
+Processed = outbox.Processed
+db_now = outbox.db_now
+_is_postgres = outbox.is_postgres
 
 
 def identifier(tenant_id: uuid.UUID, period: str, through: int) -> str:
@@ -70,10 +72,6 @@ def identifier(tenant_id: uuid.UUID, period: str, through: int) -> str:
 def month_start(at: datetime) -> datetime:
     at = at.astimezone(UTC)
     return datetime(at.year, at.month, 1, tzinfo=UTC)
-
-
-def _is_postgres(db: AsyncSession) -> bool:
-    return db.get_bind().dialect.name == "postgresql"
 
 
 async def posted_through(db: AsyncSession, tenant_id: uuid.UUID, period: str) -> int:
@@ -158,18 +156,6 @@ async def enqueue_months(db: AsyncSession, tenant: Tenant, *, now: datetime) -> 
     return out
 
 
-def _backoff(attempts: int) -> timedelta:
-    return min(timedelta(minutes=2 ** min(attempts, 10)), MAX_BACKOFF)
-
-
-@dataclass
-class Processed:
-    sent: int = 0
-    retrying: int = 0
-    dead_lettered: int = 0
-    errors: list[str] = field(default_factory=list)
-
-
 async def process_due(
     db: AsyncSession, tenant_id: uuid.UUID, *, now: datetime, limit: int = BATCH
 ) -> Processed:
@@ -184,66 +170,24 @@ async def process_due(
     A dead-lettered row is logged as ``guided_step_overage_dead_letter`` and
     needs a person: its steps are not queued again (``posted_through``).
     """
-    stmt = (
-        select(BillingOutbox)
-        .where(
-            BillingOutbox.tenant_id == tenant_id,
-            BillingOutbox.operation == OPERATION,
-            BillingOutbox.succeeded_at.is_(None),
-            BillingOutbox.dead_lettered_at.is_(None),
-            BillingOutbox.next_attempt_at <= now,
-        )
-        .order_by(BillingOutbox.id)
-        .limit(limit)
-    )
-    if _is_postgres(db):
-        stmt = stmt.with_for_update(skip_locked=True)
-    rows = (await db.execute(stmt)).scalars().all()
+    rows = await outbox.due_rows(db, tenant_id, OPERATION, now=now, limit=limit)
 
-    result = Processed()
-    for row in rows:
+    def send(row: BillingOutbox) -> None:
         p = row.payload
-        row.attempt_count += 1
-        try:
-            stripe_client.create_meter_event(
-                event_name=GUIDED_STEP_EVENT,
-                payload={"stripe_customer_id": p["customer"], "value": str(p["value"])},
-                identifier=p["identifier"],
-                timestamp=p["timestamp"],
-                idempotency_key=p["identifier"],
-            )
-        except stripe.InvalidRequestError as exc:
-            _dead_letter(row, now, exc)
-            result.dead_lettered += 1
-            result.errors.append(row.last_error)
-        except stripe.StripeError as exc:
-            first_failed = p.get("first_failed_at")
-            if first_failed is None:
-                row.payload = {**p, "first_failed_at": int(now.timestamp())}
-                first_failed = int(now.timestamp())
-            if now - datetime.fromtimestamp(first_failed, UTC) >= RETRY_WINDOW:
-                _dead_letter(row, now, exc)
-                result.dead_lettered += 1
-            else:
-                row.last_error = _describe(exc)
-                row.next_attempt_at = now + _backoff(row.attempt_count)
-                result.retrying += 1
-            result.errors.append(row.last_error)
-        else:
-            row.succeeded_at = now
-            row.last_error = None
-            result.sent += 1
+        stripe_client.create_meter_event(
+            event_name=GUIDED_STEP_EVENT,
+            payload={"stripe_customer_id": p["customer"], "value": str(p["value"])},
+            identifier=p["identifier"],
+            timestamp=p["timestamp"],
+            idempotency_key=p["identifier"],
+        )
+
+    result = outbox.attempt(rows, now=now, send=send, on_dead_letter=_log_dead_letter)
     await db.flush()
     return result
 
 
-def _describe(exc: stripe.StripeError) -> str:
-    return f"{type(exc).__name__}: {exc.user_message or exc}"[:500]
-
-
-def _dead_letter(row: BillingOutbox, now: datetime, exc: stripe.StripeError) -> None:
-    row.dead_lettered_at = now
-    row.last_error = _describe(exc)
+def _log_dead_letter(row: BillingOutbox) -> None:
     log.error(
         "guided_step_overage_dead_letter",
         tenant_id=str(row.tenant_id),
@@ -260,13 +204,6 @@ class RunReport:
     queued: list[Increment] = field(default_factory=list)
     processed: Processed = field(default_factory=Processed)
     failed_tenants: list[uuid.UUID] = field(default_factory=list)
-
-
-async def db_now(db: AsyncSession) -> datetime:
-    """The DB server's clock (UTC); the process clock off Postgres."""
-    if _is_postgres(db):
-        return (await db.scalar(select(func.now()))).astimezone(UTC)
-    return datetime.now(UTC)
 
 
 async def run(db: AsyncSession, *, now: datetime | None = None, send: bool = True) -> RunReport:
@@ -300,11 +237,7 @@ async def run(db: AsyncSession, *, now: datetime | None = None, send: bool = Tru
             if not send:
                 await db.rollback()
                 continue
-            done = await process_due(db, tid, now=at)
-            report.processed.sent += done.sent
-            report.processed.retrying += done.retrying
-            report.processed.dead_lettered += done.dead_lettered
-            report.processed.errors.extend(done.errors)
+            report.processed.add(await process_due(db, tid, now=at))
             await db.commit()
         except Exception:
             await db.rollback()
