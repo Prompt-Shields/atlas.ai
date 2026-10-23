@@ -48,7 +48,7 @@ dev = [
     "faker~=40.4.0",
     "ruff~=0.15.2",
     "mypy~=1.19.1",
-    "pre-commit~=4.5.1",
+    "pre-commit>=4.5.1,<4.8.0",
     "aiosqlite~=0.22.1",
 ]
 
