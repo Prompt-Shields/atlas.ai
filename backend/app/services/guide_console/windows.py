@@ -1,6 +1,6 @@
 """Windows registry policy from the same console document (promptly-guide #73).
 
-Ported from promptly-guide ``Scripts/console/make-windows-policy.py`` (main after promptly-guide#310):
+Ported from promptly-guide ``Scripts/console/make-windows-policy.py`` (main after promptly-guide#310 and #315):
 the ADMX template and its en-US ADML that an admin imports into Intune ("Import ADMX")
 or the Group Policy central store, and ``.reg`` files with the values a PC would end up
 with, for trying a build on a test PC. ``tests/unit/test_guide_console_profiles.py``
@@ -176,6 +176,16 @@ POLICIES = [
         "Atlas.AI address",
         "Where adoption figures go, for the people who opted in. https only.",
     ),
+    (
+        mp.KEY_WORK_CLIENT_NOTICES,
+        "switch",
+        "WorkClient",
+        "Show the Work client's 90-day notices",
+        "Enabled: this PC is an admin's, and gets one notice each at 14, 7 and 1 days left of the "
+        "free Work client's 90 days and one when they end. Set it only in the policy for the PCs "
+        "of the people who look after Guide: an employee's PC never gets one. Reads and sends "
+        "nothing.",
+    ),
     ("SSOFirebaseAPIKey", "text", "SignIn", "Firebase web API key", "From docs/sso.md."),
     ("SSOFirebaseProjectID", "text", "SignIn", "Firebase project id", "From docs/sso.md."),
     ("SSOProvider", "text", "SignIn", "Identity provider", "oidc.<name> or saml.<name>."),
@@ -240,18 +250,22 @@ CATEGORIES = [
     ("SkillPacks", "Skill packs"),
     ("Knowledge", "Knowledge"),
     ("Adoption", "Adoption figures"),
+    ("WorkClient", "Work client"),
     ("SignIn", "Sign-in"),
 ]
 SIGN_IN = set(mp.SIGN_IN_KEYS.values())
 # The keys a group can set a variant of: the group fields' keys.
-VARIANT_KEYS = [mp.KEY_MEMORY_DISABLED, mp.KEY_ADOPTION_TEAM, *mp.LIST_KEYS.values()]
+VARIANT_KEYS = [
+    mp.KEY_MEMORY_DISABLED,
+    mp.KEY_ADOPTION_TEAM,
+    mp.KEY_WORK_CLIENT_NOTICES,
+    *mp.LIST_KEYS.values(),
+]
 
 # Keys the Mac profile writes that Windows does not carry, and why. They are left out of
-# every .reg file. ExcludedApps maps, but from excludedWindowsApps, not the bundle ids.
-MAC_ONLY = {
-    mp.KEY_WORK_CLIENT_NOTICES: "The Work client's 90-day notices (promptly-guide#52) are "
-    "shown on the Mac only; the Windows client has no notice yet."
-}
+# every .reg file. Empty while every key has a mapping; ExcludedApps maps, but from
+# excludedWindowsApps, not the bundle ids.
+MAC_ONLY = {}
 # Mac keys written under another name or shape on Windows.
 RENAMED = {
     mp.KEY_GROUP_PREFIX: "PolicyGroups entry (PolicyGroups) or KnowledgeGroup.<name> (perGroup)"

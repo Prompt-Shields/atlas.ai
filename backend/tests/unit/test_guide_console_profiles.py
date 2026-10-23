@@ -2,7 +2,7 @@
 
 The fixtures in ``tests/fixtures/guide_console`` are copied from promptly-guide, not
 made here. Each folder holds a console document and what promptly-guide's own scripts
-wrote for it at main after promptly-guide#310:
+wrote for it at main after promptly-guide#310 and #315:
 
   * ``example``: promptly-guide ``deploy/console.example.json``;
   * ``full``: the console from ``Scripts/console/test_make_windows_policy.py``'s
@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -35,7 +36,7 @@ CASES = ("example", "full")
 # Every key Guide reads from a profile: promptly-guide
 # Sources/GuideCore/ManagedSettings.swift (ManagedKeys.all), the cloud switches, the
 # knowledge sources and groups, and sign-in. Copied from there at main after
-# promptly-guide#284.
+# promptly-guide#315.
 MANAGED_KEYS = {
     "ExcludedApps",
     "ExcludedWindowTitles",
@@ -206,7 +207,7 @@ def test_a_windows_app_that_is_not_an_executable_is_refused() -> None:
 
 # ── The Work client's 90-day notices (promptly-guide#284) ──────────────────
 # The same cases as promptly-guide Scripts/console/test_make_profiles.py's
-# WorkClientNotices: on for a group of admins, never for everyone, Mac only.
+# WorkClientNotices: on for a group of admins, never for everyone.
 
 
 def test_the_notices_are_for_a_group_with_a_key_of_its_own() -> None:
@@ -236,13 +237,50 @@ def test_the_notices_off_write_nothing_and_must_be_a_switch() -> None:
         profiles.build(console)
 
 
-def test_the_notices_are_left_out_on_windows() -> None:
+# The Windows half (promptly-guide#315): the same cases as
+# Scripts/console/test_make_windows_policy.py's WorkClientNotices. A machine policy, set
+# only in the policy for the admins' PCs.
+
+
+def test_on_windows_only_the_admins_group_gets_the_notices() -> None:
+    _, reg, _ = windows.build_windows(_console("full"), [("finance", "sales")])
+    key = profiles.KEY_WORK_CLIENT_NOTICES
+    assert key not in reg["promptly-guide-everyone.reg"][1]
+    assert key not in reg["promptly-guide-groups-sales.reg"][1]
+    assert reg["promptly-guide-groups-finance.reg"][1][key] is True
+    assert reg["promptly-guide-groups-finance+sales.reg"][1][key] is True
+    files, _ = windows.files(_console("full"))
+    finance = files["promptly-guide-groups-finance.reg"].decode("utf-16-le")
+    assert f'"{key}"=dword:00000001' in finance
+
+
+def test_on_windows_per_group_the_notices_are_the_groups_own_value(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(windows, "GROUPS", "perGroup")
+    key = profiles.KEY_WORK_CLIENT_NOTICES
+    policy_keys, reg, _ = windows.build_windows(_console("full"))
+    assert reg["promptly-guide-group-finance.reg"][1][f"{key}.finance"] is True
+    assert f"{key}.sales" not in reg["promptly-guide-group-sales.reg"][1]
+    assert f'valueName="{key}.finance"' in windows.admx(policy_keys)
+
+
+def test_on_windows_the_notices_are_a_machine_policy_in_their_own_category() -> None:
+    files, _ = windows.files(_console("full"))
+    admx = files[windows.ADMX_FILE].decode("utf-8")
+    key = profiles.KEY_WORK_CLIENT_NOTICES
+    policy = re.search(rf'<policy name="{key}" ([^>]*)>\s*<parentCategory ref="([^"]+)"', admx)
+    assert policy is not None
+    assert 'class="Machine"' in policy.group(1)
+    assert policy.group(2) == "WorkClient"
+    assert key not in windows.MAC_ONLY
+
+
+def test_on_windows_the_notices_are_never_for_everyone() -> None:
     console = _console("full")
-    assert console["groups"]["finance"]["workClientNotices"] is True
-    files, _ = windows.files(console)
-    for name, content in files.items():
-        text = content.decode("utf-16") if name.endswith(".reg") else content.decode("utf-8")
-        assert "WorkClientNotices" not in text, name
+    console["everyone"]["workClientNotices"] = True
+    with pytest.raises(profiles.ConsoleError, match="admins only"):
+        windows.files(console)
 
 
 # ── Groups from Atlas over SCIM (promptly-guide#310) ──────────────────────
