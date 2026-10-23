@@ -65,22 +65,29 @@ export function workClientView(e: WorkClientEntitlements): WorkClientView {
 }
 
 /**
- * GET /billing/guided-steps (promptly-guide #62): the month's hosted guided steps
- * against the Work client's pool. Step counts only; the backend sends no money.
+ * GET /billing/guided-steps (promptly-guide #62): the Work client's pool, the hard cap,
+ * and the hosted guided steps of months that have closed. Step counts only; the
+ * backend sends no money. The open month's count is never sent (promptly-guide
+ * decision P9): in a small organisation it would show one person's use.
  */
-export interface GuidedSteps {
+export interface ClosedStepMonth {
   /** The UTC calendar month, "YYYY-MM". */
   period: string;
+  /** Hosted steps served that month, for the whole organisation. */
   used: number;
+}
+
+export interface GuidedSteps {
+  /** The open UTC calendar month, "YYYY-MM". Its count is shown once it ends. */
+  period: string;
+  /** Steps the Work client includes each month, at today's seats. */
   pool: number;
-  /** Steps left in the pool, never below 0. */
-  remaining: number;
-  /** Steps above the pool this month; 0 with the organisation's own endpoint. */
-  overage: number;
   /** On: hosted steps stop at the pool until the month turns. Off by default. */
   hard_cap: boolean;
   own_endpoint: boolean;
   work_client: boolean;
+  /** Newest first; months with no hosted steps are left out. */
+  closed_months: ClosedStepMonth[];
 }
 
 /** The first day of the month after `period`, at 00:00 UTC, when the pool starts again. */

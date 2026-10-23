@@ -11,7 +11,7 @@ says, answers them that way. Change the file in promptly-guide first, then copy 
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -22,7 +22,7 @@ from app.auth.jwt import create_access_token
 from app.main import app
 from app.models.guide_adoption import ADOPTION_KINDS
 from app.routers.guide import guide_now
-from tests.conftest import TEST_TENANT_ID, TestSessionLocal, auth_header
+from tests.conftest import TEST_TENANT_ID, TestSessionLocal, auth_header, ensure_tenant
 from tests.unit import firebase_keys as keys
 from tests.unit.guide_db import guide_resolvers  # noqa: F401
 
@@ -106,6 +106,18 @@ async def _scim_groups(client: AsyncClient, groups: dict[str, list[str]]) -> Non
         assert r.status_code == 201, r.text
 
 
+async def _work_client(days: int, own_endpoint: bool) -> None:
+    """Day 0 `days` ago by the DB server's clock, which the route reckons by too."""
+    from sqlalchemy import func, select
+
+    async with TestSessionLocal() as s:
+        now = await s.scalar(select(func.now()))
+        tenant = await ensure_tenant(s, TEST_TENANT_ID)
+        tenant.work_client_started_at = now - timedelta(days=days)
+        tenant.own_endpoint_declared_at = now if own_endpoint else None
+        await s.commit()
+
+
 async def _send(client: AsyncClient, request: dict, headers: dict[str, str]):
     return await client.request(
         request["method"], "/" + request["path"], json=request.get("body"), headers=headers
@@ -138,6 +150,7 @@ def test_the_contract_covers_every_call_guide_makes() -> None:
         "api/v1/guide/adoption",
         "api/v1/guide/approved-tools",
         "api/v1/guide/groups",
+        "api/v1/guide/work-client",
     }
 
 
@@ -158,6 +171,8 @@ async def test_atlas_answers_as_guide_reads(client: AsyncClient, interaction: di
         await _use_cases(given["use_cases"])
     if "scim_groups" in given:
         await _scim_groups(client, given["scim_groups"])
+    if "work_client_days" in given:
+        await _work_client(given["work_client_days"], given.get("own_endpoint_declared", False))
     token = keys.token(overrides={"email": given["email"]}) if "email" in given else keys.token()
     headers = auth_header(token)
     if given.get("already_counted"):
