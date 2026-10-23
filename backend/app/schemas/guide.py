@@ -138,6 +138,18 @@ class GuideGroupsOut(BaseModel):
     groups: list[str]
 
 
+class GuideWorkClientOut(BaseModel):
+    """Where the organisation stands on the free Work client's 90-day rule
+    (promptly-guide #52), for Guide to tell admins and to refuse Promptly's hosted
+    model once the 90 days are over. Organisation-wide facts only: nothing here is
+    about the person asking (E4)."""
+
+    # None while day 0 has not been recorded: the 90 days have not begun.
+    free_client_status: Literal["active", "grace_ending", "endpoint_required"] | None
+    # Whole days until the 90 end, rounded up; 0 once they have; None before day 0.
+    days_left: int | None
+
+
 class GuideScimTokenOut(BaseModel):
     """Shown once. Give it, and the tenant URL, to the identity provider."""
 
