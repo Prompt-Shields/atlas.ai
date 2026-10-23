@@ -176,6 +176,46 @@ and these **secrets**: `AZURE_CLIENT_ID_DEV`/`_PROD`, `AZURE_TENANT_ID`,
 Infrastructure is defined in `infra/main.bicep` with per-environment parameters
 under `infra/environments/`.
 
+### Scheduled billing jobs
+
+Container Apps jobs in `infra/modules/container-apps.bicep` run the billing
+commands from `backend/scripts/` on the backend image. Secrets are Key Vault
+references by name; no key is ever stored in this repository.
+
+| Job | Command | Schedule (UTC) | Default |
+|---|---|---|---|
+| `<prefix>-stepmeter-job` | `python -m scripts.stripe_step_meter` (#45) | hourly, at :07 | `--dry-run` |
+| seat-sync processor | slot reserved in the Bicep, filled when that processor lands | — | — |
+| conversion report | `python -m scripts.stripe_conversion` (#41) | monthly, **manual** (below) | — |
+
+**Turning the step meter live.** The dry run reads the database, prints what it
+would post to the job's logs, and posts nothing. To post to Stripe:
+
+1. Create a Stripe restricted key that may write meter events and nothing else.
+2. Store it in the environment's Key Vault as the secret `stripe-step-meter-key`.
+3. Set `param stripeStepMeterLive = true` in `infra/environments/<env>.bicepparam`
+   and deploy. The job then runs with `--live` and reads the key as
+   `STRIPE_SECRET_KEY`.
+
+Setting it back to `false` returns the job to a dry run. Each increment carries its
+own idempotency key, so a retry or an extra run never bills a step twice. A run
+exits non-zero, and the execution shows as failed, when a row was dead-lettered or an
+organisation failed; check the job's logs in Log Analytics.
+
+**Monthly conversion report (manual).** Not scheduled: it needs a restricted,
+read-only Stripe key (subscriptions, invoices, quotes and prices, nothing else) that
+has not been created yet, and its CSV belongs in the finance folder, not in job logs.
+Once a month, whoever holds that key runs, from `backend/` with `DATABASE_URL` and
+`JWT_SECRET_KEY` set:
+
+```bash
+python -m scripts.stripe_conversion --dry-run   # what it would read; no calls
+STRIPE_SECRET_KEY=<read-only key> python -m scripts.stripe_conversion --live > conversion-YYYY-MM.csv
+```
+
+It changes nothing in Stripe and reads the database in a read-only transaction. Keep
+the CSV in the finance folder and nothing else.
+
 ---
 
 ## Contributing
