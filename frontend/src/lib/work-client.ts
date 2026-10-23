@@ -80,8 +80,11 @@ export interface ClosedStepMonth {
 export interface GuidedSteps {
   /** The open UTC calendar month, "YYYY-MM". Its count is shown once it ends. */
   period: string;
-  /** Steps the Work client includes each month, at today's seats. */
-  pool: number;
+  /**
+   * Steps the Work client includes each month, at today's seats. Null while Atlas has
+   * no pool size configured; no hosted step is served until it has.
+   */
+  pool: number | null;
   /** On: hosted steps stop at the pool until the month turns. Off by default. */
   hard_cap: boolean;
   own_endpoint: boolean;

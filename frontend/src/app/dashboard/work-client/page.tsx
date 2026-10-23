@@ -181,7 +181,9 @@ function GuidedStepsSection({ locale }: { locale: string }) {
       {steps && steps.work_client && !steps.own_endpoint && (
         <>
           <p className="mt-2 text-sm text-gray-700" data-testid="guided-steps-pool">
-            {t('workClient.steps.pool', { pool: steps.pool })}
+            {steps.pool === null
+              ? t('workClient.steps.poolUnknown')
+              : t('workClient.steps.pool', { pool: steps.pool })}
           </p>
           <p className="mt-2 text-sm text-gray-700" data-testid="guided-steps-open-month">
             {t('workClient.steps.openMonth', { month: monthName(steps.period), date })}

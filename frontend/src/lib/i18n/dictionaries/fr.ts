@@ -119,6 +119,7 @@ const fr: Dictionary = {
       ownEndpoint:
         'Guide répond depuis le point de terminaison propre de votre organisation : aucune étape guidée n’est comptée ici.',
       pool: 'La réserve est de {pool} étapes par mois.',
+      poolUnknown: 'La taille de la réserve n’est pas encore configurée : aucune étape hébergée n’est servie.',
       openMonth: '{month} : le décompte sera disponible à la fin du mois, le {date}. Il n’est montré que pour des mois entiers, afin de ne pas révéler l’usage d’une seule personne.',
       closedHeading: 'Mois terminés',
       closedUsed: '{used} étapes',

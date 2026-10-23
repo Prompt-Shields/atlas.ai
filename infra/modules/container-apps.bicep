@@ -433,8 +433,11 @@ var keyVaultUri = 'https://${keyVaultName}${az.environment().suffixes.keyvaultDn
 // organisation's Work client step overage to Stripe's guided_step meter.
 // Idempotent per increment, so a retry or a late extra run never bills twice.
 // Dry run unless stripeStepMeterLive is true: it then also references the
-// Key Vault secret stripe-step-meter-key (a restricted key that may write
-// meter events and nothing else), which must exist before that deploy.
+// Key Vault secrets stripe-step-meter-key (a restricted key that may write
+// meter events and nothing else) and guided-steps-pool-per-user (the Work
+// client's steps per provisioned user, a commercial term kept out of this
+// public repository), which must both exist before that deploy. Without the
+// second the job posts nothing: the overage cannot be told from the pool.
 var stepMeterStripeSecret = stripeStepMeterLive
   ? [
       {
@@ -442,11 +445,17 @@ var stepMeterStripeSecret = stripeStepMeterLive
         keyVaultUrl: '${keyVaultUri}/secrets/stripe-step-meter-key'
         identity: managedIdentity.id
       }
+      {
+        name: 'guided-steps-pool-per-user'
+        keyVaultUrl: '${keyVaultUri}/secrets/guided-steps-pool-per-user'
+        identity: managedIdentity.id
+      }
     ]
   : []
 var stepMeterStripeEnv = stripeStepMeterLive
   ? [
       { name: 'STRIPE_SECRET_KEY', secretRef: 'stripe-step-meter-key' }
+      { name: 'GUIDED_STEPS_POOL_PER_USER', secretRef: 'guided-steps-pool-per-user' }
     ]
   : []
 
