@@ -133,6 +133,16 @@ def reactivate_meter(meter_id: str):
     return _plain(stripe.billing.Meter.reactivate(meter_id))
 
 
+# --- Meter events (step_overage.py) ----------------------------------------
+
+
+def create_meter_event(*, idempotency_key: str, **kwargs):
+    """Post one meter event. ``idempotency_key`` is required: a retried post
+    must be the same request, so Stripe answers it once."""
+    _configure()
+    return _plain(stripe.billing.MeterEvent.create(idempotency_key=idempotency_key, **kwargs))
+
+
 # --- Enterprise subscriptions (enterprise.py) ------------------------------
 
 
