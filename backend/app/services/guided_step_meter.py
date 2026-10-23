@@ -62,7 +62,11 @@ class ReportRejected(ValueError):
 
 @dataclass(frozen=True)
 class PoolStatus:
-    """One organisation's month, as the gateway and the administrator see it."""
+    """One organisation's month, as the gateway and billing see it.
+
+    The administrator never gets the open month's `used`, `remaining` or
+    `overage`: see `closed_months()`.
+    """
 
     period: str  # "2026-10"
     seats: int  # the Work client's provisioned users
@@ -140,6 +144,38 @@ async def _used(db: AsyncSession, tenant_id: uuid.UUID, period: str) -> int:
         )
     )
     return steps or 0
+
+
+# How many closed months the administrator's view lists, newest first.
+CLOSED_MONTHS_SHOWN = 12
+
+
+@dataclass(frozen=True)
+class ClosedMonth:
+    """A month that has ended, and the hosted steps it counted."""
+
+    period: str  # "2026-09"
+    used: int
+
+
+async def closed_months(
+    db: AsyncSession, tenant_id: uuid.UUID, *, now: datetime, limit: int = CLOSED_MONTHS_SHOWN
+) -> list[ClosedMonth]:
+    """The organisation's months before the one `now` falls in, newest first.
+
+    What the administrator sees (promptly-guide decision P9): a month's count
+    is shown only once the month has closed. The open month's count changes
+    with every step, so in a small organisation, or read before and after one
+    session, it would show one person's use (E4). Billing and the hard cap
+    still read the open month through `pool_status()`.
+    """
+    rows = await db.execute(
+        select(GuidedStepCount.period, GuidedStepCount.steps)
+        .where(GuidedStepCount.tenant_id == tenant_id, GuidedStepCount.period < period_of(now))
+        .order_by(GuidedStepCount.period.desc())
+        .limit(limit)
+    )
+    return [ClosedMonth(period=period, used=steps) for period, steps in rows.all()]
 
 
 async def pool_status(db: AsyncSession, tenant: Tenant, *, now: datetime) -> PoolStatus:

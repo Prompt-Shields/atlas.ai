@@ -185,7 +185,7 @@ references by name; no key is ever stored in this repository.
 | Job | Command | Schedule (UTC) | Default |
 |---|---|---|---|
 | `<prefix>-stepmeter-job` | `python -m scripts.stripe_step_meter` (#45) | hourly, at :07 | `--dry-run` |
-| seat-sync processor | slot reserved in the Bicep, filled when that processor lands | — | — |
+| `<prefix>-seatsync-job` | `python -m scripts.stripe_seat_sync` (#51) | hourly, at :37 | `--dry-run` |
 | conversion report | `python -m scripts.stripe_conversion` (#41) | monthly, **manual** (below) | — |
 
 **Turning the step meter live.** The dry run reads the database, prints what it
@@ -202,6 +202,23 @@ own idempotency key, so a retry or an extra run never bills a step twice. A run
 exits non-zero, and the execution shows as failed, when a row was dead-lettered or an
 organisation failed; check the job's logs in Log Analytics.
 
+**Turning the seat sync live.** The seat sync sends the seat-count updates queued in
+`billing_outbox` when Stripe was unreachable at a user's first login. The dry run reads
+the database, prints what it would send to the job's logs, and changes nothing. To send
+to Stripe:
+
+1. Create a Stripe restricted key that may write subscriptions and nothing else.
+2. Store it in the environment's Key Vault as the secret `stripe-seat-sync-key`.
+3. Set `param stripeSeatSyncLive = true` in `infra/environments/<env>.bicepparam`
+   and deploy. The job then runs with `--live` and reads the key as
+   `STRIPE_SECRET_KEY`.
+
+Setting it back to `false` returns the job to a dry run. The two switches are
+independent: either job can be live while the other stays dry. Each row's request
+carries its own idempotency key, and only the newest row per organisation is sent, so a
+retry or an extra run never changes a subscription twice. As with the step meter, a run
+exits non-zero when a row was dead-lettered or an organisation failed.
+
 **Monthly conversion report (manual).** Not scheduled: it needs a restricted,
 read-only Stripe key (subscriptions, invoices, quotes and prices, nothing else) that
 has not been created yet, and its CSV belongs in the finance folder, not in job logs.
@@ -215,6 +232,32 @@ STRIPE_SECRET_KEY=<read-only key> python -m scripts.stripe_conversion --live > c
 
 It changes nothing in Stripe and reads the database in a read-only transaction. Keep
 the CSV in the finance folder and nothing else.
+
+### Promptly Plus prices
+
+No Plus amount is kept in this repository (it is public). The owner sets the Plus
+prices in Stripe and points Atlas at them:
+
+1. In the Stripe Dashboard, create two recurring Prices on the Plus product: one
+   billed every month and one billed every year, in the same currency. The amounts
+   are set there and nowhere else.
+2. Set the environment variables `STRIPE_PRICE_PLUS_MONTHLY` and
+   `STRIPE_PRICE_PLUS_YEARLY` to those Prices' ids (`price_…`), next to
+   `STRIPE_SECRET_KEY`.
+
+Checkout charges those Prices. The amounts and the yearly saving shown to the user
+are read from the same Price objects and cached for ten minutes
+(`backend/app/services/plus_checkout.py`). To change an amount, create a new Price
+(Stripe amounts cannot be edited) and update the variable. If either variable is
+unset, or its Price is archived, unreadable or does not bill monthly/yearly, Plus is
+not offered at all: no price is shown, no checkout starts, and the backend logs
+`plus_offer_unavailable` with the reason. Run `python -m scripts.stripe_portal`
+afterwards so the customer portal offers the same Prices as plan switches.
+
+The enterprise catalogue (`backend/app/services/billing/catalog.py`) works the same
+way: its Prices have lookup keys, and their amounts come from a JSON file kept
+outside the repository (`STRIPE_CATALOG_AMOUNTS_FILE`), applied by
+`python -m scripts.stripe_catalog`.
 
 ---
 

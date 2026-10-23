@@ -113,14 +113,16 @@ const fr: Dictionary = {
       note: 'Un profil de configuration peut désactiver le modèle cloud, jamais l’activer : il s’active dans Guide, sur chaque Mac.',
     },
     steps: {
-      heading: 'Étapes guidées ce mois-ci',
-      loadError: 'Impossible de charger les étapes guidées du mois : {error}',
+      heading: 'Étapes guidées',
+      loadError: 'Impossible de charger les étapes guidées : {error}',
       noWorkClient: 'Il n’y a pas de client Work, donc pas de réserve d’étapes guidées.',
       ownEndpoint:
         'Guide répond depuis le point de terminaison propre de votre organisation : aucune étape guidée n’est comptée ici.',
-      used: '{used} étapes utilisées sur {pool}',
-      remaining: 'Il reste {remaining} étapes dans la réserve. Elle repart à zéro le {date}.',
-      overage: '{overage} étapes au-delà de la réserve ce mois-ci. Elles sont facturées en dépassement.',
+      pool: 'La réserve est de {pool} étapes par mois.',
+      openMonth: '{month} : le décompte sera disponible à la fin du mois, le {date}. Il n’est montré que pour des mois entiers, afin de ne pas révéler l’usage d’une seule personne.',
+      closedHeading: 'Mois terminés',
+      closedUsed: '{used} étapes',
+      noClosedMonths: 'Aucune étape hébergée n’a été comptée dans un mois terminé.',
       capLabel: 'S’arrêter à la réserve (plafond strict)',
       capOff:
         'Désactivé : une fois la réserve utilisée, Guide continue de répondre avec des étapes hébergées, et les étapes au-delà de la réserve sont facturées en dépassement.',
@@ -130,7 +132,7 @@ const fr: Dictionary = {
         'Activer le plafond strict ? Les étapes hébergées s’arrêteront une fois la réserve du mois utilisée.',
       capOffConfirm:
         'Désactiver le plafond strict ? Les étapes au-delà de la réserve seront servies et facturées en dépassement.',
-      note: 'Une étape guidée est un écran lu avec une réponse du modèle hébergé par Promptly. Les étapes répondues sur le Mac ou par votre propre point de terminaison ne sont jamais comptées. Le décompte vaut pour toute l’organisation : Atlas n’enregistre pas qui a utilisé une étape. Promptly n’héberge pas encore de modèle : le décompte reste à 0 d’ici là.',
+      note: 'Une étape guidée est un écran lu avec une réponse du modèle hébergé par Promptly. Les étapes répondues sur le Mac ou par votre propre point de terminaison ne sont jamais comptées. Le décompte vaut pour toute l’organisation : Atlas n’enregistre pas qui a utilisé une étape. Promptly n’héberge pas encore de modèle : rien n’est compté d’ici là.',
     },
     dayNinety: {
       heading: 'Ce qui se passe au jour 90',
