@@ -188,6 +188,7 @@ const en = {
       cloudModelDisabled: 'Turn off the cloud model (answers come from the Mac only)',
       requireEUProcessing: 'Use a cloud model only where requests are processed in the EU',
       memoryOff: 'Turn off memory',
+      workClientNotices: 'Show the 90-day notices to this group’s Macs (admins only)',
       skillPacksOff: 'Skill packs to turn off',
       excludedApps: 'Apps Guide never looks at (Mac)',
       excludedWindowsApps: 'Apps Guide never looks at (Windows)',

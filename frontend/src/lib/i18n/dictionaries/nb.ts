@@ -182,6 +182,7 @@ const nb: Dictionary = {
       cloudModelDisabled: 'Slå av skymodellen (svar bare fra Mac-en)',
       requireEUProcessing: 'Bruk bare en skymodell der forespørsler behandles i EU',
       memoryOff: 'Slå av minnet',
+      workClientNotices: 'Vis 90-dagersvarslene på Mac-ene i denne gruppen (bare administratorer)',
       skillPacksOff: 'Ferdighetspakker som skal slås av',
       excludedApps: 'Apper Guide aldri ser på (Mac)',
       excludedWindowsApps: 'Apper Guide aldri ser på (Windows)',

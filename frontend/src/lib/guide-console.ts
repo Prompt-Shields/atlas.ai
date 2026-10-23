@@ -17,6 +17,8 @@ export interface ConsoleSection {
   cloudModelDisabled?: boolean;
   requireEUProcessing?: boolean;
   memoryOff?: boolean;
+  /** Groups only: the Work client's 90-day notices on these Macs, an admin's. Mac only. */
+  workClientNotices?: boolean;
   adoptionTeam?: string;
   excludedApps?: string[];
   excludedWindowsApps?: string[];

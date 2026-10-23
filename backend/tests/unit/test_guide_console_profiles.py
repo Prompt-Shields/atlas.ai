@@ -2,7 +2,7 @@
 
 The fixtures in ``tests/fixtures/guide_console`` are copied from promptly-guide, not
 made here. Each folder holds a console document and what promptly-guide's own scripts
-wrote for it at main cec96d4:
+wrote for it at main after promptly-guide#284:
 
   * ``example``: promptly-guide ``deploy/console.example.json``;
   * ``full``: the console from ``Scripts/console/test_make_windows_policy.py``'s
@@ -34,7 +34,8 @@ CASES = ("example", "full")
 
 # Every key Guide reads from a profile: promptly-guide
 # Sources/GuideCore/ManagedSettings.swift (ManagedKeys.all), the cloud switches, the
-# knowledge sources and groups, and sign-in. Copied from there at main cec96d4.
+# knowledge sources and groups, and sign-in. Copied from there at main after
+# promptly-guide#284.
 MANAGED_KEYS = {
     "ExcludedApps",
     "ExcludedWindowTitles",
@@ -44,6 +45,7 @@ MANAGED_KEYS = {
     "SkillPackFolders",
     "AtlasURL",
     "AdoptionTeam",
+    "WorkClientNotices",
 }
 OTHER_KEYS = {
     "CloudModelDisabled",
@@ -59,8 +61,11 @@ OTHER_KEYS = {
     "SSOGroupsClaim",
     "SSOGroupsValidForHours",
 }
-# The only switches a profile may carry, and only ever as true: each turns something off.
+# The switches that turn something off, which a profile only ever carries as true.
 RESTRICTING_SWITCHES = {"CloudModelDisabled", "CloudRequireEUProcessing", "MemoryDisabled"}
+# The one switch that turns something on: the Work client's 90-day notices, shown to an
+# admin's Mac only, for a group. It reads nothing and sends nothing (promptly-guide#284).
+NOTICE_SWITCHES = {"WorkClientNotices"}
 
 
 def _console(case: str) -> dict:
@@ -126,11 +131,12 @@ def test_the_same_settings_give_the_same_uuids() -> None:
 
 
 def test_every_switch_written_turns_something_off() -> None:
+    allowed = RESTRICTING_SWITCHES | NOTICE_SWITCHES | {"KnowledgeGroup"}
     for profile in profiles.build(_console("full")).values():
         for key, value in profiles.settings_of(profile).items():
             if isinstance(value, bool):
                 assert value is True, key
-                assert _base(key) in RESTRICTING_SWITCHES | {"KnowledgeGroup"}, key
+                assert _base(key) in allowed, key
 
 
 def test_false_writes_nothing_rather_than_a_managed_off() -> None:
@@ -192,3 +198,44 @@ def test_a_windows_app_that_is_not_an_executable_is_refused() -> None:
     profiles.build(console)  # the Mac side does not read it
     with pytest.raises(profiles.ConsoleError, match="excludedWindowsApps"):
         windows.files(console)
+
+
+# ── The Work client's 90-day notices (promptly-guide#284) ──────────────────
+# The same cases as promptly-guide Scripts/console/test_make_profiles.py's
+# WorkClientNotices: on for a group of admins, never for everyone, Mac only.
+
+
+def test_the_notices_are_for_a_group_with_a_key_of_its_own() -> None:
+    console = _console("example")
+    console["groups"]["sales"]["workClientNotices"] = True
+    built = profiles.build(console)
+    group = profiles.settings_of(built["promptly-guide-group-sales.mobileconfig"])
+    assert group["WorkClientNotices.sales"] is True
+    everyone = profiles.settings_of(built[profiles.EVERYONE_FILE])
+    assert "WorkClientNotices" not in everyone
+
+
+def test_the_notices_are_never_for_everyone() -> None:
+    console = _console("example")
+    console["everyone"]["workClientNotices"] = True
+    with pytest.raises(profiles.ConsoleError, match="admins only"):
+        profiles.build(console)
+
+
+def test_the_notices_off_write_nothing_and_must_be_a_switch() -> None:
+    console = _console("example")
+    console["groups"]["sales"]["workClientNotices"] = False
+    keys = [k for p in profiles.build(console).values() for k in profiles.settings_of(p)]
+    assert not any(k.startswith("WorkClientNotices") for k in keys)
+    console["groups"]["sales"]["workClientNotices"] = "yes"
+    with pytest.raises(profiles.ConsoleError, match="true or false"):
+        profiles.build(console)
+
+
+def test_the_notices_are_left_out_on_windows() -> None:
+    console = _console("full")
+    assert console["groups"]["finance"]["workClientNotices"] is True
+    files, _ = windows.files(console)
+    for name, content in files.items():
+        text = content.decode("utf-16") if name.endswith(".reg") else content.decode("utf-8")
+        assert "WorkClientNotices" not in text, name

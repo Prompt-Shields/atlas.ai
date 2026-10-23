@@ -70,7 +70,8 @@
       ],
       "packFolders": [
         "~/Finance packs"
-      ]
+      ],
+      "workClientNotices": true
     },
     "sales": {
       "adoptionTeam": "Sales",

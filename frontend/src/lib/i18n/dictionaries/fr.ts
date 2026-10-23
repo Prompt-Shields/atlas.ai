@@ -185,6 +185,7 @@ const fr: Dictionary = {
       cloudModelDisabled: 'Désactiver le modèle cloud (réponses du Mac seulement)',
       requireEUProcessing: 'N’utiliser un modèle cloud que si les requêtes sont traitées dans l’UE',
       memoryOff: 'Désactiver la mémoire',
+      workClientNotices: 'Afficher les avis des 90 jours sur les Mac de ce groupe (administrateurs uniquement)',
       skillPacksOff: 'Packs de compétences à désactiver',
       excludedApps: 'Apps que Guide ne regarde jamais (Mac)',
       excludedWindowsApps: 'Apps que Guide ne regarde jamais (Windows)',

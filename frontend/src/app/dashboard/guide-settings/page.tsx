@@ -79,6 +79,13 @@ function SectionFields({
           checked={section.memoryOff === true}
           onChange={(on) => set('memoryOff', on)}
         />
+        {!everyone && (
+          <Switch
+            label={t('guideConsole.fields.workClientNotices')}
+            checked={section.workClientNotices === true}
+            onChange={(on) => set('workClientNotices', on)}
+          />
+        )}
       </div>
 
       <fieldset>
