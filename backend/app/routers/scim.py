@@ -23,6 +23,12 @@ The subset Entra's provisioning uses (RFC 7643/7644):
   GET    /ServiceProviderConfig
 
 Errors use SCIM's own shape (`urn:ietf:params:scim:api:messages:2.0:Error`).
+
+Every change is written to the audit log (`audit.audit_logs`) in the same transaction:
+`scim.user.created|updated|deleted` and `scim.group.created|updated|deleted`, with no
+actor (the identity provider made it) and only directory data in the details: names,
+external ids, `active`, and which members came and went. A PATCH or PUT that changes
+nothing (Entra re-sends the same values on every cycle) writes no entry.
 """
 
 from __future__ import annotations
@@ -40,6 +46,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth.scim_token import require_scim_tenant
 from app.database import DB_SESSION
 from app.models.guide_scim import GuideScimGroup, GuideScimMember, GuideScimUser
+from app.services.audit import log_audit_event
 
 router = APIRouter(prefix="/scim/v2", tags=["SCIM"])
 
@@ -50,6 +57,9 @@ ERROR_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:Error"
 PATCH_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:PatchOp"
 MEDIA_TYPE = "application/scim+json"
 MAX_PAGE = 200
+# Member ids listed in one audit entry; a larger change keeps its counts.
+AUDIT_MEMBER_IDS = 100
+_ACTIONS = {"created": "create", "updated": "update", "deleted": "delete"}
 
 _FILTER_RE = re.compile(r'^\s*(\w+)\s+eq\s+"((?:[^"\\]|\\.)*)"\s*$', re.IGNORECASE)
 _MEMBER_PATH_RE = re.compile(r'^members\[value\s+eq\s+"([^"]+)"\]$', re.IGNORECASE)
@@ -135,6 +145,55 @@ def _text(value: Any, field: str, limit: int) -> str:
     return value.strip()
 
 
+async def _audit(
+    db: AsyncSession,
+    request: Request,
+    tenant_id: uuid.UUID,
+    event_type: str,
+    resource_id: uuid.UUID,
+    details: dict[str, Any],
+) -> None:
+    """One audit entry for a change the identity provider made. Flushed, not
+    committed: it lands with the change or not at all. `event_type` is
+    `scim.<user|group>.<created|updated|deleted>`."""
+    _, kind, done = event_type.split(".")
+    await log_audit_event(
+        db,
+        event_type=event_type,
+        action=_ACTIONS[done],
+        tenant_id=tenant_id,
+        resource_type=f"scim_{kind}",
+        resource_id=str(resource_id),
+        details=details,
+        correlation_id=getattr(request.state, "correlation_id", None),
+    )
+
+
+def _user_state(user: GuideScimUser) -> dict[str, Any]:
+    return {"userName": user.user_name, "externalId": user.external_id, "active": user.active}
+
+
+def _changes(before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any]:
+    """{attribute: {"from": old, "to": new}} for each attribute that changed."""
+    return {k: {"from": before[k], "to": after[k]} for k in after if before[k] != after[k]}
+
+
+async def _member_ids(db: AsyncSession, group_id: uuid.UUID) -> set[uuid.UUID]:
+    rows = await db.execute(
+        select(GuideScimMember.user_id).where(GuideScimMember.group_id == group_id)
+    )
+    return set(rows.scalars())
+
+
+def _member_details(added: set[uuid.UUID], removed: set[uuid.UUID]) -> dict[str, Any]:
+    details: dict[str, Any] = {}
+    for key, ids in (("membersAdded", added), ("membersRemoved", removed)):
+        if ids:
+            listed = sorted(str(i) for i in ids)
+            details[key] = {"count": len(ids), "ids": listed[:AUDIT_MEMBER_IDS]}
+    return details
+
+
 # ── Users ─────────────────────────────────────────────────────────────────────
 
 
@@ -194,6 +253,24 @@ def _apply_user(user: GuideScimUser, values: dict[str, Any]) -> None:
         user.active = _bool(lowered["active"])
 
 
+async def _save_user(
+    db: AsyncSession,
+    request: Request,
+    tenant_id: uuid.UUID,
+    user: GuideScimUser,
+    before: dict[str, Any],
+) -> None:
+    """Checks the name, then commits a PUT or PATCH with its audit entry (none when
+    nothing changed)."""
+    if await _name_taken(db, tenant_id, user.user_name_key, other_than=user.id):
+        raise ScimError(409, "userName is already provisioned", "uniqueness")
+    changed = _changes(before, _user_state(user))
+    if changed:
+        await _write(db, "userName", commit=False)
+        await _audit(db, request, tenant_id, "scim.user.updated", user.id, changed)
+    await _write(db, "userName")
+
+
 @router.get("/Users")
 async def list_users(
     tenant_id: uuid.UUID = Depends(require_scim_tenant),
@@ -240,6 +317,7 @@ async def list_users(
 
 @router.post("/Users")
 async def create_user(
+    request: Request,
     payload: dict[str, Any] = Body(...),
     tenant_id: uuid.UUID = Depends(require_scim_tenant),
     db: AsyncSession = DB_SESSION,
@@ -252,7 +330,9 @@ async def create_user(
         if await _name_taken(db, tenant_id, user.user_name_key):
             raise ScimError(409, "userName is already provisioned", "uniqueness")
         db.add(user)
-        await _write(db, "userName")
+        await _write(db, "userName", commit=False)
+        await _audit(db, request, tenant_id, "scim.user.created", user.id, _user_state(user))
+        await db.commit()
     except ScimError as error:
         return _error(error)
     await db.refresh(user)
@@ -274,20 +354,20 @@ async def get_user(
 @router.put("/Users/{user_id}")
 async def replace_user(
     user_id: str,
+    request: Request,
     payload: dict[str, Any] = Body(...),
     tenant_id: uuid.UUID = Depends(require_scim_tenant),
     db: AsyncSession = DB_SESSION,
 ) -> Response:
     try:
         user = await _user(db, tenant_id, user_id)
+        before = _user_state(user)
         if "userName" not in payload:
             raise ScimError(400, "userName is required", "invalidValue")
         user.external_id = None
         user.active = True
         _apply_user(user, payload)
-        if await _name_taken(db, tenant_id, user.user_name_key, other_than=user.id):
-            raise ScimError(409, "userName is already provisioned", "uniqueness")
-        await _write(db, "userName")
+        await _save_user(db, request, tenant_id, user, before)
     except ScimError as error:
         await db.rollback()
         return _error(error)
@@ -298,12 +378,14 @@ async def replace_user(
 @router.patch("/Users/{user_id}")
 async def patch_user(
     user_id: str,
+    request: Request,
     payload: dict[str, Any] = Body(...),
     tenant_id: uuid.UUID = Depends(require_scim_tenant),
     db: AsyncSession = DB_SESSION,
 ) -> Response:
     try:
         user = await _user(db, tenant_id, user_id)
+        before = _user_state(user)
         for op in _operations(payload):
             kind = str(op.get("op", "")).lower()
             if kind not in ("add", "replace"):
@@ -315,9 +397,7 @@ async def patch_user(
                 _apply_user(user, {str(path): value})
             elif isinstance(value, dict):
                 _apply_user(user, value)
-        if await _name_taken(db, tenant_id, user.user_name_key, other_than=user.id):
-            raise ScimError(409, "userName is already provisioned", "uniqueness")
-        await _write(db, "userName")
+        await _save_user(db, request, tenant_id, user, before)
     except ScimError as error:
         await db.rollback()
         return _error(error)
@@ -328,6 +408,7 @@ async def patch_user(
 @router.delete("/Users/{user_id}")
 async def delete_user(
     user_id: str,
+    request: Request,
     tenant_id: uuid.UUID = Depends(require_scim_tenant),
     db: AsyncSession = DB_SESSION,
 ) -> Response:
@@ -335,8 +416,11 @@ async def delete_user(
         user = await _user(db, tenant_id, user_id)
     except ScimError as error:
         return _error(error)
+    groups = await db.execute(select(func.count()).where(GuideScimMember.user_id == user.id))
+    details = {**_user_state(user), "groupsLeft": groups.scalar_one()}
     await db.execute(delete(GuideScimMember).where(GuideScimMember.user_id == user.id))
     await db.delete(user)
+    await _audit(db, request, tenant_id, "scim.user.deleted", user.id, details)
     await db.commit()
     return Response(status_code=204)
 
@@ -484,6 +568,7 @@ async def list_groups(
 
 @router.post("/Groups")
 async def create_group(
+    request: Request,
     payload: dict[str, Any] = Body(...),
     tenant_id: uuid.UUID = Depends(require_scim_tenant),
     db: AsyncSession = DB_SESSION,
@@ -502,7 +587,11 @@ async def create_group(
         await _write(db, "displayName", commit=False)
         if payload.get("members"):
             await _add_members(db, tenant_id, group, payload["members"])
-        await _write(db, "displayName")
+        await _write(db, "displayName", commit=False)
+        details = {"displayName": group.display_name, "externalId": group.external_id}
+        details |= _member_details(await _member_ids(db, group.id), set())
+        await _audit(db, request, tenant_id, "scim.group.created", group.id, details)
+        await db.commit()
     except ScimError as error:
         await db.rollback()
         return _error(error)
@@ -528,12 +617,15 @@ async def get_group(
 @router.patch("/Groups/{group_id}")
 async def patch_group(
     group_id: str,
+    request: Request,
     payload: dict[str, Any] = Body(...),
     tenant_id: uuid.UUID = Depends(require_scim_tenant),
     db: AsyncSession = DB_SESSION,
 ) -> Response:
     try:
         group = await _group(db, tenant_id, group_id)
+        before = {"displayName": group.display_name, "externalId": group.external_id}
+        members_before = await _member_ids(db, group.id)
         for op in _operations(payload):
             kind = str(op.get("op", "")).lower()
             path = str(op.get("path") or "")
@@ -563,7 +655,15 @@ async def patch_group(
             elif kind in ("replace", "add") and path.lower() == "externalid":
                 group.external_id = None if value is None else _text(value, "externalId", 255)
             # Anything else names an attribute this store does not keep.
-        await _write(db, "displayName")
+        await _write(db, "displayName", commit=False)
+        after = {"displayName": group.display_name, "externalId": group.external_id}
+        members_after = await _member_ids(db, group.id)
+        details = _changes(before, after) | _member_details(
+            members_after - members_before, members_before - members_after
+        )
+        if details:
+            await _audit(db, request, tenant_id, "scim.group.updated", group.id, details)
+        await db.commit()
     except ScimError as error:
         await db.rollback()
         return _error(error)
@@ -574,6 +674,7 @@ async def patch_group(
 @router.delete("/Groups/{group_id}")
 async def delete_group(
     group_id: str,
+    request: Request,
     tenant_id: uuid.UUID = Depends(require_scim_tenant),
     db: AsyncSession = DB_SESSION,
 ) -> Response:
@@ -581,8 +682,14 @@ async def delete_group(
         group = await _group(db, tenant_id, group_id)
     except ScimError as error:
         return _error(error)
+    details = {
+        "displayName": group.display_name,
+        "externalId": group.external_id,
+        "membersLeft": len(await _member_ids(db, group.id)),
+    }
     await db.execute(delete(GuideScimMember).where(GuideScimMember.group_id == group.id))
     await db.delete(group)
+    await _audit(db, request, tenant_id, "scim.group.deleted", group.id, details)
     await db.commit()
     return Response(status_code=204)
 
