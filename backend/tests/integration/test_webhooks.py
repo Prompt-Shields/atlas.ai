@@ -1127,3 +1127,56 @@ async def test_concurrent_module_events_do_not_lose_an_entry(client, monkeypatch
     t = await _load(tid)
     assert set(t.stripe_subscriptions) == {"sub_race_ent", "sub_race_quote"}
     assert modules(t) == {Module.WORK_CLIENT, Module.LEARN}
+
+
+@pytest.mark.asyncio
+async def test_real_signed_event_through_the_sdk(client, monkeypatch):
+    """The route with the real stripe.Webhook.construct_event, not a stub.
+
+    Since stripe-python 15 the SDK's Event is not a dict, so this is the test that
+    sees the route and handlers working on what the SDK actually returns.
+    """
+    import hashlib
+    import hmac
+    import json
+    import time
+
+    from app.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "stripe_webhook_secret", "whsec_route")
+    tid = await _seed_active(customer_id="cus_real_sdk")
+    payload = json.dumps(
+        {
+            "id": "evt_real_sdk_1",
+            "object": "event",
+            "type": "customer.subscription.updated",
+            "created": int(time.time()),
+            "data": {
+                "object": {
+                    "id": "sub_real",
+                    "object": "subscription",
+                    "customer": "cus_real_sdk",
+                    "status": "past_due",
+                    "metadata": {},
+                    "items": {
+                        "object": "list",
+                        "data": [{"id": "si_real", "object": "subscription_item", "quantity": 9}],
+                    },
+                }
+            },
+        }
+    )
+    ts = int(time.time())
+    sig = hmac.new(b"whsec_route", f"{ts}.{payload}".encode(), hashlib.sha256).hexdigest()
+
+    resp = await client.post(
+        "/api/v1/webhooks/stripe",
+        content=payload.encode(),
+        headers={"Stripe-Signature": f"t={ts},v1={sig}"},
+    )
+    assert resp.status_code == 200
+
+    async with TestSessionLocal() as db:
+        t = await db.scalar(select(Tenant).where(Tenant.id == tid))
+        assert t.subscription_status == SubscriptionStatus.PAST_DUE
+        assert t.seats_billed == 9

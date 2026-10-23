@@ -50,7 +50,7 @@ class FakeStripe:
 
     def create_portal_session(self, **kw):
         self.sessions.append(kw)
-        return type("S", (), {"url": "https://billing.stripe.test/p"})()
+        return {"url": "https://billing.stripe.test/p"}
 
 
 @pytest.fixture

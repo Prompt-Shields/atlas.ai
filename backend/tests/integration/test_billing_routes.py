@@ -125,7 +125,7 @@ async def test_checkout_omits_trial_period_when_expired(client, monkeypatch):
 
     def fake_create(**kwargs):
         captured.update(kwargs)
-        return type("S", (), {"url": "https://checkout.stripe.test/abc"})()
+        return {"url": "https://checkout.stripe.test/abc"}
 
     monkeypatch.setattr("app.services.billing.stripe_client.create_checkout_session", fake_create)
 
@@ -151,7 +151,7 @@ async def test_checkout_includes_trial_period_when_days_remain(client, monkeypat
 
     monkeypatch.setattr(
         "app.services.billing.stripe_client.create_checkout_session",
-        lambda **kw: captured.update(kw) or type("S", (), {"url": "u"})(),
+        lambda **kw: captured.update(kw) or {"url": "u"},
     )
 
     _, token = await _seed_tenant_admin(email_verified=True, trial_delta_days=7)
@@ -171,7 +171,7 @@ async def test_checkout_client_reference_id_and_metadata(client, monkeypatch):
 
     monkeypatch.setattr(
         "app.services.billing.stripe_client.create_checkout_session",
-        lambda **kw: captured.update(kw) or type("S", (), {"url": "u"})(),
+        lambda **kw: captured.update(kw) or {"url": "u"},
     )
 
     tid, token = await _seed_tenant_admin(email_verified=True, trial_delta_days=5)
@@ -192,7 +192,7 @@ async def test_checkout_quantity_uses_max5_or_activated(client, monkeypatch):
 
     def fake_create(**kwargs):
         captured_calls.append(dict(kwargs))
-        return type("S", (), {"url": "u"})()
+        return {"url": "u"}
 
     monkeypatch.setattr("app.services.billing.stripe_client.create_checkout_session", fake_create)
 
@@ -227,7 +227,7 @@ async def test_checkout_without_customer_lets_stripe_create_one(client, monkeypa
     captured: dict = {}
     monkeypatch.setattr(
         "app.services.billing.stripe_client.create_checkout_session",
-        lambda **kw: captured.update(kw) or type("S", (), {"url": "u"})(),
+        lambda **kw: captured.update(kw) or {"url": "u"},
     )
 
     _, token = await _seed_tenant_admin(email_verified=True, stripe_customer_id=None)
@@ -248,7 +248,7 @@ async def test_checkout_reuses_existing_customer(client, monkeypatch):
     captured: dict = {}
     monkeypatch.setattr(
         "app.services.billing.stripe_client.create_checkout_session",
-        lambda **kw: captured.update(kw) or type("S", (), {"url": "u"})(),
+        lambda **kw: captured.update(kw) or {"url": "u"},
     )
 
     _, token = await _seed_tenant_admin(email_verified=True, stripe_customer_id="cus_enterprise")
@@ -275,7 +275,7 @@ async def test_checkout_tax_follows_flag(client, monkeypatch, flag):
     captured = {}
     monkeypatch.setattr(
         "app.services.billing.stripe_client.create_checkout_session",
-        lambda **kw: captured.update(kw) or type("S", (), {"url": "u"})(),
+        lambda **kw: captured.update(kw) or {"url": "u"},
     )
 
     _, token = await _seed_tenant_admin(email_verified=True, trial_delta_days=5)
@@ -304,7 +304,7 @@ async def test_portal_requires_stripe_customer_id(client, monkeypatch):
     """Tenant without stripe_customer_id → 409 / no_customer."""
     monkeypatch.setattr(
         "app.services.billing.stripe_client.create_portal_session",
-        lambda **kw: type("S", (), {"url": "u"})(),
+        lambda **kw: {"url": "u"},
     )
 
     _, token = await _seed_tenant_admin(email_verified=True, stripe_customer_id=None)
@@ -321,7 +321,7 @@ async def test_portal_returns_url_when_customer_present(client, monkeypatch):
     """Tenant with stripe_customer_id → 200 with url."""
     monkeypatch.setattr(
         "app.services.billing.stripe_client.create_portal_session",
-        lambda **kw: type("S", (), {"url": "https://portal.stripe.test/xyz"})(),
+        lambda **kw: {"url": "https://portal.stripe.test/xyz"},
     )
 
     _, token = await _seed_tenant_admin(email_verified=True, stripe_customer_id="cus_abc123")
@@ -342,7 +342,7 @@ async def test_portal_enterprise_tenant_gets_enterprise_configuration(client, mo
 
     def fake_create(**kw):
         seen.update(kw)
-        return type("S", (), {"url": "https://portal.stripe.test/ent"})()
+        return {"url": "https://portal.stripe.test/ent"}
 
     monkeypatch.setattr("app.services.billing.stripe_client.create_portal_session", fake_create)
     monkeypatch.setattr(get_settings(), "stripe_portal_configuration_enterprise", "bpc_ent")
