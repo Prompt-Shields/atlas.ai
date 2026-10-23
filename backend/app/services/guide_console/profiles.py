@@ -1,6 +1,6 @@
 """Promptly Guide's admin console, as configuration profiles (promptly-guide N1, option A).
 
-Ported from promptly-guide ``Scripts/console/make-profiles.py`` (main at cec96d4), the
+Ported from promptly-guide ``Scripts/console/make-profiles.py`` (main after promptly-guide#310), the
 file console's reference: the same console document in, the same profiles out, byte for
 byte. ``tests/unit/test_guide_console_profiles.py`` holds that against profiles the
 file console wrote. Change the file console first, then this, never only this.
@@ -46,6 +46,14 @@ KEY_MEMORY_DISABLED = "MemoryDisabled"
 # sends anything: only a person who opted in on their own Mac is ever counted.
 KEY_ATLAS_URL = "AtlasURL"
 KEY_ADOPTION_TEAM = "AdoptionTeam"
+# The Work client's 90-day notices (promptly-guide#52): on for the Macs of the people who
+# look after Guide, by group only, so no employee ever sees one. Reads and sends nothing.
+KEY_WORK_CLIENT_NOTICES = "WorkClientNotices"
+NOTICES_FIELD = "workClientNotices"
+# The organisation provisions its directory into Atlas.AI over SCIM (#58), so signed-in
+# Macs ask Atlas for each person's groups. Without it they never ask: the request names
+# the person to Atlas, and an organisation that does not use SCIM would get nothing back.
+KEY_GROUPS_FROM_ATLAS = "GroupsFromAtlas"
 LIST_KEYS = {
     "excludedApps": "ExcludedApps",
     "excludedWindowTitles": "ExcludedWindowTitles",
@@ -113,8 +121,8 @@ EVERYONE_FIELDS = {
     *LIST_KEYS,
     *WINDOWS_FIELDS,
 }
-GROUP_FIELDS = {"memoryOff", "adoptionTeam", *LIST_KEYS, *WINDOWS_FIELDS}
-ATLAS_FIELDS = {"url"}
+GROUP_FIELDS = {"memoryOff", "adoptionTeam", NOTICES_FIELD, *LIST_KEYS, *WINDOWS_FIELDS}
+ATLAS_FIELDS = {"url", "scimGroups"}
 SOURCE_FIELDS = {"id", "name", "folder", "enabled", "groups"}
 TOP_FIELDS = {
     "organisation",
@@ -280,7 +288,8 @@ def _team(section, where):
 
 def _atlas(section):
     """The Atlas.AI address, for the everyone profile: https, a host, nothing else that
-    could carry a credential."""
+    could carry a credential. With scimGroups, also GroupsFromAtlas: the organisation's
+    groups come from Atlas over SCIM, so Guide asks Atlas for them."""
     if not isinstance(section, dict):
         raise ConsoleError("atlas: must be an object.")
     _unknown(section, ATLAS_FIELDS, "atlas")
@@ -292,7 +301,10 @@ def _atlas(section):
             f"atlas.url: {value!r} is not an https address such as "
             "https://atlas.example.com, with no user, query or fragment."
         )
-    return {KEY_ATLAS_URL: url}
+    out = {KEY_ATLAS_URL: url}
+    if _switch(section, "scimGroups", "atlas"):
+        out[KEY_GROUPS_FROM_ATLAS] = True
+    return out
 
 
 def build(console):
@@ -312,6 +324,11 @@ def build(console):
     everyone = console.get("everyone", {})
     if not isinstance(everyone, dict):
         raise ConsoleError("everyone: must be an object.")
+    if NOTICES_FIELD in everyone:
+        raise ConsoleError(
+            f"everyone.{NOTICES_FIELD}: the 90-day notices are for admins only. Set it "
+            f"in the group of people who look after Guide (groups.<name>.{NOTICES_FIELD})."
+        )
     _unknown(everyone, EVERYONE_FIELDS, "everyone")
     settings = {}
     for field, key in (
@@ -368,6 +385,8 @@ def build(console):
         group_settings = {KEY_GROUP_PREFIX + name: True}
         if _switch(section, "memoryOff", f"groups.{name}"):
             group_settings[f"{KEY_MEMORY_DISABLED}.{name}"] = True
+        if _switch(section, NOTICES_FIELD, f"groups.{name}"):
+            group_settings[f"{KEY_WORK_CLIENT_NOTICES}.{name}"] = True
         team = _team(section, f"groups.{name}")
         if team is not None:
             group_settings[f"{KEY_ADOPTION_TEAM}.{name}"] = team
