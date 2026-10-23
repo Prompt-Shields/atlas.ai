@@ -1,6 +1,6 @@
 """Promptly Guide's admin console, as configuration profiles (promptly-guide N1, option A).
 
-Ported from promptly-guide ``Scripts/console/make-profiles.py`` (main after promptly-guide#284), the
+Ported from promptly-guide ``Scripts/console/make-profiles.py`` (main after promptly-guide#310), the
 file console's reference: the same console document in, the same profiles out, byte for
 byte. ``tests/unit/test_guide_console_profiles.py`` holds that against profiles the
 file console wrote. Change the file console first, then this, never only this.
@@ -50,6 +50,10 @@ KEY_ADOPTION_TEAM = "AdoptionTeam"
 # look after Guide, by group only, so no employee ever sees one. Reads and sends nothing.
 KEY_WORK_CLIENT_NOTICES = "WorkClientNotices"
 NOTICES_FIELD = "workClientNotices"
+# The organisation provisions its directory into Atlas.AI over SCIM (#58), so signed-in
+# Macs ask Atlas for each person's groups. Without it they never ask: the request names
+# the person to Atlas, and an organisation that does not use SCIM would get nothing back.
+KEY_GROUPS_FROM_ATLAS = "GroupsFromAtlas"
 LIST_KEYS = {
     "excludedApps": "ExcludedApps",
     "excludedWindowTitles": "ExcludedWindowTitles",
@@ -118,7 +122,7 @@ EVERYONE_FIELDS = {
     *WINDOWS_FIELDS,
 }
 GROUP_FIELDS = {"memoryOff", "adoptionTeam", NOTICES_FIELD, *LIST_KEYS, *WINDOWS_FIELDS}
-ATLAS_FIELDS = {"url"}
+ATLAS_FIELDS = {"url", "scimGroups"}
 SOURCE_FIELDS = {"id", "name", "folder", "enabled", "groups"}
 TOP_FIELDS = {
     "organisation",
@@ -284,7 +288,8 @@ def _team(section, where):
 
 def _atlas(section):
     """The Atlas.AI address, for the everyone profile: https, a host, nothing else that
-    could carry a credential."""
+    could carry a credential. With scimGroups, also GroupsFromAtlas: the organisation's
+    groups come from Atlas over SCIM, so Guide asks Atlas for them."""
     if not isinstance(section, dict):
         raise ConsoleError("atlas: must be an object.")
     _unknown(section, ATLAS_FIELDS, "atlas")
@@ -296,7 +301,10 @@ def _atlas(section):
             f"atlas.url: {value!r} is not an https address such as "
             "https://atlas.example.com, with no user, query or fragment."
         )
-    return {KEY_ATLAS_URL: url}
+    out = {KEY_ATLAS_URL: url}
+    if _switch(section, "scimGroups", "atlas"):
+        out[KEY_GROUPS_FROM_ATLAS] = True
+    return out
 
 
 def build(console):

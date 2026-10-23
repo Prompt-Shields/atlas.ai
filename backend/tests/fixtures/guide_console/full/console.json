@@ -36,7 +36,8 @@
     "groupsValidForHours": 24
   },
   "atlas": {
-    "url": "https://atlas.nordlys.no"
+    "url": "https://atlas.nordlys.no",
+    "scimGroups": true
   },
   "knowledgeSources": [
     {

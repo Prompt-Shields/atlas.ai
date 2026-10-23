@@ -94,6 +94,10 @@ Registry: HKLM\SOFTWARE\Policies\PromptShields\PromptlyGuide, value SSOGroupsCla
       <string id="SSOGroupsValidForHours_Explain">1 to 168. Not configured: 12.
 
 Registry: HKLM\SOFTWARE\Policies\PromptShields\PromptlyGuide, value SSOGroupsValidForHours.</string>
+      <string id="GroupsFromAtlas">Groups come from Atlas.AI over SCIM</string>
+      <string id="GroupsFromAtlas_Explain">Enabled: your directory provisions people and groups into your Atlas.AI over SCIM, and Guide asks Atlas for a signed-in person's groups. Disabled or not configured: Guide never asks, since the request names the person to Atlas.
+
+Registry: HKLM\SOFTWARE\Policies\PromptShields\PromptlyGuide, value GroupsFromAtlas.</string>
       <string id="PolicyGroups">Groups this PC is in</string>
       <string id="PolicyGroups_Explain">The groups this PC is in, which decide its knowledge sources. Set in one policy per combination of groups: two policies setting it would conflict.
 

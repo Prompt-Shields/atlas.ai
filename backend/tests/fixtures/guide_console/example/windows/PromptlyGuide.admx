@@ -190,6 +190,16 @@
         <decimal id="SSOGroupsValidForHours_Number" valueName="SSOGroupsValidForHours" required="true" minValue="1" maxValue="168" />
       </elements>
     </policy>
+    <policy name="GroupsFromAtlas" class="Machine" displayName="$(string.GroupsFromAtlas)" explainText="$(string.GroupsFromAtlas_Explain)" key="SOFTWARE\Policies\PromptShields\PromptlyGuide" valueName="GroupsFromAtlas">
+      <parentCategory ref="SignIn" />
+      <supportedOn ref="SUPPORTED_Guide" />
+      <enabledValue>
+        <decimal value="1" />
+      </enabledValue>
+      <disabledValue>
+        <delete />
+      </disabledValue>
+    </policy>
     <policy name="PolicyGroups" class="Machine" displayName="$(string.PolicyGroups)" explainText="$(string.PolicyGroups_Explain)" presentation="$(presentation.PolicyGroups)" key="SOFTWARE\Policies\PromptShields\PromptlyGuide\PolicyGroups">
       <parentCategory ref="Knowledge" />
       <supportedOn ref="SUPPORTED_Guide" />

@@ -2,7 +2,7 @@
 
 The fixtures in ``tests/fixtures/guide_console`` are copied from promptly-guide, not
 made here. Each folder holds a console document and what promptly-guide's own scripts
-wrote for it at main after promptly-guide#284:
+wrote for it at main after promptly-guide#310:
 
   * ``example``: promptly-guide ``deploy/console.example.json``;
   * ``full``: the console from ``Scripts/console/test_make_windows_policy.py``'s
@@ -60,12 +60,16 @@ OTHER_KEYS = {
     "SSOProcessingArea",
     "SSOGroupsClaim",
     "SSOGroupsValidForHours",
+    "GroupsFromAtlas",
 }
 # The switches that turn something off, which a profile only ever carries as true.
 RESTRICTING_SWITCHES = {"CloudModelDisabled", "CloudRequireEUProcessing", "MemoryDisabled"}
 # The one switch that turns something on: the Work client's 90-day notices, shown to an
 # admin's Mac only, for a group. It reads nothing and sends nothing (promptly-guide#284).
 NOTICE_SWITCHES = {"WorkClientNotices"}
+# Groups from Atlas over SCIM (promptly-guide#310): signed-in Macs ask this Atlas for a
+# person's groups. It reads nothing on the Mac; only true is ever written.
+ATLAS_SWITCHES = {"GroupsFromAtlas"}
 
 
 def _console(case: str) -> dict:
@@ -131,7 +135,7 @@ def test_the_same_settings_give_the_same_uuids() -> None:
 
 
 def test_every_switch_written_turns_something_off() -> None:
-    allowed = RESTRICTING_SWITCHES | NOTICE_SWITCHES | {"KnowledgeGroup"}
+    allowed = RESTRICTING_SWITCHES | NOTICE_SWITCHES | ATLAS_SWITCHES | {"KnowledgeGroup"}
     for profile in profiles.build(_console("full")).values():
         for key, value in profiles.settings_of(profile).items():
             if isinstance(value, bool):
@@ -239,3 +243,38 @@ def test_the_notices_are_left_out_on_windows() -> None:
     for name, content in files.items():
         text = content.decode("utf-16") if name.endswith(".reg") else content.decode("utf-8")
         assert "WorkClientNotices" not in text, name
+
+
+# ── Groups from Atlas over SCIM (promptly-guide#310) ──────────────────────
+# The same cases as promptly-guide Scripts/console/test_make_profiles.py's
+# AdoptionFigures scimGroups tests.
+
+
+def test_scim_groups_are_said_only_when_set() -> None:
+    console = _console("example")
+    console["atlas"] = {"url": "https://atlas.nordlys.example"}
+    for profile in profiles.build(console).values():
+        assert "GroupsFromAtlas" not in profiles.settings_of(profile)
+    console["atlas"]["scimGroups"] = False
+    built = profiles.build(console)
+    assert "GroupsFromAtlas" not in profiles.settings_of(built[profiles.EVERYONE_FILE])
+    console["atlas"]["scimGroups"] = True
+    built = profiles.build(console)
+    assert profiles.settings_of(built[profiles.EVERYONE_FILE])["GroupsFromAtlas"] is True
+    for name, profile in built.items():
+        if name != profiles.EVERYONE_FILE:
+            assert not any(k.startswith("GroupsFromAtlas") for k in profiles.settings_of(profile))
+
+
+def test_scim_groups_that_is_not_a_switch_is_refused() -> None:
+    console = _console("example")
+    console["atlas"] = {"url": "https://atlas.nordlys.example", "scimGroups": "yes"}
+    with pytest.raises(profiles.ConsoleError, match="true or false"):
+        profiles.build(console)
+
+
+def test_scim_groups_need_an_address() -> None:
+    console = _console("example")
+    console["atlas"] = {"scimGroups": True}
+    with pytest.raises(profiles.ConsoleError, match=r"atlas\.url"):
+        profiles.build(console)

@@ -1,6 +1,6 @@
 """Windows registry policy from the same console document (promptly-guide #73).
 
-Ported from promptly-guide ``Scripts/console/make-windows-policy.py`` (main after promptly-guide#284):
+Ported from promptly-guide ``Scripts/console/make-windows-policy.py`` (main after promptly-guide#310):
 the ADMX template and its en-US ADML that an admin imports into Intune ("Import ADMX")
 or the Group Policy central store, and ``.reg`` files with the values a PC would end up
 with, for trying a build on a test PC. ``tests/unit/test_guide_console_profiles.py``
@@ -201,6 +201,15 @@ POLICIES = [
         "SignIn",
         "Hours a sign-in's groups stay in force",
         "1 to 168. Not configured: 12.",
+    ),
+    (
+        mp.KEY_GROUPS_FROM_ATLAS,
+        "switch",
+        "SignIn",
+        "Groups come from Atlas.AI over SCIM",
+        "Enabled: your directory provisions people and groups into your Atlas.AI over SCIM, and "
+        "Guide asks Atlas for a signed-in person's groups. Disabled or not configured: Guide never "
+        "asks, since the request names the person to Atlas.",
     ),
 ]
 PROCESSING_AREAS = [

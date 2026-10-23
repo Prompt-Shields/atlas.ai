@@ -228,6 +228,7 @@ const fr: Dictionary = {
       heading: 'Chiffres d’adoption',
       url: 'Votre adresse Atlas.AI',
       hint: 'Où vont les chiffres d’adoption. Rien n’est envoyé pour qui n’a pas choisi de les partager sur son propre Mac.',
+      scimGroups: 'Les groupes des personnes viennent de cet Atlas.AI par SCIM : les Mac connectés les lui demandent',
     },
     cannot: {
       heading: 'Ce que ces réglages ne peuvent pas faire',

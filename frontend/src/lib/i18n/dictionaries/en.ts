@@ -231,6 +231,7 @@ const en = {
       heading: 'Adoption figures',
       url: 'Your Atlas.AI address',
       hint: 'Where adoption figures go. Nothing is sent for anyone who has not chosen to share them on their own Mac.',
+      scimGroups: 'People’s groups come from this Atlas.AI over SCIM, so signed-in Macs ask it for them',
     },
     cannot: {
       heading: 'What these settings cannot do',

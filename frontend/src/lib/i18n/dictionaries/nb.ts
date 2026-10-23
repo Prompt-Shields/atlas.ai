@@ -225,6 +225,7 @@ const nb: Dictionary = {
       heading: 'Bruksstatistikk',
       url: 'Atlas.AI-adressen deres',
       hint: 'Hvor bruksstatistikken sendes. Ingenting sendes for noen som ikke selv har valgt å dele den på sin egen Mac.',
+      scimGroups: 'Gruppene kommer fra denne Atlas.AI via SCIM, så Mac-er med pålogging spør den om dem',
     },
     cannot: {
       heading: 'Det disse innstillingene ikke kan',

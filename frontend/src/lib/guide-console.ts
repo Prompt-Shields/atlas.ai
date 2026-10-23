@@ -54,7 +54,8 @@ export interface ConsoleDocument {
   groups?: Record<string, ConsoleSection>;
   knowledgeSources?: KnowledgeSource[];
   signIn?: SignIn;
-  atlas?: { url: string };
+  /** scimGroups: people's groups come from Atlas over SCIM, so signed-in Macs ask for them. */
+  atlas?: { url: string; scimGroups?: boolean };
 }
 
 export interface ConsoleFile {
