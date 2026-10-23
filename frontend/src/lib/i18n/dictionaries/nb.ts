@@ -183,6 +183,7 @@ const nb: Dictionary = {
       cloudModelDisabled: 'Slå av skymodellen (svar bare fra Mac-en)',
       requireEUProcessing: 'Bruk bare en skymodell der forespørsler behandles i EU',
       memoryOff: 'Slå av minnet',
+      workClientNotices: 'Vis 90-dagersvarslene på Mac-ene i denne gruppen (bare administratorer)',
       skillPacksOff: 'Ferdighetspakker som skal slås av',
       excludedApps: 'Apper Guide aldri ser på (Mac)',
       excludedWindowsApps: 'Apper Guide aldri ser på (Windows)',
@@ -225,6 +226,7 @@ const nb: Dictionary = {
       heading: 'Bruksstatistikk',
       url: 'Atlas.AI-adressen deres',
       hint: 'Hvor bruksstatistikken sendes. Ingenting sendes for noen som ikke selv har valgt å dele den på sin egen Mac.',
+      scimGroups: 'Gruppene kommer fra denne Atlas.AI via SCIM, så Mac-er med pålogging spør den om dem',
     },
     cannot: {
       heading: 'Det disse innstillingene ikke kan',
