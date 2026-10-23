@@ -160,6 +160,17 @@ class Settings(BaseSettings):
     # it off with STRIPE_AUTOMATIC_TAX=false.
     stripe_automatic_tax: bool = True
 
+    # ── Guided steps (promptly-guide#62) ──────────────────────────────
+    # Each plan's monthly allowance of hosted guided steps. Commercial terms,
+    # so set per deployment and never committed (CONTRIBUTING.md). Unset (the
+    # default), that plan is served no hosted step and the Work client's
+    # overage is not posted, because neither can be told from the pool without
+    # it (app/services/guided_steps.py). The price of a step above the pool is
+    # its Stripe Price.
+    guided_steps_free_monthly: int | None = Field(default=None, ge=0)
+    guided_steps_plus_monthly: int | None = Field(default=None, ge=0)
+    guided_steps_pool_per_user: int | None = Field(default=None, ge=0)
+
     # ── Feature Flags ─────────────────────────────────────────────────
     research_all_data: bool = False
 
