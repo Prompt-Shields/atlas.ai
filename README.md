@@ -233,6 +233,32 @@ STRIPE_SECRET_KEY=<read-only key> python -m scripts.stripe_conversion --live > c
 It changes nothing in Stripe and reads the database in a read-only transaction. Keep
 the CSV in the finance folder and nothing else.
 
+### Promptly Plus prices
+
+No Plus amount is kept in this repository (it is public). The owner sets the Plus
+prices in Stripe and points Atlas at them:
+
+1. In the Stripe Dashboard, create two recurring Prices on the Plus product: one
+   billed every month and one billed every year, in the same currency. The amounts
+   are set there and nowhere else.
+2. Set the environment variables `STRIPE_PRICE_PLUS_MONTHLY` and
+   `STRIPE_PRICE_PLUS_YEARLY` to those Prices' ids (`price_…`), next to
+   `STRIPE_SECRET_KEY`.
+
+Checkout charges those Prices. The amounts and the yearly saving shown to the user
+are read from the same Price objects and cached for ten minutes
+(`backend/app/services/plus_checkout.py`). To change an amount, create a new Price
+(Stripe amounts cannot be edited) and update the variable. If either variable is
+unset, or its Price is archived, unreadable or does not bill monthly/yearly, Plus is
+not offered at all: no price is shown, no checkout starts, and the backend logs
+`plus_offer_unavailable` with the reason. Run `python -m scripts.stripe_portal`
+afterwards so the customer portal offers the same Prices as plan switches.
+
+The enterprise catalogue (`backend/app/services/billing/catalog.py`) works the same
+way: its Prices have lookup keys, and their amounts come from a JSON file kept
+outside the repository (`STRIPE_CATALOG_AMOUNTS_FILE`), applied by
+`python -m scripts.stripe_catalog`.
+
 ---
 
 ## Contributing

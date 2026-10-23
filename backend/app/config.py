@@ -144,8 +144,11 @@ class Settings(BaseSettings):
     # Where the portal sends a Plus customer back to (promptly-guide#64): the
     # Personal account page, which promptly-guide#63 has still to build.
     billing_portal_return_url_plus: str = "http://localhost:3000/account"
-    # Promptly Plus price ids (promptly-guide#61), offered as plan switches in
-    # the Plus portal. Ids only: amounts live in Stripe, never in this repo.
+    # Promptly Plus price ids (promptly-guide#61): used for Plus checkout,
+    # offered as plan switches in the Plus portal, and read from Stripe for
+    # the amounts shown to the user (services/plus_checkout.py). Ids only:
+    # amounts live in Stripe, never in this repo. Unset means Plus is not
+    # offered.
     stripe_price_plus_monthly: str = ""
     stripe_price_plus_yearly: str = ""
     billing_checkout_success_url: str = "http://localhost:3000/dashboard/billing?upgraded=1"
