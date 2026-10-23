@@ -128,6 +128,11 @@ Atlas hosts a SCIM 2.0 endpoint at `/api/v1/scim/v2`. The customer's Entra ID pr
 
   Entra also sends names, emails, titles, managers and phone numbers. Atlas accepts them and stores none of them.
 - **What Guide reads.** `GET /api/v1/guide/groups` uses the Guide caller's Firebase token. Atlas reads the token's email for this endpoint only, matches it, case-insensitively, against a provisioned, active `userName`, and returns that person's group names. Someone deprovisioned (`active` false) or never provisioned gets no groups. So does a sign-in whose token does not say `email_verified: true`: a Firebase project may let people sign in with an address nobody checked, and that must not get them another person's groups. The answer is an empty list rather than a `403`, because Guide drops its groups at once on an empty list but keeps the last ones, until they lapse, on any refusal. Nothing about what Guide does is joined to these tables.
+- **Audit.** Each change is written to `audit.audit_logs` in the same transaction as the change. The events are `scim.user.created|updated|deleted`, `scim.group.created|updated|deleted`, and `scim.token.created|revoked`.
+  - **Actor.** Changes from the identity provider have no actor. Token changes record the admin who made them.
+  - **Details.** Only directory data: `userName`, `externalId`, `active` and `displayName`, as from and to values for an update. Membership changes are the SCIM ids of the members added and removed, up to 100 of each with a count. The token and its hash are never recorded.
+  - **No-ops.** A PATCH or PUT that changes nothing writes no entry, and neither does a refused write. Entra re-sends the same values on every cycle.
+  - **Not recorded.** Nothing about Guide use: this is the directory as the identity provider sent it.
 - **Checking it end to end.** `backend/scripts/scim_entra_lifecycle.py` replays Entra's provisioning pattern for two test people, in this order:
   - look up, create, and add to groups;
   - move between groups, rename a group, and change an email;
@@ -157,3 +162,29 @@ A figure is still a share of the people who opted in, in a team of ten or more, 
 ## Lessons people finished (promptly-guide #78)
 
 `lesson` is a kind like the others: offered by the tenant, agreed to by each person, counted by team and month through the same gate. A category is a pack and one of its lessons, for example `chatgpt/custom-instructions-what-to-write`, with the same id rules as a topic. A figure says what share of a team of ten or more finished that lesson, in a band; a lesson fewer than ten finished is left out. Nothing says who finished one, how long it took or what they answered: Guide does not send it. The pilot report shows lessons as their own section, "Lessons people finished".
+
+## Guide's settings, as profiles for the MDM (promptly-guide N1, option A)
+
+Atlas holds the same settings as Guide's file console (promptly-guide
+`docs/admin-console.md`) and turns them into the files an admin uploads to the MDM. It
+never writes to a Mac itself, and calls no MDM API: the MDM stays the only channel that
+changes a Mac. Writing through the MDM's API is a later step.
+
+- **Settings.** `GET` and `PUT /api/v1/guide/console` (TenantAdmin) hold one console
+  document per organisation, in the file console's own shape
+  (`deploy/console.example.json`), in `grc.guide_console_settings`. A document the file
+  console would refuse is refused with its words (`422 GUIDE_CONSOLE_INVALID`). The
+  document can only switch things off or name the organisation's content (exclusions,
+  packs off, pack folders, knowledge sources, groups, sign-in, where adoption figures
+  go); there is no field that turns on anything that reads, so the person's opt-ins stay
+  in their own `privacy.json`.
+- **Files.** `GET /api/v1/guide/console/profiles.zip`, `/profiles/<file>` (one
+  `.mobileconfig`) and `/windows.zip` (ADMX, en-US ADML, test `.reg` files). They are the
+  bytes promptly-guide's `make-profiles.py` and `make-windows-policy.py` write for the
+  same document: `app/services/guide_console` is a port of their pure parts, and
+  `tests/unit/test_guide_console_profiles.py` compares its output with files those scripts
+  wrote (`tests/fixtures/guide_console`). Change the file console first, then the port.
+- **Audit.** Every save that changes something is `guide.console.updated`, with each
+  changed key's old and new value per profile, the document's hash and the admin's note.
+  Every download is `guide.console.downloaded`, with the revision and each file's hash,
+  so a profile found in the MDM can be traced to the settings it came from.

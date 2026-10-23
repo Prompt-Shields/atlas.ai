@@ -16,12 +16,15 @@ Resilience contract
   ``billing_outbox`` for later retry.
 * ``InvalidRequestError`` (logic / data bug) is logged + alerted; it is
   **NOT** enqueued (retrying a logic bug is pointless).
+* Queued rows are sent by ``seat_outbox`` (``scripts/stripe_seat_sync.py``).
 * ``on_first_login`` additionally wraps its entire body so that any
   unexpected exception (e.g. a failed DB query before the Stripe call) is
   logged and swallowed — a billing glitch must never cause a login 500.
 """
 
 from __future__ import annotations
+
+import uuid
 
 import stripe
 import structlog
@@ -34,6 +37,32 @@ from app.services.billing import outbox, stripe_client
 
 log = structlog.get_logger()
 SEAT_FLOOR = 5
+OPERATION = "sync_seat"
+
+
+async def activated_users(db: AsyncSession, tenant_id: uuid.UUID) -> int:
+    """The tenant's activated users: those who have logged in at least once."""
+    return (
+        await db.scalar(
+            select(func.count(User.id)).where(
+                User.tenant_id == tenant_id,
+                User.first_login_at.is_not(None),
+            )
+        )
+    ) or 0
+
+
+def seat_quantity(activated: int) -> int:
+    """The seat quantity billed for ``activated`` users (never below the floor)."""
+    return max(SEAT_FLOOR, activated)
+
+
+def has_active_subscription(tenant: Tenant) -> bool:
+    """False during a trial and after cancellation: then no seat is synced."""
+    return tenant.stripe_subscription_item_id is not None and tenant.subscription_status not in (
+        None,
+        SubscriptionStatus.CANCELED,
+    )
 
 
 async def on_first_login(db: AsyncSession, user: User) -> None:
@@ -51,15 +80,7 @@ async def on_first_login(db: AsyncSession, user: User) -> None:
         if tenant is None:
             return
 
-        activated = (
-            await db.scalar(
-                select(func.count(User.id)).where(
-                    User.tenant_id == tenant.id,
-                    User.first_login_at.is_not(None),
-                )
-            )
-        ) or 0
-
+        activated = await activated_users(db, tenant.id)
         await sync_seat_count(db, tenant, activated_users=activated)
     except Exception:
         # Login must never 500 due to seat-sync — log and swallow.
@@ -80,13 +101,10 @@ async def sync_seat_count(db: AsyncSession, tenant: Tenant, *, activated_users: 
     * Neither branch re-raises — the caller (login) must always proceed.
     """
     # Pre-Stripe guard — no-op during trial and after cancellation.
-    if tenant.stripe_subscription_item_id is None or tenant.subscription_status in (
-        None,
-        SubscriptionStatus.CANCELED,
-    ):
+    if not has_active_subscription(tenant):
         return
 
-    quantity = max(SEAT_FLOOR, activated_users)
+    quantity = seat_quantity(activated_users)
 
     try:
         stripe_client.modify_subscription_item(
@@ -103,7 +121,7 @@ async def sync_seat_count(db: AsyncSession, tenant: Tenant, *, activated_users: 
     ):
         await outbox.enqueue(
             db,
-            operation="sync_seat",
+            operation=OPERATION,
             tenant_id=tenant.id,
             payload={"quantity": quantity},
         )
