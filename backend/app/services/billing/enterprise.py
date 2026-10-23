@@ -28,6 +28,8 @@ sales actions, where a failure should be visible, not retried silently.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -39,6 +41,10 @@ from app.services.billing import catalog, stripe_client, tax
 KIND_KEY = "promptly_subscription"
 KIND_ENTERPRISE = "enterprise"
 PILOT_KEY = "promptly_pilot"
+# Written by ``end_pilot`` with the date the pilot ended (UTC, YYYY-MM-DD), so
+# the conversion report can still count a converted pilot as one: PILOT_KEY
+# then reads "false" (promptly-guide#43).
+PILOT_ENDED_KEY = "promptly_pilot_ended"
 
 # Enterprises pay by invoice; there is no card on file for a free client.
 DAYS_UNTIL_DUE = 30
@@ -68,6 +74,16 @@ def _tax() -> dict:
 
 def is_pilot(subscription) -> bool:
     return (subscription.get("metadata") or {}).get(PILOT_KEY) == "true"
+
+
+def pilot_ended_on(subscription) -> str | None:
+    """The date ``end_pilot`` ended this subscription's pilot (YYYY-MM-DD), if it did."""
+    return (subscription.get("metadata") or {}).get(PILOT_ENDED_KEY) or None
+
+
+def was_pilot(subscription) -> bool:
+    """A pilot now, or one that ``end_pilot`` ended (converted or not)."""
+    return is_pilot(subscription) or pilot_ended_on(subscription) is not None
 
 
 def _items_by_lookup_key(subscription) -> dict[str, dict]:
@@ -261,11 +277,20 @@ def remove_module(tenant: Tenant, module: str, *, proration_behavior: str = "non
     )
 
 
-def end_pilot(tenant: Tenant):
-    """Mark a pilot as converted; add the platform fee if a module is already paid."""
+def end_pilot(tenant: Tenant, *, now: datetime | None = None):
+    """Mark a pilot as converted; add the platform fee if a module is already paid.
+
+    Clearing ``PILOT_KEY`` also records ``PILOT_ENDED_KEY`` with today's date
+    (UTC), so the subscription still says it was a pilot. Stripe merges
+    metadata on modify, so the other keys stay as they were. A customer that
+    was not a pilot gets no ``PILOT_ENDED_KEY``.
+    """
     sub = _require_subscription(tenant)
     items = _items_by_lookup_key(sub)
-    params: dict = {"metadata": {PILOT_KEY: "false"}, **_tax()}
+    metadata = {PILOT_KEY: "false"}
+    if is_pilot(sub):
+        metadata[PILOT_ENDED_KEY] = (now or datetime.now(UTC)).astimezone(UTC).date().isoformat()
+    params: dict = {"metadata": metadata, **_tax()}
     if _paid_module_keys(items) and catalog.PLATFORM_FEE_ANNUAL not in items:
         params["items"] = [{"price": catalog.price_id(catalog.PLATFORM_FEE_ANNUAL), "quantity": 1}]
         params["proration_behavior"] = "always_invoice"

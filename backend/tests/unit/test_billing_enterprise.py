@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from datetime import UTC, datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -387,24 +388,69 @@ def test_every_change_follows_automatic_tax(stripe_mock, monkeypatch, change, en
 # ---------------------------------------------------------------------------
 
 
+# end_pilot clears the flag and records the day the pilot ended, so a converted
+# pilot still counts as one in the conversion report (promptly-guide#43).
+ENDED = datetime(2026, 10, 23, 23, 30, tzinfo=UTC)
+ENDED_METADATA = {enterprise.PILOT_KEY: "false", enterprise.PILOT_ENDED_KEY: "2026-10-23"}
+
+
 def test_end_pilot_adds_fee_when_a_module_is_paid(stripe_mock):
     t = _tenant(stripe_customer_id="cus_1")
     stripe_mock.subscriptions = [
         _sub(_item(catalog.WORK_CLIENT, 50), _item(catalog.ATLAS_ANNUAL, 50), pilot=True)
     ]
-    enterprise.end_pilot(t)
+    enterprise.end_pilot(t, now=ENDED)
+    kw = stripe_mock.modify_subscription.call_args.kwargs
+    assert kw["metadata"] == ENDED_METADATA
+    assert kw["items"] == [{"price": PRICE_IDS[catalog.PLATFORM_FEE_ANNUAL], "quantity": 1}]
+
+
+def test_end_pilot_without_modules_clears_flag_and_records_the_day(stripe_mock):
+    t = _tenant(stripe_customer_id="cus_1")
+    stripe_mock.subscriptions = [_sub(_item(catalog.WORK_CLIENT, 50), pilot=True)]
+    enterprise.end_pilot(t, now=ENDED)
+    kw = stripe_mock.modify_subscription.call_args.kwargs
+    kw.pop("automatic_tax", None)  # covered by test_every_change_follows_automatic_tax
+    assert kw == {"metadata": ENDED_METADATA}
+
+
+def test_end_pilot_records_the_utc_day(stripe_mock):
+    t = _tenant(stripe_customer_id="cus_1")
+    stripe_mock.subscriptions = [_sub(_item(catalog.WORK_CLIENT, 50), pilot=True)]
+    # 01:30 on the 24th in Berlin is still the 23rd in UTC.
+    enterprise.end_pilot(t, now=ENDED.astimezone(timezone(timedelta(hours=2))))
+    kw = stripe_mock.modify_subscription.call_args.kwargs
+    assert kw["metadata"][enterprise.PILOT_ENDED_KEY] == "2026-10-23"
+
+
+def test_end_pilot_for_a_customer_that_was_never_a_pilot_records_no_end(stripe_mock):
+    """Not a pilot, a module paid, no fee: the fee is added, no pilot end is invented."""
+    t = _tenant(stripe_customer_id="cus_1")
+    stripe_mock.subscriptions = [
+        _sub(_item(catalog.WORK_CLIENT, 50), _item(catalog.ATLAS_ANNUAL, 50))
+    ]
+    enterprise.end_pilot(t, now=ENDED)
     kw = stripe_mock.modify_subscription.call_args.kwargs
     assert kw["metadata"] == {enterprise.PILOT_KEY: "false"}
     assert kw["items"] == [{"price": PRICE_IDS[catalog.PLATFORM_FEE_ANNUAL], "quantity": 1}]
 
 
-def test_end_pilot_without_modules_only_clears_flag(stripe_mock):
-    t = _tenant(stripe_customer_id="cus_1")
-    stripe_mock.subscriptions = [_sub(_item(catalog.WORK_CLIENT, 50), pilot=True)]
-    enterprise.end_pilot(t)
-    kw = stripe_mock.modify_subscription.call_args.kwargs
-    kw.pop("automatic_tax", None)  # covered by test_every_change_follows_automatic_tax
-    assert kw == {"metadata": {enterprise.PILOT_KEY: "false"}}
+@pytest.mark.parametrize(
+    ("metadata", "pilot", "was", "ended"),
+    [
+        ({enterprise.PILOT_KEY: "true"}, True, True, None),
+        (ENDED_METADATA, False, True, "2026-10-23"),
+        ({enterprise.PILOT_KEY: "false"}, False, False, None),
+        ({enterprise.PILOT_KEY: "false", enterprise.PILOT_ENDED_KEY: ""}, False, False, None),
+        ({}, False, False, None),
+    ],
+    ids=["pilot", "ended", "never", "empty_end", "no_metadata"],
+)
+def test_was_pilot_reads_the_flag_or_the_end(metadata, pilot, was, ended):
+    sub = {"metadata": metadata}
+    assert enterprise.is_pilot(sub) is pilot
+    assert enterprise.was_pilot(sub) is was
+    assert enterprise.pilot_ended_on(sub) == ended
 
 
 def test_end_pilot_on_converted_customer_is_a_no_op(stripe_mock):
