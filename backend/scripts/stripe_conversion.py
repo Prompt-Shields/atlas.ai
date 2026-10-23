@@ -5,7 +5,9 @@ decision 9). It builds the same rows as ``GET /api/v1/admin/conversion``, then
 reads from Stripe, for each company with a Stripe customer, when its first
 module was sold, whether it was quoted and paid, and its pilot flag
 (``app/services/billing/conversion_stripe.py``). One CSV row per company goes
-to standard output, for the finance folder. Keep the CSV there, not the inputs.
+to standard output, for the finance folder. With ``--cohorts`` it prints the
+note's one table instead: the funnel per cohort month and for all of them.
+Keep the CSV there, not the inputs.
 
 Read only: it lists subscriptions, invoices and quotes, and changes nothing in
 Stripe. The database is read in a read-only transaction that is rolled back.
@@ -20,6 +22,8 @@ Usage:
     python -m scripts.stripe_conversion --dry-run
     STRIPE_SECRET_KEY=rk_live_... python -m scripts.stripe_conversion --live \
         > conversion-2026-10.csv
+    STRIPE_SECRET_KEY=rk_live_... python -m scripts.stripe_conversion --live --cohorts \
+        > conversion-cohorts-2026-10.csv
 """
 
 from __future__ import annotations
@@ -48,8 +52,9 @@ async def load_companies() -> list[conversion_report.CompanyRow]:
             await db.rollback()
 
 
-def _plan() -> list[str]:
+def _plan(cohorts: bool) -> list[str]:
     """What a run would read, without calling Stripe or the database."""
+    columns = conversion_stripe.COHORT_COLUMNS if cohorts else conversion_stripe.COLUMNS
     return [
         "read     database  the rows of GET /api/v1/admin/conversion (read-only transaction)",
         *(
@@ -57,7 +62,7 @@ def _plan() -> list[str]:
             for call in conversion_stripe.READS
         ),
         "write    nothing",
-        "print    CSV: " + ",".join(conversion_stripe.COLUMNS),
+        "print    CSV: " + ",".join(columns),
     ]
 
 
@@ -69,11 +74,16 @@ def main(argv: list[str] | None = None) -> int:
         help="print what would be read; call neither Stripe nor the database",
     )
     parser.add_argument("--live", action="store_true", help="allow a live-mode key")
+    parser.add_argument(
+        "--cohorts",
+        action="store_true",
+        help="print the funnel per cohort month instead of one row per company",
+    )
     args = parser.parse_args(argv)
 
     key = get_settings().stripe_secret_key
     if args.dry_run:
-        print("\n".join(_plan()))
+        print("\n".join(_plan(args.cohorts)))
         return 0
     if not key:
         print("STRIPE_SECRET_KEY is not set.", file=sys.stderr)
@@ -86,7 +96,10 @@ def main(argv: list[str] | None = None) -> int:
     companies = asyncio.run(load_companies())
     facts = conversion_stripe.read_all(companies)
     rows = conversion_stripe.join(companies, facts)
-    sys.stdout.write(conversion_stripe.to_csv(rows))
+    if args.cohorts:
+        sys.stdout.write(conversion_stripe.cohorts_to_csv(conversion_stripe.cohorts(rows)))
+    else:
+        sys.stdout.write(conversion_stripe.to_csv(rows))
     partial = sum(bool(f.warnings) for f in facts.values())
     print(
         f"Stripe {mode} mode: {len(rows)} companies, {len(facts)} customers read"
