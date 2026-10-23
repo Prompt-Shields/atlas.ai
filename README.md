@@ -185,7 +185,7 @@ references by name; no key is ever stored in this repository.
 | Job | Command | Schedule (UTC) | Default |
 |---|---|---|---|
 | `<prefix>-stepmeter-job` | `python -m scripts.stripe_step_meter` (#45) | hourly, at :07 | `--dry-run` |
-| seat-sync processor | slot reserved in the Bicep, filled when that processor lands | — | — |
+| `<prefix>-seatsync-job` | `python -m scripts.stripe_seat_sync` (#51) | hourly, at :37 | `--dry-run` |
 | conversion report | `python -m scripts.stripe_conversion` (#41) | monthly, **manual** (below) | — |
 
 **Turning the step meter live.** The dry run reads the database, prints what it
@@ -203,6 +203,23 @@ Setting it back to `false` returns the job to a dry run. Each increment carries 
 own idempotency key, so a retry or an extra run never bills a step twice. A run
 exits non-zero, and the execution shows as failed, when a row was dead-lettered or an
 organisation failed; check the job's logs in Log Analytics.
+
+**Turning the seat sync live.** The seat sync sends the seat-count updates queued in
+`billing_outbox` when Stripe was unreachable at a user's first login. The dry run reads
+the database, prints what it would send to the job's logs, and changes nothing. To send
+to Stripe:
+
+1. Create a Stripe restricted key that may write subscriptions and nothing else.
+2. Store it in the environment's Key Vault as the secret `stripe-seat-sync-key`.
+3. Set `param stripeSeatSyncLive = true` in `infra/environments/<env>.bicepparam`
+   and deploy. The job then runs with `--live` and reads the key as
+   `STRIPE_SECRET_KEY`.
+
+Setting it back to `false` returns the job to a dry run. The two switches are
+independent: either job can be live while the other stays dry. Each row's request
+carries its own idempotency key, and only the newest row per organisation is sent, so a
+retry or an extra run never changes a subscription twice. As with the step meter, a run
+exits non-zero when a row was dead-lettered or an organisation failed.
 
 ### Guided-step allowances
 

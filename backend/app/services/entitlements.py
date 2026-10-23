@@ -7,6 +7,7 @@ Pure functions, no I/O, no DB writes.
 from __future__ import annotations
 
 import enum
+import math
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
@@ -228,3 +229,15 @@ def free_client_grace(tenant: Tenant, *, now: datetime) -> FreeClientGrace:
     else:
         status = FreeClientStatus.ACTIVE
     return FreeClientGrace(status, started, days, ends, paid, own)
+
+
+def free_client_days_left(grace: FreeClientGrace, *, now: datetime) -> int | None:
+    """Whole days until the 90 end, rounded up; 0 once they have; None before day 0.
+
+    An organisation-wide fact, the one Promptly Guide reads with the status
+    (`GET /guide/work-client`) to tell admins when the hosted model stops.
+    `now` MUST be the DB server's now(), as for free_client_grace().
+    """
+    if grace.grace_ends_at is None:
+        return None
+    return max(math.ceil((grace.grace_ends_at - now) / timedelta(days=1)), 0)

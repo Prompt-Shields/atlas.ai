@@ -13,6 +13,7 @@ from app.services.entitlements import (
     FreeClientStatus,
     Module,
     can,
+    free_client_days_left,
     free_client_grace,
     hard_locked,
     has_module,
@@ -312,3 +313,12 @@ def test_start_in_the_future_is_day_zero():
     g = free_client_grace(_started(-1), now=_NOW)
     assert g.days_since_start == 0
     assert g.status is FreeClientStatus.ACTIVE
+
+
+def test_days_left_round_up_and_stop_at_zero():
+    assert free_client_days_left(free_client_grace(_started(10), now=_NOW), now=_NOW) == 80
+    assert free_client_days_left(free_client_grace(_started(89.99), now=_NOW), now=_NOW) == 1
+    assert free_client_days_left(free_client_grace(_started(90), now=_NOW), now=_NOW) == 0
+    assert free_client_days_left(free_client_grace(_started(400), now=_NOW), now=_NOW) == 0
+    not_started = _tenant(plan=Plan.FREE, work_client_started_at=None)
+    assert free_client_days_left(free_client_grace(not_started, now=_NOW), now=_NOW) is None
