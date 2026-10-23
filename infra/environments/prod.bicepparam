@@ -10,3 +10,8 @@ param acrLoginServer = 'aigrcprod.azurecr.io'
 // Set to true only once the Key Vault holds stripe-step-meter-key.
 // See README, "Scheduled billing jobs".
 param stripeStepMeterLive = false
+
+// Hourly Stripe seat sync: false = --dry-run (reads only, sends nothing).
+// Set to true only once the Key Vault holds stripe-seat-sync-key.
+// See README, "Scheduled billing jobs".
+param stripeSeatSyncLive = false
