@@ -10,11 +10,13 @@ Guide (Firebase ID token as Bearer, no device row, no Atlas user):
   GET  /guide/offer                which kinds the organisation offers to count
   GET  /guide/approved-tools       the organisation's sanctioned AI tools, for steering (F14)
   GET  /guide/groups               the signed-in person's SCIM groups, by name (#58)
+  GET  /guide/work-client          the organisation's place in the free client's 90 days (#52)
   POST /guide/adoption             one opted-in person's month: team, month, categories
 
 Admin, SCIM (#58):
   POST   /guide/scim-token         TenantAdmin  make (or replace) the tenant's SCIM token
   DELETE /guide/scim-token         TenantAdmin  revoke it
+  (both audited as `scim.token.created|revoked`; the token and its hash never are)
 
 A Guide Mac is never enrolled as a device here. `devices/register` records
 `user_external_id` on every device, and a per-person row is what Guide's E4
@@ -36,12 +38,13 @@ from fastapi import APIRouter, Depends, Query, Request
 from fastapi import status as http_status
 from fastapi.responses import PlainTextResponse
 from fastapi.security import HTTPAuthorizationCredentials
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import (
     Analyst,
+    CurrentUser,
     TenantAdmin,
     bearer_scheme,
     get_tenant_db_session,
@@ -76,9 +79,12 @@ from app.schemas.guide import (
     GuideRiskOut,
     GuideRiskRowOut,
     GuideScimTokenOut,
+    GuideWorkClientOut,
 )
+from app.services import entitlements as ent
 from app.services import guide_adoption_service as adoption
 from app.services import guide_pilot_report as pilot
+from app.services.audit import log_audit_event
 
 router = APIRouter(prefix="/guide", tags=["Promptly Guide"])
 
@@ -267,6 +273,29 @@ async def guide_approved_tools(
         )
     ).all()
     return GuideApprovedToolsOut(tools=approved_tools([(r.tool, r.data_classes) for r in rows]))
+
+
+@router.get("/work-client", response_model=GuideWorkClientOut)
+async def guide_work_client(
+    caller: GuideCaller = Depends(require_guide_caller),
+    db: AsyncSession = DB_SESSION,
+) -> GuideWorkClientOut:
+    """Where the organisation stands on the free Work client's 90-day rule
+    (promptly-guide #52): `free_client_status` as `GET /billing/entitlements` gives it,
+    and the days left of the 90. Guide reads it to tell admins before the hosted model
+    stops, and to refuse that one route after. Organisation-wide facts only: not why
+    the organisation is exempt, nothing billing-related beyond that, and nothing about
+    the person asking (E4)."""
+    tenant = await db.get(Tenant, caller.tenant_id)
+    if tenant is None:
+        return GuideWorkClientOut(free_client_status=None, days_left=None)
+    # The DB server's now, as the billing route reckons it, so the two never disagree.
+    now = await db.scalar(select(func.now()))
+    grace = ent.free_client_grace(tenant, now=now)
+    return GuideWorkClientOut(
+        free_client_status=grace.status.value if grace.status else None,  # type: ignore[arg-type]
+        days_left=ent.free_client_days_left(grace, now=now),
+    )
 
 
 @router.post("/adoption", response_model=GuideContributionOut)
@@ -572,11 +601,13 @@ async def guide_groups(
 
 @router.post("/scim-token", response_model=GuideScimTokenOut)
 async def make_scim_token(
+    request: Request,
     user: TenantAdmin,
     db: AsyncSession = Depends(get_tenant_db_session),
 ) -> GuideScimTokenOut:
     """A new SCIM token for the tenant's identity provider, shown once. Replaces any
-    token the tenant had: the old one stops working at once."""
+    token the tenant had: the old one stops working at once. Audited; the entry never
+    holds the token or its hash."""
     tenant_id = _tenant_of(user.tenant_id)
     raw, token_hash = generate_scim_token()
     row = (
@@ -586,12 +617,14 @@ async def make_scim_token(
         db.add(GuideScimToken(tenant_id=tenant_id, token_hash=token_hash))
     else:
         row.token_hash = token_hash
+    await _audit_scim_token(db, request, user, tenant_id, "created", replaced=row is not None)
     await db.commit()
     return GuideScimTokenOut(token=raw, endpoint_path="/api/v1/scim/v2")
 
 
 @router.delete("/scim-token", status_code=http_status.HTTP_204_NO_CONTENT)
 async def revoke_scim_token(
+    request: Request,
     user: TenantAdmin,
     db: AsyncSession = Depends(get_tenant_db_session),
 ) -> None:
@@ -601,4 +634,27 @@ async def revoke_scim_token(
     ).scalar_one_or_none()
     if row is not None:
         await db.delete(row)
+        await _audit_scim_token(db, request, user, tenant_id, "revoked")
         await db.commit()
+
+
+async def _audit_scim_token(
+    db: AsyncSession,
+    request: Request,
+    user: CurrentUser,
+    tenant_id: uuid.UUID,
+    done: str,
+    **details: bool,
+) -> None:
+    await log_audit_event(
+        db,
+        event_type=f"scim.token.{done}",
+        action="create" if done == "created" else "delete",
+        actor_id=user.user_id,
+        actor_email=user.email,
+        tenant_id=tenant_id,
+        resource_type="scim_token",
+        resource_id=str(tenant_id),
+        details=details or None,
+        correlation_id=getattr(request.state, "correlation_id", None),
+    )
