@@ -2,7 +2,8 @@
 
 The fixtures in ``tests/fixtures/guide_console`` are copied from promptly-guide, not
 made here. Each folder holds a console document and what promptly-guide's own scripts
-wrote for it at main after promptly-guide#310 and #315:
+wrote for it at main after promptly-guide#310 and #315, with the ``cloudEndpoint``
+field of promptly-guide#338:
 
   * ``example``: promptly-guide ``deploy/console.example.json``;
   * ``full``: the console from ``Scripts/console/test_make_windows_policy.py``'s
@@ -63,6 +64,23 @@ OTHER_KEYS = {
     "SSOGroupsValidForHours",
     "GroupsFromAtlas",
 }
+# The organisation's own model endpoint (promptly-guide#40): ManagedEndpointKeys in
+# promptly-guide Sources/GuideCloud/ManagedEndpoint.swift, copied from there at main after
+# promptly-guide#308. They pin where the cloud model may send and never turn it on.
+ENDPOINT_KEYS = {
+    "CloudProvider",
+    "CloudEndpoint",
+    "CloudModelID",
+    "CloudAPIVersion",
+    "CloudRegion",
+    "CloudDataRegion",
+    "CloudProcessingArea",
+    "CloudAcceptsImages",
+    "CloudZeroRetentionConfirmed",
+}
+# Pins, not switches: false means something (no image; the agreement not confirmed), and
+# neither turns the cloud model on.
+ENDPOINT_PINS = {"CloudAcceptsImages", "CloudZeroRetentionConfirmed"}
 # The switches that turn something off, which a profile only ever carries as true.
 RESTRICTING_SWITCHES = {"CloudModelDisabled", "CloudRequireEUProcessing", "MemoryDisabled"}
 # The one switch that turns something on: the Work client's 90-day notices, shown to an
@@ -116,7 +134,8 @@ def test_the_full_console_covers_every_key_guide_reads() -> None:
         for profile in profiles.build(_console("full")).values()
         for key in profiles.settings_of(profile)
     }
-    assert written == MANAGED_KEYS | OTHER_KEYS
+    # CloudRegion is Bedrock's only; the full console pins Azure, and Bedrock is tested below.
+    assert written == MANAGED_KEYS | OTHER_KEYS | (ENDPOINT_KEYS - {"CloudRegion"})
 
 
 def test_the_example_says_what_is_left_out_on_windows() -> None:
@@ -139,7 +158,7 @@ def test_every_switch_written_turns_something_off() -> None:
     allowed = RESTRICTING_SWITCHES | NOTICE_SWITCHES | ATLAS_SWITCHES | {"KnowledgeGroup"}
     for profile in profiles.build(_console("full")).values():
         for key, value in profiles.settings_of(profile).items():
-            if isinstance(value, bool):
+            if isinstance(value, bool) and key not in ENDPOINT_PINS:
                 assert value is True, key
                 assert _base(key) in allowed, key
 
@@ -316,3 +335,197 @@ def test_scim_groups_need_an_address() -> None:
     console["atlas"] = {"scimGroups": True}
     with pytest.raises(profiles.ConsoleError, match=r"atlas\.url"):
         profiles.build(console)
+
+
+# ── The organisation's own model endpoint (promptly-guide#40) ──────────────
+
+AZURE = {
+    "provider": "azure-openai",
+    "endpoint": "https://nordlys.openai.azure.com",
+    "model": "guide-deployment",
+}
+BEDROCK = {"provider": "bedrock", "region": "eu-north-1", "model": "org-model-v1"}
+
+
+def _with_endpoint(section: object) -> dict:
+    console = _console("example")
+    console["cloudEndpoint"] = section
+    return profiles.build(console)
+
+
+def _everyone_endpoint(section: dict) -> dict:
+    return profiles.settings_of(_with_endpoint(section)[profiles.EVERYONE_FILE])
+
+
+def _refused(section: object, words: str) -> None:
+    with pytest.raises(profiles.ConsoleError) as raised:
+        _with_endpoint(section)
+    assert words in str(raised.value)
+
+
+def test_the_endpoint_keys_are_the_ones_guide_reads() -> None:
+    assert set(profiles.CLOUD_ENDPOINT_KEYS.values()) == ENDPOINT_KEYS
+    assert set(profiles.CLOUD_PROVIDERS) == {
+        "azure-openai",
+        "bedrock",
+        "anthropic",
+        "openai-compatible",
+    }
+
+
+def test_the_everyone_profile_pins_the_endpoint() -> None:
+    s = _everyone_endpoint(
+        {
+            **AZURE,
+            "apiVersion": "2024-10-21",
+            "dataRegion": " EU (Sweden Central) ",
+            "processingArea": "eu",
+            "acceptsImages": False,
+            "zeroRetentionConfirmed": True,
+        }
+    )
+    assert {k: v for k, v in s.items() if k in ENDPOINT_KEYS} == {
+        "CloudProvider": "azure-openai",
+        "CloudEndpoint": "https://nordlys.openai.azure.com",
+        "CloudModelID": "guide-deployment",
+        "CloudAPIVersion": "2024-10-21",
+        "CloudDataRegion": "EU (Sweden Central)",
+        "CloudProcessingArea": "eu",
+        "CloudAcceptsImages": False,
+        "CloudZeroRetentionConfirmed": True,
+    }
+
+
+def test_no_group_profile_carries_the_endpoint() -> None:
+    for name, profile in _with_endpoint(AZURE).items():
+        if name != profiles.EVERYONE_FILE:
+            assert not set(profiles.settings_of(profile)) & ENDPOINT_KEYS, name
+    console = _console("example")
+    console["groups"]["finance"]["cloudEndpoint"] = AZURE
+    with pytest.raises(profiles.ConsoleError):
+        profiles.build(console)
+
+
+def test_no_endpoint_writes_nothing() -> None:
+    for profile in profiles.build(_console("example")).values():
+        assert not set(profiles.settings_of(profile)) & ENDPOINT_KEYS
+
+
+def test_the_endpoint_never_turns_the_cloud_model_on() -> None:
+    # promptly-guide#308's rule: a profile pins and never turns on.
+    _refused({**AZURE, "enabled": True}, "cannot turn the cloud model on")
+    s = _everyone_endpoint(AZURE)
+    assert "CloudModelDisabled" not in s
+    assert {k for k in s if k.startswith("Cloud")} <= ENDPOINT_KEYS | {"CloudRequireEUProcessing"}
+    console = _console("example")
+    console["everyone"]["cloudModelDisabled"] = True
+    console["cloudEndpoint"] = AZURE
+    everyone = profiles.settings_of(profiles.build(console)[profiles.EVERYONE_FILE])
+    assert everyone["CloudModelDisabled"] is True
+
+
+def test_each_provider_with_what_it_needs() -> None:
+    s = _everyone_endpoint(BEDROCK)
+    assert (s["CloudProvider"], s["CloudRegion"], s["CloudModelID"]) == (
+        "bedrock",
+        "eu-north-1",
+        "org-model-v1",
+    )
+    assert "CloudEndpoint" not in s
+    # Guide has a default endpoint and model for Anthropic's API, so neither is needed.
+    s = _everyone_endpoint({"provider": "anthropic"})
+    assert s["CloudProvider"] == "anthropic"
+    assert "CloudModelID" not in s
+    s = _everyone_endpoint(
+        {"provider": "anthropic", "endpoint": "https://gateway.nordlys.no/anthropic"}
+    )
+    assert s["CloudEndpoint"] == "https://gateway.nordlys.no/anthropic"
+    s = _everyone_endpoint(
+        {
+            "provider": "openai-compatible",
+            "endpoint": "https://llm.nordlys.no/v1/",
+            "model": "org/model-1",
+        }
+    )
+    assert s["CloudEndpoint"] == "https://llm.nordlys.no/v1/"
+
+
+@pytest.mark.parametrize(
+    ("section", "words"),
+    [
+        ({"provider": "azure-openai", "model": "guide"}, "endpoint missing"),
+        ({"provider": "openai-compatible", "endpoint": "https://llm.nordlys.no"}, "model missing"),
+        ({"provider": "bedrock", "model": "m"}, "region missing"),
+        ({"endpoint": "https://llm.nordlys.no", "model": "m"}, "cloudEndpoint.provider missing"),
+        ({**AZURE, "provider": "Azure"}, "cloudEndpoint.provider"),
+        ({**AZURE, "provider": ["azure-openai"]}, "cloudEndpoint.provider"),
+        ({"provider": "kimi", "model": "m"}, "internal testing only"),
+        ({**BEDROCK, "endpoint": "https://bedrock.nordlys.no"}, "bedrock does not use it"),
+        ({**AZURE, "region": "eu-north-1"}, "azure-openai does not use it"),
+        ({"provider": "anthropic", "apiVersion": "2024-10-21"}, "anthropic does not use it"),
+        ({**AZURE, "model": "guide/../other"}, "an Azure deployment name"),
+        ({**AZURE, "model": " "}, "cloudEndpoint.model"),
+        ({**BEDROCK, "model": "two words"}, "cloudEndpoint.model"),
+        ({**BEDROCK, "region": "eu-north-1.evil.example"}, "cloudEndpoint.region"),
+        ({**AZURE, "apiVersion": "2024-10-21&x=1"}, "cloudEndpoint.apiVersion"),
+        ({**AZURE, "dataRegion": "EU\nSweden"}, "cloudEndpoint.dataRegion"),
+        ({**AZURE, "dataRegion": ""}, "cloudEndpoint.dataRegion"),
+        ({**AZURE, "modelId": "x"}, "unknown field modelId"),
+        ("azure-openai", "cloudEndpoint: must be an object"),
+    ],
+)
+def test_an_endpoint_guide_could_not_use_is_refused(section: object, words: str) -> None:
+    _refused(section, words)
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        "http://nordlys.openai.azure.com",
+        "nordlys.openai.azure.com",
+        "https://key:secret@nordlys.openai.azure.com",
+        "https://nordlys.openai.azure.com/?k=1",
+        "https://nordlys.openai.azure.com/#x",
+        "https://",
+        "https://nordlys .azure.com",
+        "",
+        7,
+    ],
+)
+def test_only_an_https_endpoint_with_no_credential_in_it(endpoint: object) -> None:
+    _refused({**AZURE, "endpoint": endpoint}, "cloudEndpoint.endpoint")
+
+
+def test_where_the_provider_processes() -> None:
+    for area in ("eu", "eea", "adequacy", "elsewhere"):
+        assert _everyone_endpoint({**AZURE, "processingArea": area})["CloudProcessingArea"] == area
+    for bad in ("europe", "unstated", "EU", True):
+        _refused({**AZURE, "processingArea": bad}, "cloudEndpoint.processingArea")
+
+
+@pytest.mark.parametrize(
+    ("field", "key"),
+    [
+        ("acceptsImages", "CloudAcceptsImages"),
+        ("zeroRetentionConfirmed", "CloudZeroRetentionConfirmed"),
+    ],
+)
+def test_endpoint_switches_pin_either_way(field: str, key: str) -> None:
+    for value in (True, False):
+        assert _everyone_endpoint({**AZURE, field: value})[key] is value
+    _refused({**AZURE, field: "yes"}, f"cloudEndpoint.{field}: true or false")
+    assert key not in _everyone_endpoint(AZURE)
+
+
+def test_on_windows_the_endpoint_is_left_out_and_said_so() -> None:
+    # The Windows core has no cloud model setup to pin yet (promptly-guide#338).
+    files, notes = windows.files(_console("full"))
+    for name, content in files.items():
+        if name.endswith(".reg"):
+            text = content.decode("utf-16-le")
+            for key in ENDPOINT_KEYS:
+                assert f'"{key}"' not in text, (name, key)
+    assert all(key in windows.MAC_ONLY for key in ENDPOINT_KEYS)
+    assert any(note.startswith("cloudEndpoint") for note in notes)
+    _, notes = windows.files(_console("example"))
+    assert not any("cloudEndpoint" in note for note in notes)
