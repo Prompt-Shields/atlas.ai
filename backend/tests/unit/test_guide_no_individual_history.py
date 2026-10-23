@@ -71,6 +71,7 @@ PERSON = {
     ("GET", f"{GUIDE}/offer"),
     ("GET", f"{GUIDE}/approved-tools"),
     ("GET", f"{GUIDE}/groups"),
+    ("GET", f"{GUIDE}/work-client"),
     ("POST", f"{GUIDE}/adoption"),
 }
 IDENTITY_PROVIDER = {
@@ -415,6 +416,13 @@ async def test_no_guide_route_hands_the_employer_anything_about_one_person(
         f"{GUIDE}/approved-tools",
         await client.get(f"{GUIDE}/approved-tools", headers=_guide(kari)),
         own,
+    )
+    # The work client's 90 days are about the organisation: nobody, not even Kari.
+    await person(
+        "GET",
+        f"{GUIDE}/work-client",
+        await client.get(f"{GUIDE}/work-client", headers=_guide(kari)),
+        set(),
     )
     await person(
         "POST",
