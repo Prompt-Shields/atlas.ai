@@ -97,9 +97,9 @@ async def sync_seat_count(db: AsyncSession, tenant: Tenant, *, activated_users: 
         tenant.seats_billed = quantity
         await db.flush()
     except (
-        stripe.error.APIConnectionError,
-        stripe.error.RateLimitError,
-        stripe.error.APIError,
+        stripe.APIConnectionError,
+        stripe.RateLimitError,
+        stripe.APIError,
     ):
         await outbox.enqueue(
             db,
@@ -107,7 +107,7 @@ async def sync_seat_count(db: AsyncSession, tenant: Tenant, *, activated_users: 
             tenant_id=tenant.id,
             payload={"quantity": quantity},
         )
-    except stripe.error.InvalidRequestError:
+    except stripe.InvalidRequestError:
         # Logic bug — alert (e.g. Sentry), do NOT enqueue.  Never re-raise.
         log.exception("stripe_seat_sync_invalid_request", tenant_id=str(tenant.id))
     # Any path: return; caller (login) proceeds.

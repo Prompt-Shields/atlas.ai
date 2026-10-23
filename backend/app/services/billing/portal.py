@@ -289,4 +289,4 @@ def create_plus_portal_session(customer_id: str | None, settings: Settings) -> s
         return_url=settings.billing_portal_return_url_plus,
         configuration=settings.stripe_portal_configuration_plus,
     )
-    return stripe_client.create_portal_session(**params).url
+    return stripe_client.create_portal_session(**params)["url"]
