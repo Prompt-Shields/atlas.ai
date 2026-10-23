@@ -190,9 +190,9 @@ def test_stripe_errors_propagate(monkeypatch):
     """A Stripe rejection (e.g. invalid format) reaches the caller unchanged."""
 
     def boom(customer_id, **kwargs):
-        raise stripe.error.InvalidRequestError("Invalid value for eu_vat.", "value")
+        raise stripe.InvalidRequestError("Invalid value for eu_vat.", "value")
 
     monkeypatch.setattr(stripe.Customer, "list_tax_ids", lambda c, **kw: {"data": []})
     monkeypatch.setattr(stripe.Customer, "create_tax_id", boom)
-    with pytest.raises(stripe.error.InvalidRequestError):
+    with pytest.raises(stripe.InvalidRequestError):
         tax.attach_vat_id("cus_6", "DE123456789")

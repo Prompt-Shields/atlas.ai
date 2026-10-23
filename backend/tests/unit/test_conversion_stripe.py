@@ -446,3 +446,59 @@ async def test_load_companies_reads_the_report_rows_and_writes_nothing(monkeypat
     monkeypatch.setattr(database, "get_engine", lambda: engine)
     rows = await stripe_conversion.load_companies()
     assert [(r.name, r.stripe_customer_id) for r in rows] == [("Pilot Oy", "cus_a")]
+
+
+# ---------------------------------------------------------------------------
+# On the real SDK's objects (no fake over the wrappers)
+# ---------------------------------------------------------------------------
+
+
+def test_read_customer_on_real_sdk_list_objects(monkeypatch) -> None:
+    """The pass on what stripe-python returns, through the real wrappers.
+
+    Since stripe-python 15 a StripeObject is not a dict (``.get()`` raises), so
+    the dict fakes above cannot show the pass works on the SDK. Here the SDK's
+    own ``list`` calls return its ``ListObject``s, built offline, and paging
+    runs through ``auto_paging_iter``.
+    """
+    import stripe
+
+    def page(*data):
+        return stripe.ListObject.construct_from(
+            {"object": "list", "data": list(data), "has_more": False, "url": "/v1/x"},
+            "sk_test_offline",
+        )
+
+    subscriptions = page(
+        sub(
+            item("promptly_work_client", ts(2026, 7, 3)),
+            item("promptly_learn_annual", ts(2026, 10, 1), 300),
+            start=ts(2026, 7, 3),
+            pilot="false",
+        )
+    )
+    invoices = page(
+        invoice(
+            {"price": {"lookup_key": "promptly_adopt_annual", "product": "promptly_adopt"}},
+            created=ts(2026, 8, 20),
+            paid=ts(2026, 9, 10),
+        )
+    )
+    listed_quotes = page(quote(ts(2026, 8, 1)))
+    monkeypatch.setattr(stripe.Subscription, "list", lambda **kw: subscriptions)
+    monkeypatch.setattr(stripe.Invoice, "list", lambda **kw: invoices)
+    monkeypatch.setattr(stripe.Quote, "list", lambda **kw: listed_quotes)
+
+    assert all(type(s) is dict for s in stripe_client.list_subscriptions(customer="cus_a"))
+    assert all(type(i) is dict for i in stripe_client.list_invoices(customer="cus_a"))
+    assert all(type(q) is dict for q in stripe_client.list_all_quotes(customer="cus_a"))
+
+    facts = cs.read_customer("cus_a")
+    assert facts.stripe_day0 == JUL_3
+    assert facts.pilot_now is False
+    assert facts.first_sale == cs.Sale(
+        datetime(2026, 8, 20, tzinfo=UTC), "promptly_adopt_annual", None
+    )
+    assert facts.paid_at == datetime(2026, 9, 10, tzinfo=UTC)
+    assert facts.quoted_at == datetime(2026, 8, 1, tzinfo=UTC)
+    assert facts.warnings == []

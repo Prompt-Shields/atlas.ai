@@ -141,7 +141,7 @@ async def checkout_session(
             params["subscription_data"] = {"trial_period_days": remaining}
 
     session = stripe_client.create_checkout_session(**params)
-    return CheckoutSessionResponse(url=session.url)
+    return CheckoutSessionResponse(url=session["url"])
 
 
 @router.post("/portal-session", response_model=PortalSessionResponse)
@@ -166,7 +166,7 @@ async def portal_session(
     session = stripe_client.create_portal_session(
         **portal.tenant_portal_params(tenant, get_settings())
     )
-    return PortalSessionResponse(url=session.url)
+    return PortalSessionResponse(url=session["url"])
 
 
 async def _entitlements(db: AsyncSession, tenant: Tenant) -> EntitlementsResponse:
@@ -257,5 +257,5 @@ async def stripe_webhook(
         # Bad or missing signature — tell Stripe to stop retrying.
         return Response(status_code=400)
 
-    await wh.process_event(db, dict(event))
+    await wh.process_event(db, event)
     return Response(status_code=200)

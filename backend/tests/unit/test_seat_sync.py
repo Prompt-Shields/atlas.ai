@@ -112,7 +112,7 @@ async def test_transient_error_enqueues_outbox(monkeypatch):
     """APIConnectionError → outbox.enqueue called once, no raise."""
 
     def raise_conn(item_id, **kw):
-        raise stripe.error.APIConnectionError("down")
+        raise stripe.APIConnectionError("down")
 
     monkeypatch.setattr("app.services.billing.stripe_client.modify_subscription_item", raise_conn)
     enq = AsyncMock()
@@ -127,7 +127,7 @@ async def test_rate_limit_error_enqueues_outbox(monkeypatch):
     """RateLimitError → outbox.enqueue called once, no raise."""
 
     def raise_rate(item_id, **kw):
-        raise stripe.error.RateLimitError("rate")
+        raise stripe.RateLimitError("rate")
 
     monkeypatch.setattr("app.services.billing.stripe_client.modify_subscription_item", raise_rate)
     enq = AsyncMock()
@@ -142,7 +142,7 @@ async def test_api_error_enqueues_outbox(monkeypatch):
     """Generic APIError → outbox.enqueue called once, no raise."""
 
     def raise_api(item_id, **kw):
-        raise stripe.error.APIError("internal")
+        raise stripe.APIError("internal")
 
     monkeypatch.setattr("app.services.billing.stripe_client.modify_subscription_item", raise_api)
     enq = AsyncMock()
@@ -157,7 +157,7 @@ async def test_invalid_request_alerts_not_enqueues(monkeypatch):
     """InvalidRequestError → log only, NOT enqueued, no raise."""
 
     def raise_invalid(item_id, **kw):
-        raise stripe.error.InvalidRequestError("bad", param="x")
+        raise stripe.InvalidRequestError("bad", param="x")
 
     monkeypatch.setattr(
         "app.services.billing.stripe_client.modify_subscription_item", raise_invalid

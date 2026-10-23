@@ -40,7 +40,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.billing import StripeWebhookEvent
 from app.models.tenant import Plan, SubscriptionStatus, Tenant
 from app.models.user import User
-from app.services.billing import enterprise, quotes
+from app.services.billing import enterprise, quotes, stripe_client
 from app.services.entitlements import LOOKUP_KEY_MODULES, subscription_items_from_stripe
 
 log = structlog.get_logger()
@@ -54,16 +54,10 @@ log = structlog.get_logger()
 def _fetch_subscription_item_id(subscription_id: str) -> str | None:
     """Retrieve subscription.items.data[0].id from Stripe.
 
-    Stubbed in tests via monkeypatch; real impl calls the Stripe SDK.
     Module-level so tests can patch ``app.services.billing.webhooks._fetch_subscription_item_id``.
     """
-    import stripe  # local import — not needed if tests stub this function entirely
-
-    from app.config import get_settings
-
-    stripe.api_key = get_settings().stripe_secret_key
-    sub = stripe.Subscription.retrieve(subscription_id)
-    items = sub.get("items", {}).get("data", [])
+    sub = stripe_client.retrieve_subscription(subscription_id)
+    items = (sub.get("items") or {}).get("data") or []
     return items[0]["id"] if items else None
 
 

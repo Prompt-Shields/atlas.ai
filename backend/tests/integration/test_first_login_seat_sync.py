@@ -99,7 +99,7 @@ async def test_login_succeeds_when_stripe_raises_api_connection_error(monkeypatc
     # Monkeypatch Stripe to raise a transient error.
     monkeypatch.setattr(
         "app.services.billing.stripe_client.modify_subscription_item",
-        lambda *a, **kw: (_ for _ in ()).throw(stripe.error.APIConnectionError("down")),
+        lambda *a, **kw: (_ for _ in ()).throw(stripe.APIConnectionError("down")),
     )
 
     # Perform login — must return tokens without raising.
