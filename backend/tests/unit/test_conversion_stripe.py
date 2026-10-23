@@ -47,10 +47,19 @@ def item(key: str | None, created: int, quantity: int = 1, product: str | None =
     }
 
 
-def sub(*items, start: int, ended: int | None = None, pilot: str | None = None, **kw) -> dict:
+def sub(
+    *items,
+    start: int,
+    ended: int | None = None,
+    pilot: str | None = None,
+    pilot_ended: str | None = None,
+    **kw,
+) -> dict:
     meta = {"tenant_id": "t"}
     if pilot is not None:
         meta["promptly_pilot"] = pilot
+    if pilot_ended is not None:
+        meta["promptly_pilot_ended"] = pilot_ended
     return {
         "id": kw.get("id", f"sub_{start}"),
         "start_date": start,
@@ -144,6 +153,7 @@ def test_free_client_only_has_day0_and_no_sale(fake) -> None:
     facts = cs.read_customer("cus_a")
     assert facts.stripe_day0 == JUL_3
     assert facts.pilot_now is True
+    assert facts.was_pilot is True and facts.pilot_ended_on is None
     assert facts.first_sale is None and facts.quoted_at is None and facts.paid_at is None
     assert facts.work_client_ended_at is None
 
@@ -167,6 +177,40 @@ def test_first_sale_is_the_earliest_module_item_across_subscriptions(fake) -> No
     )
     assert facts.first_suite_sold_at == datetime(2026, 9, 14, tzinfo=UTC)
     assert facts.pilot_now is False
+    assert facts.was_pilot is False and facts.pilot_ended_on is None
+
+
+def test_a_converted_pilot_still_counts_as_one(fake) -> None:
+    """end_pilot clears the flag but records the day, so "was a pilot" survives."""
+    fake.subscriptions["cus_a"] = [
+        sub(
+            item("promptly_work_client", ts(2026, 7, 3)),
+            item("promptly_atlas_annual", ts(2026, 9, 1), 200),
+            start=ts(2026, 7, 3),
+            pilot="false",
+            pilot_ended="2026-09-01",
+        )
+    ]
+    facts = cs.read_customer("cus_a")
+    assert facts.pilot_now is False
+    assert facts.was_pilot is True
+    assert facts.pilot_ended_on == "2026-09-01"
+
+
+def test_was_a_pilot_on_any_work_client_subscription(fake) -> None:
+    """The flag now is the first subscription's; "was a pilot" looks at every one."""
+    fake.subscriptions["cus_a"] = [
+        sub(item("promptly_work_client", ts(2026, 7, 3)), start=ts(2026, 7, 3), pilot="false"),
+        sub(
+            item("promptly_work_client", ts(2026, 8, 3)),
+            start=ts(2026, 8, 3),
+            pilot="false",
+            pilot_ended="2026-09-20",
+        ),
+    ]
+    facts = cs.read_customer("cus_a")
+    assert facts.pilot_now is False
+    assert (facts.was_pilot, facts.pilot_ended_on) == (True, "2026-09-20")
 
 
 def test_an_old_price_without_lookup_key_is_known_by_its_product(fake) -> None:
@@ -338,6 +382,7 @@ def test_csv_has_one_row_per_company_with_dates_and_flags(fake) -> None:
     assert record["name"] == "Pilot Oy"
     assert record["cohort"] == "2026-07" and record["day0"] == "2026-07-03"
     assert record["pilot_now"] == "yes"
+    assert (record["was_pilot"], record["pilot_ended_on"]) == ("yes", "")
     assert record["guide_connected_at"] == "2026-07-10"
     assert record["quoted_at"] == "2026-08-20"
     assert record["first_module_sold_at"] == "2026-09-14"

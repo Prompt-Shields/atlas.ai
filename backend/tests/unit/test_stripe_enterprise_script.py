@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import uuid
 from contextlib import asynccontextmanager
+from datetime import UTC, date, datetime
 from unittest.mock import MagicMock
 
 import pytest
@@ -143,9 +144,13 @@ async def test_remove_module_and_end_pilot(stripe_mock, tenant):
     kw = stripe_mock.modify_subscription.call_args.kwargs
     assert kw["items"] == [{"id": "si_learn", "deleted": True}]
 
+    before = datetime.now(UTC).date()
     await cli._run(_args("end-pilot", "--tenant", "acme"))
+    after = datetime.now(UTC).date()
     kw = stripe_mock.modify_subscription.call_args.kwargs
-    assert kw["metadata"] == {enterprise.PILOT_KEY: "false"}
+    ended = kw["metadata"][enterprise.PILOT_ENDED_KEY]
+    assert before <= date.fromisoformat(ended) <= after
+    assert kw["metadata"] == {enterprise.PILOT_KEY: "false", enterprise.PILOT_ENDED_KEY: ended}
     # A module is still on the (unchanged) mock subscription, so the fee is added.
     assert kw["items"] == [{"price": PRICE_IDS[catalog.PLATFORM_FEE_ANNUAL], "quantity": 1}]
 
