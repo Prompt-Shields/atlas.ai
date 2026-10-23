@@ -23,6 +23,7 @@ from app.models.user import User
 from app.schemas.billing import (
     CheckoutSessionRequest,
     CheckoutSessionResponse,
+    ClosedStepMonth,
     EntitlementsResponse,
     GuidedStepHardCapUpdate,
     GuidedStepsResponse,
@@ -243,16 +244,17 @@ async def _guided_steps(db: AsyncSession, tenant: Tenant) -> GuidedStepsResponse
     now = await db.scalar(select(func.now()))
     if now.tzinfo is None:  # SQLite returns a naive UTC time
         now = now.replace(tzinfo=UTC)
-    status = await guided_step_meter.pool_status(db, tenant, now=now)
+    # The open month's count is read by billing and the hard cap, never shown
+    # here (promptly-guide decision P9): only closed months' totals are.
+    status = guided_step_meter.month_status(tenant, guided_step_meter.period_of(now), used=0)
+    closed = await guided_step_meter.closed_months(db, tenant.id, now=now)
     return GuidedStepsResponse(
         period=status.period,
-        used=status.used,
         pool=status.pool,
-        remaining=status.remaining,
-        overage=status.overage,
         hard_cap=status.hard_cap,
         own_endpoint=status.own_endpoint,
         work_client=status.work_client,
+        closed_months=[ClosedStepMonth(period=m.period, used=m.used) for m in closed],
     )
 
 
@@ -261,10 +263,11 @@ async def get_guided_steps(
     user: TenantAdmin,
     db: AsyncSession = Depends(get_tenant_db_session),
 ) -> GuidedStepsResponse:
-    """This month's hosted guided steps against the Work client's pool.
+    """The Work client's pool, the hard cap, and closed months' hosted steps.
 
     Step counts only, for the whole organisation: no money, and nothing about
-    who used a step, because nothing records that (E4).
+    who used a step, because nothing records that (E4). The open month's count
+    is not shown until the month ends (promptly-guide decision P9).
     """
     tenant = await _load_tenant(db, user)
     return await _guided_steps(db, tenant)

@@ -51,21 +51,32 @@ class WorkClientUpdate(BaseModel):
     own_endpoint_declared: bool | None = None
 
 
+class ClosedStepMonth(BaseModel):
+    """A month that has ended, and the hosted guided steps it counted."""
+
+    period: str  # the UTC calendar month, "YYYY-MM"
+    used: int  # hosted steps served that month, for the whole organisation
+
+
 class GuidedStepsResponse(BaseModel):
-    """The Work client's hosted guided steps this month (promptly-guide #62).
+    """The Work client's hosted guided steps (promptly-guide #62).
 
     Step counts only, never money: the price of a step above the pool lives in
     Stripe, not in Atlas. Nothing here says who used a step (E4).
+
+    Counts are shown only for months that have closed (promptly-guide decision
+    P9). The open month's count changes with every step, so in a small
+    organisation, or read before and after one session, it would show one
+    person's use. Billing and the hard cap still use it; this reply never
+    carries it.
     """
 
-    period: str  # the UTC calendar month, "YYYY-MM"
-    used: int  # hosted steps served this month
-    pool: int  # steps the Work client includes this month
-    remaining: int  # steps left in the pool, never below 0
-    overage: int  # steps above the pool; 0 for an organisation with its own endpoint
+    period: str  # the open UTC calendar month, "YYYY-MM"; its count is not shown
+    pool: int  # steps the Work client includes each month, at today's seats
     hard_cap: bool  # hosted steps stop at the pool until the month turns
     own_endpoint: bool  # Guide answers from the organisation's own model endpoint
     work_client: bool  # the tenant has a Work client
+    closed_months: list[ClosedStepMonth]  # newest first; months with no steps are left out
 
 
 class GuidedStepHardCapUpdate(BaseModel):

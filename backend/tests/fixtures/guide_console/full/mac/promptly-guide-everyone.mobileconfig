@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>PayloadContent</key>
+	<array>
+		<dict>
+			<key>PayloadContent</key>
+			<dict>
+				<key>com.promptly.guide</key>
+				<dict>
+					<key>Forced</key>
+					<array>
+						<dict>
+							<key>mcx_preference_settings</key>
+							<dict>
+								<key>AdoptionTeam</key>
+								<string>Everyone</string>
+								<key>AtlasURL</key>
+								<string>https://atlas.nordlys.no</string>
+								<key>CloudModelDisabled</key>
+								<true/>
+								<key>CloudRequireEUProcessing</key>
+								<true/>
+								<key>ExcludedApps</key>
+								<array>
+									<string>no.nordlys.casebook</string>
+								</array>
+								<key>ExcludedSites</key>
+								<array>
+									<string>hr.nordlys.no</string>
+								</array>
+								<key>ExcludedWindowTitles</key>
+								<array>
+									<string>Disciplinary *</string>
+								</array>
+								<key>KnowledgeSources</key>
+								<array>
+									<dict>
+										<key>Enabled</key>
+										<true/>
+										<key>Folder</key>
+										<string>~/Handbook\x</string>
+										<key>Groups</key>
+										<array>
+											<string>finance</string>
+										</array>
+										<key>Id</key>
+										<string>handbook</string>
+										<key>Name</key>
+										<string>Håndbok "A"</string>
+									</dict>
+								</array>
+								<key>MemoryDisabled</key>
+								<true/>
+								<key>SSOFirebaseAPIKey</key>
+								<string>AIzaSyNordlysExampleKey0123456789abcd</string>
+								<key>SSOFirebaseProjectID</key>
+								<string>nordlys-promptly</string>
+								<key>SSOGroupsClaim</key>
+								<string>groups</string>
+								<key>SSOGroupsValidForHours</key>
+								<integer>24</integer>
+								<key>SSOProcessingArea</key>
+								<string>eea</string>
+								<key>SSOProvider</key>
+								<string>saml.entra</string>
+								<key>SSOSignInHost</key>
+								<string>nordlys-promptly.firebaseapp.com</string>
+								<key>SSOTenantID</key>
+								<string>staff-1a2b</string>
+								<key>SkillPackFolders</key>
+								<array>
+									<string>~/Packs</string>
+								</array>
+								<key>SkillPacksOff</key>
+								<array>
+									<string>claude</string>
+								</array>
+							</dict>
+						</dict>
+					</array>
+				</dict>
+			</dict>
+			<key>PayloadDisplayName</key>
+			<string>Managed preferences</string>
+			<key>PayloadIdentifier</key>
+			<string>no.nordlys.promptly.everyone.mcx</string>
+			<key>PayloadType</key>
+			<string>com.apple.ManagedClient.preferences</string>
+			<key>PayloadUUID</key>
+			<string>DE569624-A029-5AD3-920E-25EA9C4EB3CE</string>
+			<key>PayloadVersion</key>
+			<integer>1</integer>
+		</dict>
+	</array>
+	<key>PayloadDescription</key>
+	<string>Promptly Guide settings for every Mac in the organisation.</string>
+	<key>PayloadDisplayName</key>
+	<string>Promptly Guide — everyone</string>
+	<key>PayloadIdentifier</key>
+	<string>no.nordlys.promptly.everyone</string>
+	<key>PayloadOrganization</key>
+	<string>Nordlys AS</string>
+	<key>PayloadRemovalDisallowed</key>
+	<false/>
+	<key>PayloadScope</key>
+	<string>System</string>
+	<key>PayloadType</key>
+	<string>Configuration</string>
+	<key>PayloadUUID</key>
+	<string>FCBEC3EC-7362-512C-9AF8-5210CE4E9CA3</string>
+	<key>PayloadVersion</key>
+	<integer>1</integer>
+</dict>
+</plist>
