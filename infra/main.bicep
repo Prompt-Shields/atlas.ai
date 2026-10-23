@@ -24,6 +24,9 @@ param acrLoginServer string
 @description('Post Work client step overage to Stripe for real. False (the default) runs the hourly step meter with --dry-run: it reads the database and posts nothing. True runs it with --live and needs the Key Vault secret stripe-step-meter-key. See README, "Scheduled billing jobs".')
 param stripeStepMeterLive bool = false
 
+@description('Send queued seat syncs to Stripe for real. False (the default) runs the hourly seat-sync processor with --dry-run: it reads the database and sends nothing. True runs it with --live and needs the Key Vault secret stripe-seat-sync-key. See README, "Scheduled billing jobs".')
+param stripeSeatSyncLive bool = false
+
 // ── Variables ────────────────────────────────────────────────────────
 var prefix = '${projectName}-${environment}'
 var tags = {
@@ -77,6 +80,7 @@ module containerApps 'modules/container-apps.bicep' = {
     keyVaultName: keyVault.outputs.keyVaultName
     databaseHost: database.outputs.serverFqdn
     stripeStepMeterLive: stripeStepMeterLive
+    stripeSeatSyncLive: stripeSeatSyncLive
   }
 }
 

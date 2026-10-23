@@ -16,6 +16,8 @@ param keyVaultName string
 param databaseHost string
 @description('Run the hourly Stripe step meter with --live instead of --dry-run')
 param stripeStepMeterLive bool = false
+@description('Run the hourly Stripe seat-sync processor with --live instead of --dry-run')
+param stripeSeatSyncLive bool = false
 
 // ── Container Apps Environment ───────────────────────────────────────
 resource containerAppEnv 'Microsoft.App/managedEnvironments@2024-03-01' = {
@@ -513,15 +515,91 @@ resource stepMeterJob 'Microsoft.App/jobs@2024-03-01' = {
   }
 }
 
-// ── SLOT: seat-sync processor ────────────────────────────────────────
-// Reserved for the seat-sync outbox processor being added on branch
-// claude/seat-sync-processor. When that lands, add its job here as a copy
-// of stepMeterJob above with:
-//   name: '${prefix}-seatsync-job'
-//   command: the processor's entry point (e.g. python -m scripts.<name>)
-//   its own dry-run/live switch, wired like stripeStepMeterLive
-//   its own restricted Stripe key, referenced by Key Vault secret name only
-// Nothing is deployed for it yet.
+// Stripe seat sync (atlas.ai#51). Sends the newest queued sync_seat row in
+// billing_outbox for each organisation, with its seat count as it is now, and
+// settles older rows as superseded. Idempotent per row and request, so a retry
+// or a late extra run never changes a subscription twice. Runs at :37, half an
+// hour from the step meter. Dry run unless stripeSeatSyncLive is true: it then
+// also references the Key Vault secret stripe-seat-sync-key (a restricted key
+// that may write subscriptions and nothing else), which must exist before
+// that deploy.
+var seatSyncStripeSecret = stripeSeatSyncLive
+  ? [
+      {
+        name: 'stripe-seat-sync-key'
+        keyVaultUrl: '${keyVaultUri}/secrets/stripe-seat-sync-key'
+        identity: managedIdentity.id
+      }
+    ]
+  : []
+var seatSyncStripeEnv = stripeSeatSyncLive
+  ? [
+      { name: 'STRIPE_SECRET_KEY', secretRef: 'stripe-seat-sync-key' }
+    ]
+  : []
+
+resource seatSyncJob 'Microsoft.App/jobs@2024-03-01' = {
+  name: '${prefix}-seatsync-job'
+  location: location
+  tags: tags
+  identity: {
+    type: 'UserAssigned'
+    userAssignedIdentities: {
+      '${managedIdentity.id}': {}
+    }
+  }
+  properties: {
+    environmentId: containerAppEnv.id
+    configuration: {
+      triggerType: 'Schedule'
+      scheduleTriggerConfig: {
+        cronExpression: '37 * * * *'  // Hourly, half an hour from the step meter's :07
+        parallelism: 1
+        replicaCompletionCount: 1
+      }
+      replicaTimeout: 1800
+      replicaRetryLimit: 1  // Safe: each row's request has its own idempotency key
+      registries: [
+        {
+          server: acrLoginServer
+          identity: managedIdentity.id
+        }
+      ]
+      secrets: concat([
+        {
+          name: 'db-connection'
+          keyVaultUrl: '${keyVaultUri}/secrets/database-url'
+          identity: managedIdentity.id
+        }
+        {
+          name: 'jwt-secret'
+          keyVaultUrl: '${keyVaultUri}/secrets/jwt-secret-key'
+          identity: managedIdentity.id
+        }
+      ], seatSyncStripeSecret)
+    }
+    template: {
+      containers: [
+        {
+          name: 'stripe-seat-sync'
+          image: '${acrLoginServer}/aigrc-backend:${imageTag}'
+          command: ['python', '-m', 'scripts.stripe_seat_sync']
+          args: [stripeSeatSyncLive ? '--live' : '--dry-run']
+          resources: {
+            cpu: json('0.25')
+            memory: '0.5Gi'
+          }
+          env: concat([
+            { name: 'APP_ENV', value: environment == 'prod' ? 'production' : 'development' }
+            { name: 'DATABASE_URL', secretRef: 'db-connection' }
+            { name: 'JWT_SECRET_KEY', secretRef: 'jwt-secret' }
+            { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: appInsightsConnectionString }
+          ], seatSyncStripeEnv)
+        }
+      ]
+    }
+  }
+}
 
 // The monthly conversion report (scripts/stripe_conversion.py, atlas.ai#41)
 // is deliberately not scheduled: it needs a restricted read-only Stripe key
