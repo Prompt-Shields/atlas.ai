@@ -30,10 +30,11 @@ from fastapi import APIRouter, Depends
 from fastapi import status as http_status
 from fastapi.responses import Response
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import CurrentUser, TenantAdmin, get_tenant_db_session
-from app.errors import AppException, ForbiddenError, NotFoundError
+from app.errors import AppException, ConflictError, ForbiddenError, NotFoundError
 from app.models.guide_console import GuideConsoleSettings
 from app.schemas.guide_console import GuideConsoleFileOut, GuideConsoleIn, GuideConsoleOut
 from app.services.audit import log_audit_event
@@ -128,7 +129,12 @@ def _settings(console: dict[str, Any] | None) -> dict[str, dict]:
     """{profile file name: what it forces}, as the file console compares them."""
     if console is None:
         return {}
-    return {name: profiles.settings_of(p) for name, p in profiles.build(console).items()}
+    try:
+        built = profiles.build(console)
+    except profiles.ConsoleError:
+        # Saved under an earlier check this Guide refuses: nothing it would write.
+        return {}
+    return {name: profiles.settings_of(p) for name, p in built.items()}
 
 
 def _sha256(console: dict[str, Any]) -> str:
@@ -227,7 +233,12 @@ async def put_console(
             row.console = console
             row.revision += 1
         row.updated_by = user.email
-        await db.flush()
+        try:
+            await db.flush()
+        except IntegrityError:
+            # Another admin saved the first settings at the same moment.
+            await db.rollback()
+            raise ConflictError("The settings were just saved by someone else. Load them again.")
         details: dict[str, Any] = {
             "revision": row.revision,
             "console_sha256": _sha256(console),

@@ -239,6 +239,12 @@ async def test_settings_this_guide_no_longer_accepts_are_shown_without_files(
     assert resp.status_code == 422
     assert await _audit(tid, DOWNLOADED) == []
 
+    # Saving good settings over them works, and every profile is logged as added.
+    body = (await _save(client, token, _console())).json()
+    assert body["problem"] is None and body["revision"] == 4
+    details = json.loads((await _audit(tid, UPDATED))[-1].details)
+    assert {c["change"] for c in details["changes"]} == {"added"}
+
 
 # ── Downloads: the file console's own bytes ────────────────────────────────
 
