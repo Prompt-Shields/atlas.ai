@@ -106,8 +106,10 @@ function StatusCard({ view, formatDate }: { view: WorkClientView; formatDate: (i
   );
 }
 
-// The month's hosted guided steps and the hard cap (promptly-guide #62). Step counts
-// only: the price of a step above the pool is on the invoice, never on this page.
+// The Work client's pool, closed months' hosted guided steps and the hard cap
+// (promptly-guide #62). Step counts only: the price of a step above the pool is on the
+// invoice, never on this page. The open month's count is shown only once the month
+// ends (promptly-guide decision P9), so it cannot show one person's use.
 function GuidedStepsSection({ locale }: { locale: string }) {
   const { t } = useLocale();
   const [steps, setSteps] = useState<GuidedSteps | null>(null);
@@ -144,6 +146,16 @@ function GuidedStepsSection({ locale }: { locale: string }) {
       })
     : '';
 
+  // A "YYYY-MM" month by name, in UTC like the meter.
+  const monthName = (period: string) => {
+    const [year, month] = period.split('-').map(Number);
+    return new Date(Date.UTC(year, month - 1, 1)).toLocaleDateString(locale, {
+      month: 'long',
+      year: 'numeric',
+      timeZone: 'UTC',
+    });
+  };
+
   return (
     <section className="mt-6 rounded-lg border border-gray-200 bg-white p-6" data-testid="guided-steps">
       <h2 className="text-lg font-semibold text-gray-900">{t('workClient.steps.heading')}</h2>
@@ -168,28 +180,26 @@ function GuidedStepsSection({ locale }: { locale: string }) {
 
       {steps && steps.work_client && !steps.own_endpoint && (
         <>
-          <p className="mt-2 text-xl font-semibold text-gray-900" data-testid="guided-steps-used">
-            {t('workClient.steps.used', { used: steps.used, pool: steps.pool })}
+          <p className="mt-2 text-sm text-gray-700" data-testid="guided-steps-pool">
+            {t('workClient.steps.pool', { pool: steps.pool })}
           </p>
-          <div
-            className="mt-3 h-2 w-full overflow-hidden rounded-full bg-gray-200"
-            role="progressbar"
-            aria-valuemin={0}
-            aria-valuemax={steps.pool}
-            aria-valuenow={Math.min(steps.used, steps.pool)}
-          >
-            <div
-              className={steps.remaining === 0 ? 'h-full bg-amber-500' : 'h-full bg-primary-600'}
-              style={{ width: `${Math.min(100, (steps.used / Math.max(steps.pool, 1)) * 100)}%` }}
-            />
-          </div>
-          <p className="mt-2 text-sm text-gray-700">
-            {t('workClient.steps.remaining', { remaining: steps.remaining, date })}
+          <p className="mt-2 text-sm text-gray-700" data-testid="guided-steps-open-month">
+            {t('workClient.steps.openMonth', { month: monthName(steps.period), date })}
           </p>
-          {steps.overage > 0 && (
-            <p className="mt-2 text-sm text-gray-700" data-testid="guided-steps-overage">
-              {t('workClient.steps.overage', { overage: steps.overage })}
-            </p>
+          <h3 className="mt-4 text-sm font-semibold text-gray-900">{t('workClient.steps.closedHeading')}</h3>
+          {steps.closed_months.length === 0 ? (
+            <p className="mt-2 text-sm text-gray-500">{t('workClient.steps.noClosedMonths')}</p>
+          ) : (
+            <ul className="mt-2 divide-y divide-gray-100 text-sm" data-testid="guided-steps-closed">
+              {steps.closed_months.map((m) => (
+                <li key={m.period} className="flex justify-between py-1.5">
+                  <span className="text-gray-700">{monthName(m.period)}</span>
+                  <span className="font-medium text-gray-900">
+                    {t('workClient.steps.closedUsed', { used: m.used })}
+                  </span>
+                </li>
+              ))}
+            </ul>
           )}
         </>
       )}
