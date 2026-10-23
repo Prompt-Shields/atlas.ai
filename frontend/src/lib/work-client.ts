@@ -64,6 +64,32 @@ export function workClientView(e: WorkClientEntitlements): WorkClientView {
   };
 }
 
+/**
+ * GET /billing/guided-steps (promptly-guide #62): the month's hosted guided steps
+ * against the Work client's pool. Step counts only; the backend sends no money.
+ */
+export interface GuidedSteps {
+  /** The UTC calendar month, "YYYY-MM". */
+  period: string;
+  used: number;
+  pool: number;
+  /** Steps left in the pool, never below 0. */
+  remaining: number;
+  /** Steps above the pool this month; 0 with the organisation's own endpoint. */
+  overage: number;
+  /** On: hosted steps stop at the pool until the month turns. Off by default. */
+  hard_cap: boolean;
+  own_endpoint: boolean;
+  work_client: boolean;
+}
+
+/** The first day of the month after `period`, at 00:00 UTC, when the pool starts again. */
+export function poolResetsAt(period: string): Date {
+  const [year, month] = period.split('-').map(Number);
+  // Date.UTC's month is 0-based, so `month` (1-based) is already the next month.
+  return new Date(Date.UTC(year, month, 1));
+}
+
 export const workClientApi = {
   entitlements(): Promise<WorkClientEntitlements> {
     return api.request<WorkClientEntitlements>('/billing/entitlements');
@@ -74,6 +100,18 @@ export const workClientApi = {
     return api.request<WorkClientEntitlements>('/billing/work-client', {
       method: 'PATCH',
       body: JSON.stringify(body),
+    });
+  },
+
+  guidedSteps(): Promise<GuidedSteps> {
+    return api.request<GuidedSteps>('/billing/guided-steps');
+  },
+
+  /** Tenant admins only. Returns the month with the new setting. */
+  setHardCap(hardCap: boolean): Promise<GuidedSteps> {
+    return api.request<GuidedSteps>('/billing/guided-steps/hard-cap', {
+      method: 'PUT',
+      body: JSON.stringify({ hard_cap: hardCap }),
     });
   },
 };

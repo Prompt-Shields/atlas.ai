@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
 
 class CheckoutSessionRequest(BaseModel):
@@ -49,3 +49,28 @@ class WorkClientUpdate(BaseModel):
     # cleared here, so the 90 days cannot be restarted from the admin page.
     started: Literal[True] | None = None
     own_endpoint_declared: bool | None = None
+
+
+class GuidedStepsResponse(BaseModel):
+    """The Work client's hosted guided steps this month (promptly-guide #62).
+
+    Step counts only, never money: the price of a step above the pool lives in
+    Stripe, not in Atlas. Nothing here says who used a step (E4).
+    """
+
+    period: str  # the UTC calendar month, "YYYY-MM"
+    used: int  # hosted steps served this month
+    pool: int  # steps the Work client includes this month
+    remaining: int  # steps left in the pool, never below 0
+    overage: int  # steps above the pool; 0 for an organisation with its own endpoint
+    hard_cap: bool  # hosted steps stop at the pool until the month turns
+    own_endpoint: bool  # Guide answers from the organisation's own model endpoint
+    work_client: bool  # the tenant has a Work client
+
+
+class GuidedStepHardCapUpdate(BaseModel):
+    """Turn the hard cap on or off. Off by default (step-metering.md decision 4)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    hard_cap: StrictBool

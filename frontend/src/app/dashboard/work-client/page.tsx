@@ -3,8 +3,10 @@
 import { useEffect, useState } from 'react';
 import { useLocale } from '@/lib/i18n/provider';
 import {
+  poolResetsAt,
   workClientApi,
   workClientView,
+  type GuidedSteps,
   type WorkClientEntitlements,
   type WorkClientUpdate,
   type WorkClientView,
@@ -104,6 +106,117 @@ function StatusCard({ view, formatDate }: { view: WorkClientView; formatDate: (i
   );
 }
 
+// The month's hosted guided steps and the hard cap (promptly-guide #62). Step counts
+// only: the price of a step above the pool is on the invoice, never on this page.
+function GuidedStepsSection({ locale }: { locale: string }) {
+  const { t } = useLocale();
+  const [steps, setSteps] = useState<GuidedSteps | null>(null);
+  const [loadError, setLoadError] = useState('');
+  const [saveError, setSaveError] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    workClientApi
+      .guidedSteps()
+      .then(setSteps)
+      .catch((err: Error) => setLoadError(err.message));
+  }, []);
+
+  async function setHardCap(on: boolean) {
+    if (!confirm(t(on ? 'workClient.steps.capOnConfirm' : 'workClient.steps.capOffConfirm'))) return;
+    setSaving(true);
+    setSaveError('');
+    try {
+      setSteps(await workClientApi.setHardCap(on));
+    } catch (err) {
+      setSaveError((err as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  // The pool starts again at 00:00 UTC on the 1st, so the date is shown in UTC.
+  const date = steps
+    ? poolResetsAt(steps.period).toLocaleDateString(locale, {
+        day: 'numeric',
+        month: 'long',
+        timeZone: 'UTC',
+      })
+    : '';
+
+  return (
+    <section className="mt-6 rounded-lg border border-gray-200 bg-white p-6" data-testid="guided-steps">
+      <h2 className="text-lg font-semibold text-gray-900">{t('workClient.steps.heading')}</h2>
+      {loadError && (
+        <p className="mt-2 rounded-lg bg-red-50 p-3 text-sm text-red-700">
+          {t('workClient.steps.loadError', { error: loadError })}
+        </p>
+      )}
+      {saveError && (
+        <p className="mt-2 rounded-lg bg-red-50 p-3 text-sm text-red-700">
+          {t('workClient.saveError', { error: saveError })}
+        </p>
+      )}
+      {!steps && !loadError && <p className="mt-2 text-sm text-gray-500">{t('workClient.loading')}</p>}
+
+      {steps && !steps.work_client && (
+        <p className="mt-2 text-sm text-gray-700">{t('workClient.steps.noWorkClient')}</p>
+      )}
+      {steps && steps.work_client && steps.own_endpoint && (
+        <p className="mt-2 text-sm text-gray-700">{t('workClient.steps.ownEndpoint')}</p>
+      )}
+
+      {steps && steps.work_client && !steps.own_endpoint && (
+        <>
+          <p className="mt-2 text-xl font-semibold text-gray-900" data-testid="guided-steps-used">
+            {t('workClient.steps.used', { used: steps.used, pool: steps.pool })}
+          </p>
+          <div
+            className="mt-3 h-2 w-full overflow-hidden rounded-full bg-gray-200"
+            role="progressbar"
+            aria-valuemin={0}
+            aria-valuemax={steps.pool}
+            aria-valuenow={Math.min(steps.used, steps.pool)}
+          >
+            <div
+              className={steps.remaining === 0 ? 'h-full bg-amber-500' : 'h-full bg-primary-600'}
+              style={{ width: `${Math.min(100, (steps.used / Math.max(steps.pool, 1)) * 100)}%` }}
+            />
+          </div>
+          <p className="mt-2 text-sm text-gray-700">
+            {t('workClient.steps.remaining', { remaining: steps.remaining, date })}
+          </p>
+          {steps.overage > 0 && (
+            <p className="mt-2 text-sm text-gray-700" data-testid="guided-steps-overage">
+              {t('workClient.steps.overage', { overage: steps.overage })}
+            </p>
+          )}
+        </>
+      )}
+
+      {steps && steps.work_client && (
+        <div className="mt-4 border-t border-gray-100 pt-4">
+          <label className="flex items-center gap-2 text-sm font-medium text-gray-900">
+            <input
+              type="checkbox"
+              checked={steps.hard_cap}
+              disabled={saving}
+              onChange={(e) => setHardCap(e.target.checked)}
+              data-testid="guided-steps-hard-cap"
+            />
+            {t('workClient.steps.capLabel')}
+          </label>
+          <p className="mt-2 text-sm text-gray-700">
+            {steps.hard_cap ? t('workClient.steps.capOn', { date }) : t('workClient.steps.capOff')}
+          </p>
+        </div>
+      )}
+
+      <p className="mt-4 text-xs text-gray-500">{t('workClient.steps.note')}</p>
+    </section>
+  );
+}
+
 export default function WorkClientPage() {
   const { t, locale } = useLocale();
   const [ent, setEnt] = useState<WorkClientEntitlements | null>(null);
@@ -170,6 +283,8 @@ export default function WorkClientPage() {
               <p className="mt-2 text-xs text-gray-500">{t('workClient.start.note')}</p>
             </div>
           )}
+
+          <GuidedStepsSection locale={locale} />
 
           <section className="mt-6 rounded-lg border border-gray-200 bg-white p-6">
             <h2 className="text-lg font-semibold text-gray-900">{t('workClient.connected.heading')}</h2>

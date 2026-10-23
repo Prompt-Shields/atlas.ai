@@ -110,6 +110,24 @@ const nb: Dictionary = {
       step4: 'Kom tilbake hit og erklær eget endepunkt.',
       note: 'En konfigurasjonsprofil kan slå skymodellen av, men aldri på, så den slås på i Guide på hver Mac.',
     },
+    steps: {
+      heading: 'Veiledede steg denne måneden',
+      loadError: 'Kunne ikke laste månedens veiledede steg: {error}',
+      noWorkClient: 'Det finnes ingen Work-klient, så det er ingen pott med veiledede steg.',
+      ownEndpoint:
+        'Guide svarer fra organisasjonens eget modellendepunkt, så ingen veiledede steg telles her.',
+      used: '{used} av {pool} steg brukt',
+      remaining: '{remaining} steg igjen i potten. Potten starter på nytt {date}.',
+      overage: '{overage} steg over potten denne måneden. De faktureres som overforbruk.',
+      capLabel: 'Stopp ved potten (fast tak)',
+      capOff:
+        'Av: når potten er brukt, fortsetter Guide å svare med hostede steg, og stegene over potten faktureres som overforbruk.',
+      capOn:
+        'På: når potten er brukt, stopper hostede steg til {date}. Guide svarer da på Macen der den kan. Ingenting over potten faktureres.',
+      capOnConfirm: 'Slå på fast tak? Hostede steg stopper når månedens pott er brukt.',
+      capOffConfirm: 'Slå av fast tak? Steg over potten blir servert og fakturert som overforbruk.',
+      note: 'Et veiledet steg er én skjerm lest med et svar fra Promptlys hostede modell. Steg besvart på Macen eller av deres eget endepunkt telles aldri. Tellingen gjelder hele organisasjonen: Atlas registrerer ikke hvem som brukte et steg. Promptly har ingen egen modell ennå, så tellingen står på 0 til den har det.',
+    },
     dayNinety: {
       heading: 'Hva skjer på dag 90',
       rule: 'Er det verken en betalt modul eller et erklært endepunkt på dag 90, markerer Atlas Work-klienten «Eget endepunkt kreves». En betalt modul eller en erklæring gjør den aktiv igjen når som helst.',
