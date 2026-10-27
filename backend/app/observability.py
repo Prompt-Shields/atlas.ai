@@ -30,6 +30,12 @@ def setup_logging(settings: Settings) -> None:
     ]
 
     if settings.is_production:
+        # JSONRenderer cannot serialise exc_info, so without this it writes a bare
+        # "exc_info": true and the traceback is lost. format_exc_info gives the
+        # plain-text traceback: exception type, message and frames, but no frame
+        # locals. dict_tracebacks keeps locals by default, which can hold tokens
+        # or request bodies, so it is not used here.
+        processors.append(structlog.processors.format_exc_info)
         processors.append(structlog.processors.JSONRenderer())
     else:
         processors.append(structlog.dev.ConsoleRenderer())
