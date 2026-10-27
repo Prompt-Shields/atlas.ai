@@ -7,13 +7,21 @@ logs.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import logging.config
+import sys
+import traceback
 
 import asyncpg
+import httpx
 import pytest
 import structlog
+import uvicorn
+import uvicorn.config
 from asyncpg import exceptions as pg
+from fastapi import FastAPI
 from sqlalchemy import exc as sa_exc
 from sqlalchemy import text
 from sqlalchemy.dialects.postgresql.asyncpg import AsyncAdapt_asyncpg_dbapi
@@ -26,18 +34,31 @@ from tests.conftest import TEST_DATABASE_URL
 pytestmark = [pytest.mark.unit]
 
 
+_LOGGERS_TOUCHED = ("", "uvicorn", "uvicorn.error", "uvicorn.access")
+
+
 @pytest.fixture
 def restore_logging():
-    """Put structlog and the root logger back as they were after each test."""
-    root = logging.getLogger()
-    saved_handlers = root.handlers[:]
-    saved_level = root.level
+    """Put structlog, the stdlib loggers and the record factory back after each test."""
+    saved = {
+        name: (
+            logging.getLogger(name).handlers[:],
+            logging.getLogger(name).level,
+            logging.getLogger(name).propagate,
+        )
+        for name in _LOGGERS_TOUCHED
+    }
+    saved_factory = logging.getLogRecordFactory()
     try:
         yield
     finally:
         structlog.reset_defaults()
-        root.handlers[:] = saved_handlers
-        root.setLevel(saved_level)
+        logging.setLogRecordFactory(saved_factory)
+        for name, (handlers, level, propagate) in saved.items():
+            logger = logging.getLogger(name)
+            logger.handlers[:] = handlers
+            logger.setLevel(level)
+            logger.propagate = propagate
 
 
 def _raise_with_a_secret_local() -> None:
@@ -315,3 +336,188 @@ def test_stdout_filters_exceptions_logged_by_other_libraries(restore_logging, ca
     assert EMAIL not in out
     assert out.startswith("request failed\nTraceback (most recent call last)")
     assert "sqlalchemy.exc.IntegrityError: [message withheld" in out
+
+
+# ── Exception groups ──────────────────────────────────────────────────────
+
+
+def _database_error() -> sa_exc.IntegrityError:
+    try:
+        _raise_as_sqlalchemy_does(_unique_violation(), "INSERT", {})
+    except sa_exc.IntegrityError as error:
+        return error
+    raise AssertionError("unreachable")
+
+
+def _log_exception(log, event: str, exc: BaseException) -> None:
+    log.error(event, exc_info=exc)
+
+
+def test_exception_group_with_a_database_error_logs_no_values(production_log):
+    log, lines = production_log
+    group = ExceptionGroup(
+        "seat sync failed",
+        [_database_error(), RuntimeError("seat 7 could not be saved")],
+    )
+
+    _log_exception(log, "seat_sync_failed", group)
+
+    (line,) = lines()
+    exception = line["exception"]
+    assert EMAIL not in json.dumps(line)
+    assert "sqlalchemy.exc.IntegrityError: [message withheld" in exception
+    assert "asyncpg.exceptions.UniqueViolationError: [message withheld" in exception
+    # The group's own message and its other members keep theirs.
+    assert "ExceptionGroup: seat sync failed (2 sub-exceptions)" in exception
+    assert "RuntimeError: seat 7 could not be saved" in exception
+
+
+def test_nested_exception_groups_log_no_values(production_log):
+    log, lines = production_log
+    inner = ExceptionGroup("inner", [ValueError("plain"), _database_error()])
+    outer = ExceptionGroup("outer", [inner, KeyError("k")])
+
+    _log_exception(log, "nested", outer)
+
+    (line,) = lines()
+    assert EMAIL not in json.dumps(line)
+    assert "ValueError: plain" in line["exception"]
+    assert "ExceptionGroup: inner (2 sub-exceptions)" in line["exception"]
+
+
+def test_a_database_error_under_a_group_members_cause_logs_no_values(production_log):
+    log, lines = production_log
+    try:
+        raise RuntimeError("billing step failed") from _database_error()
+    except RuntimeError as member:
+        group = ExceptionGroup("steps failed", [member])
+
+    _log_exception(log, "steps_failed", group)
+
+    (line,) = lines()
+    assert EMAIL not in json.dumps(line)
+    assert "RuntimeError: billing step failed" in line["exception"]
+
+
+def test_a_group_without_a_database_error_is_written_as_python_writes_it(production_log):
+    log, lines = production_log
+    try:
+        raise ExceptionGroup("two", [ValueError("a"), TypeError("b")])
+    except ExceptionGroup as group:
+        expected = "".join(traceback.format_exception(group)).rstrip("\n")
+        log.exception("plain_group")
+
+    (line,) = lines()
+    assert line["exception"] == expected
+
+
+async def test_task_group_errors_log_no_values(production_log):
+    log, lines = production_log
+
+    async def failing() -> None:
+        _raise_as_sqlalchemy_does(_unique_violation(), "INSERT", {})
+
+    async def stopping() -> None:
+        raise RuntimeError("billing sync stopped")
+
+    # Caught whole, by a plain except...
+    try:
+        async with asyncio.TaskGroup() as group:
+            group.create_task(failing())
+            group.create_task(stopping())
+    except ExceptionGroup:
+        log.exception("whole_group")
+
+    # ...and split by except*, which logs the part holding the database error.
+    try:
+        try:
+            async with asyncio.TaskGroup() as group:
+                group.create_task(failing())
+                group.create_task(stopping())
+        except* sa_exc.IntegrityError:
+            log.exception("split_group")
+    except* RuntimeError:
+        pass
+
+    whole, split = lines()
+    for line in (whole, split):
+        assert EMAIL not in json.dumps(line)
+        assert "sqlalchemy.exc.IntegrityError: [message withheld" in line["exception"]
+    assert "RuntimeError: billing sync stopped" in whole["exception"]
+
+
+# ── Handlers other than ours ──────────────────────────────────────────────
+
+
+def test_installing_the_filter_twice_wraps_the_record_factory_once(restore_logging):
+    observability.setup_logging(_production_settings())
+    first = logging.getLogRecordFactory()
+    observability.setup_logging(_production_settings())
+
+    assert logging.getLogRecordFactory() is first
+
+
+def test_development_logging_leaves_the_record_factory_alone(restore_logging):
+    before = logging.getLogRecordFactory()
+
+    observability.setup_logging(
+        get_settings().model_copy(update={"app_env": Environment.DEVELOPMENT})
+    )
+
+    assert logging.getLogRecordFactory() is before
+
+
+def test_uvicorns_error_logger_writes_no_values(restore_logging, capfd):
+    # Uvicorn logs an unhandled application error to "uvicorn.error", through its
+    # own stderr handler, which the root handler never sees.
+    logging.config.dictConfig(uvicorn.config.LOGGING_CONFIG)
+    observability.setup_logging(_production_settings())
+
+    try:
+        raise _database_error()
+    except sa_exc.IntegrityError:
+        logging.getLogger("uvicorn.error").error(
+            "Exception in ASGI application\n", exc_info=sys.exc_info()
+        )
+
+    err = capfd.readouterr().err
+    assert "Exception in ASGI application" in err
+    assert EMAIL not in err
+    assert "sqlalchemy.exc.IntegrityError: [message withheld" in err
+
+
+async def test_a_route_failing_under_uvicorn_logs_no_values(restore_logging, capfd):
+    app = FastAPI()
+
+    @app.get("/seats")
+    async def seats() -> None:
+        _raise_as_sqlalchemy_does(_unique_violation(), "INSERT", {})
+
+    # Uvicorn sets its logging up when the Config is made; the app calls
+    # setup_logging later, in its lifespan.
+    config = uvicorn.Config(
+        app,
+        host="127.0.0.1",
+        port=0,
+        log_config=uvicorn.config.LOGGING_CONFIG,
+        lifespan="off",
+    )
+    observability.setup_logging(_production_settings())
+    server = uvicorn.Server(config)
+    task = asyncio.create_task(server.serve())
+    try:
+        async with asyncio.timeout(20):
+            while not server.started:
+                await asyncio.sleep(0.05)
+            port = server.servers[0].sockets[0].getsockname()[1]
+            async with httpx.AsyncClient() as client:
+                response = await client.get(f"http://127.0.0.1:{port}/seats")
+        assert response.status_code == 500
+    finally:
+        server.should_exit = True
+        await asyncio.wait_for(task, timeout=20)
+
+    err = capfd.readouterr().err
+    assert "Exception in ASGI application" in err
+    assert EMAIL not in err
+    assert "sqlalchemy.exc.IntegrityError: [message withheld" in err

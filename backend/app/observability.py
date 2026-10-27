@@ -30,21 +30,16 @@ _DB_DRIVER_PACKAGES = frozenset({"asyncpg", "aiosqlite", "psycopg", "psycopg2"})
 _ExcInfo = tuple[type[BaseException], BaseException, TracebackType | None]
 
 
-def _exception_chain(exc: BaseException) -> list[BaseException]:
-    """The exception and its causes, outermost first, as Python would print them."""
-    chain: list[BaseException] = []
-    seen: set[int] = set()
-    current: BaseException | None = exc
-    while current is not None and id(current) not in seen:
-        seen.add(id(current))
-        chain.append(current)
-        if current.__cause__ is not None:
-            current = current.__cause__
-        elif current.__context__ is not None and not current.__suppress_context__:
-            current = current.__context__
-        else:
-            current = None
-    return chain
+def _linked(exc: BaseException) -> list[BaseException]:
+    """What Python prints around an exception: its cause or context, and a group's members."""
+    linked: list[BaseException] = []
+    if exc.__cause__ is not None:
+        linked.append(exc.__cause__)
+    elif exc.__context__ is not None and not exc.__suppress_context__:
+        linked.append(exc.__context__)
+    if isinstance(exc, BaseExceptionGroup):
+        linked.extend(exc.exceptions)
+    return linked
 
 
 def _is_database_error(exc: BaseException) -> bool:
@@ -58,18 +53,31 @@ def _is_database_error(exc: BaseException) -> bool:
     )
 
 
-def _withheld_errors(chain: list[BaseException]) -> set[int]:
+def _withheld_errors(exc: BaseException) -> set[int]:
     """The ids of the exceptions whose message must not be logged.
 
-    That is the outermost database error and everything beneath it: a driver can
-    raise a plain exception quoting the value as the cause (asyncpg's encoder
-    raises "ValueError: invalid UUID '<value>'" under its DataError). Exceptions
-    the application raised on top of a database error keep their message.
+    That is every database error and everything beneath it, through causes,
+    contexts and the members of exception groups: a driver can raise a plain
+    exception quoting the value as the cause (asyncpg's encoder raises
+    "ValueError: invalid UUID '<value>'" under its DataError). Exceptions the
+    application raised on top of a database error, and groups that hold one,
+    keep their message.
     """
-    for position, exc in enumerate(chain):
-        if _is_database_error(exc):
-            return {id(older) for older in chain[position:]}
-    return set()
+    withheld: set[int] = set()
+    visited: set[tuple[int, bool]] = set()
+
+    def walk(current: BaseException, below_database_error: bool) -> None:
+        below = below_database_error or _is_database_error(current)
+        if (id(current), below) in visited:
+            return
+        visited.add((id(current), below))
+        if below:
+            withheld.add(id(current))
+        for linked in _linked(current):
+            walk(linked, below)
+
+    walk(exc, False)
+    return withheld
 
 
 def _withheld_line(exc: BaseException) -> str:
@@ -89,36 +97,45 @@ def format_exception_without_db_values(exc_info: _ExcInfo) -> str:
     Database error messages can quote the values of the failing row (customer
     emails, billing fields), in the server's DETAIL line or in its primary line,
     and SQLAlchemy's hide_parameters only covers its own "[parameters: ...]"
-    block. From the outermost database error down, each exception is written as
+    block. Each database error, and everything it was raised from, is written as
     its type, its frames and the SQLSTATE, constraint and table names it carries.
-    A traceback with no database error is written exactly as Python would.
+    This follows causes, contexts and the members of exception groups. A
+    traceback with no database error is written exactly as Python would.
     """
-    exc = exc_info[1]
-    chain = _exception_chain(exc)
-    withheld = _withheld_errors(chain)
+    withheld = _withheld_errors(exc_info[1])
     if not withheld:
         return "".join(traceback.format_exception(*exc_info)).rstrip("\n")
+    return _render(exc_info[1], withheld, set()).rstrip("\n")
 
+
+def _render(exc: BaseException, withheld: set[int], printed: set[int]) -> str:
+    """Python's layout: the cause or context first, then this exception, then a group's members."""
+    printed.add(id(exc))
     parts: list[str] = []
-    for position, current in enumerate(reversed(chain)):
-        if position:
-            # The exception printed just before this one is its cause or context.
-            if current.__cause__ is chain[len(chain) - position]:
-                parts.append(
-                    "\nThe above exception was the direct cause of the following exception:\n\n"
-                )
-            else:
-                parts.append(
-                    "\nDuring handling of the above exception, another exception occurred:\n\n"
-                )
-        if current.__traceback__ is not None:
-            parts.append("Traceback (most recent call last):\n")
-            parts.extend(traceback.format_tb(current.__traceback__))
-        if id(current) in withheld:
-            parts.append(_withheld_line(current))
-        else:
-            parts.extend(traceback.format_exception_only(type(current), current))
-    return "".join(parts).rstrip("\n")
+    older = exc.__cause__
+    separator = "\nThe above exception was the direct cause of the following exception:\n\n"
+    if older is None and not exc.__suppress_context__:
+        older = exc.__context__
+        separator = "\nDuring handling of the above exception, another exception occurred:\n\n"
+    if older is not None and id(older) not in printed:
+        parts.extend([_render(older, withheld, printed), separator])
+
+    if exc.__traceback__ is not None:
+        parts.append("Traceback (most recent call last):\n")
+        parts.extend(traceback.format_tb(exc.__traceback__))
+    if id(exc) in withheld:
+        parts.append(_withheld_line(exc))
+    else:
+        parts.extend(traceback.format_exception_only(type(exc), exc))
+
+    if isinstance(exc, BaseExceptionGroup):
+        for number, member in enumerate(exc.exceptions, start=1):
+            if id(member) in printed:
+                continue
+            body = _render(member, withheld, printed).rstrip("\n")
+            indented = "\n".join(f"  | {line}" if line else "  |" for line in body.split("\n"))
+            parts.append(f"  +---------------- {number} ----------------\n{indented}\n")
+    return "".join(parts)
 
 
 _json_renderer = structlog.processors.JSONRenderer()
@@ -137,11 +154,34 @@ def _render_json_line(
     return (_json_renderer(logger, name, event_dict),), {"exc_info": False}
 
 
-class _ProductionFormatter(logging.Formatter):
-    """For records logged straight to stdlib logging by other libraries."""
+_FACTORY_MARK = "_filters_database_error_text"
 
-    def formatException(self, ei) -> str:  # noqa: N802 (stdlib name)
-        return format_exception_without_db_values(ei)
+
+def _filter_logged_exceptions() -> None:
+    """Give every log record the filtered traceback, whichever handler prints it.
+
+    A Formatter uses a record's exc_text when it is set, so setting it when the
+    record is made covers all handlers: the stdout handler, uvicorn's own
+    handlers (its "Exception in ASGI application" error), and any a library
+    adds later. Calling this twice installs it once.
+    """
+    current = logging.getLogRecordFactory()
+    if getattr(current, _FACTORY_MARK, False):
+        return
+
+    def factory(*args: object, **kwargs: object) -> logging.LogRecord:
+        record = current(*args, **kwargs)
+        exc_info = record.exc_info
+        if isinstance(exc_info, tuple) and exc_info[1] is not None:
+            try:
+                record.exc_text = format_exception_without_db_values(exc_info)
+            except Exception:
+                # Never let the log call fail, and never fall back to the raw text.
+                record.exc_text = f"{type(exc_info[1]).__qualname__}: [message withheld]"
+        return record
+
+    setattr(factory, _FACTORY_MARK, True)
+    logging.setLogRecordFactory(factory)
 
 
 def setup_logging(settings: Settings) -> None:
@@ -179,12 +219,13 @@ def setup_logging(settings: Settings) -> None:
         cache_logger_on_first_use=True,
     )
 
-    handler = logging.StreamHandler(sys.stdout)
     if settings.is_production:
-        handler.setFormatter(_ProductionFormatter("%(message)s"))
-    else:
-        handler.setFormatter(logging.Formatter("%(message)s"))
-    logging.basicConfig(handlers=[handler], level=getattr(logging, settings.log_level))
+        _filter_logged_exceptions()
+    logging.basicConfig(
+        format="%(message)s",
+        stream=sys.stdout,
+        level=getattr(logging, settings.log_level),
+    )
 
 
 def setup_telemetry(settings: Settings) -> None:
