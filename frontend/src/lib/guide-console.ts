@@ -17,6 +17,8 @@ export interface ConsoleSection {
   cloudModelDisabled?: boolean;
   requireEUProcessing?: boolean;
   memoryOff?: boolean;
+  /** Groups only: the Work client's 90-day notices on these Macs, an admin's. Mac only. */
+  workClientNotices?: boolean;
   adoptionTeam?: string;
   excludedApps?: string[];
   excludedWindowsApps?: string[];
@@ -52,7 +54,8 @@ export interface ConsoleDocument {
   groups?: Record<string, ConsoleSection>;
   knowledgeSources?: KnowledgeSource[];
   signIn?: SignIn;
-  atlas?: { url: string };
+  /** scimGroups: people's groups come from Atlas over SCIM, so signed-in Macs ask for them. */
+  atlas?: { url: string; scimGroups?: boolean };
 }
 
 export interface ConsoleFile {

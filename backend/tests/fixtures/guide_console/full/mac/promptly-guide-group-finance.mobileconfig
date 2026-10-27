@@ -40,6 +40,8 @@
 								<array>
 									<string>chatgpt</string>
 								</array>
+								<key>WorkClientNotices.finance</key>
+								<true/>
 							</dict>
 						</dict>
 					</array>

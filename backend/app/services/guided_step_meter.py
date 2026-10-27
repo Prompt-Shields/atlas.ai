@@ -11,7 +11,10 @@ promptly-guide `docs/step-metering.md` proposes, and this follows:
     serves a step and `record()` after. Guide itself never reports usage.
   * **The pool is per organisation per month**: the plan's steps per user
     (`guided_steps.enterprise_pool`) times the Work client's provisioned users.
-    One number per month is kept, never who asked (E4).
+    One number per month is kept, never who asked (E4). The steps per user are
+    configured, not written here (`GUIDED_STEPS_POOL_PER_USER`); while they are
+    not, the pool is unknown, no hosted step is served and no overage is
+    worked out.
   * **A hard cap is the administrator's choice, off by default** (decision 4).
     Off, steps above the pool are served and are overage; on, hosted steps
     stop at the pool until the month turns.
@@ -19,8 +22,8 @@ promptly-guide `docs/step-metering.md` proposes, and this follows:
     "it is used only when the administrator has not set the organisation's
     own endpoint", and their steps are never metered.
 
-Posting the month's overage to the Stripe `guided_step` meter through the
-billing outbox is the next slice; `PoolStatus.overage` is the figure it posts.
+`PoolStatus.overage` is the figure `billing/step_overage.py` posts to the
+Stripe `guided_step` meter.
 
 Months are UTC calendar months. `now` and `served_at` MUST come from the DB
 server's clock at the call site, as for `entitlements.hard_locked()`.
@@ -54,6 +57,7 @@ class Refusal(str, enum.Enum):
     NO_WORK_CLIENT = "no_work_client"  # the tenant has no Work client to serve
     OWN_ENDPOINT = "own_endpoint"  # Guide answers from the organisation's own model
     POOL_USED = "pool_used"  # hard cap on, and this month's pool is used
+    POOL_UNKNOWN = "pool_unknown"  # the steps per user are not configured
 
 
 class ReportRejected(ValueError):
@@ -71,9 +75,11 @@ class PoolStatus:
     period: str  # "2026-10"
     seats: int  # the Work client's provisioned users
     used: int  # hosted steps served this month
-    pool: int  # steps the Work client includes this month
-    remaining: int  # steps left in the pool, never below 0
-    overage: int  # steps above the pool to bill; 0 for own-endpoint organisations
+    # The next three are None while the pool's steps per user are not
+    # configured, except that an own-endpoint organisation's overage is 0.
+    pool: int | None  # steps the Work client includes this month
+    remaining: int | None  # steps left in the pool, never below 0
+    overage: int | None  # steps above the pool to bill; 0 for own-endpoint organisations
     hard_cap: bool
     own_endpoint: bool
     work_client: bool
@@ -107,13 +113,19 @@ def month_status(tenant: Tenant, period: str, used: int) -> PoolStatus:
     own = tenant.own_endpoint_declared_at is not None
     seats = work_client_seats(tenant) if work_client else 0
     pool = enterprise_pool(seats)
+    if own:
+        overage = 0
+    elif pool is None:
+        overage = None
+    else:
+        overage = max(used - pool, 0)
     return PoolStatus(
         period=period,
         seats=seats,
         used=used,
         pool=pool,
-        remaining=max(pool - used, 0),
-        overage=0 if own else max(used - pool, 0),
+        remaining=None if pool is None else max(pool - used, 0),
+        overage=overage,
         hard_cap=bool(tenant.guided_step_hard_cap),
         own_endpoint=own,
         work_client=work_client,
@@ -125,7 +137,11 @@ def admit(status: PoolStatus) -> StepCheck:
     if not status.work_client:
         return StepCheck(False, Refusal.NO_WORK_CLIENT, False, 0)
     if status.own_endpoint:
-        return StepCheck(False, Refusal.OWN_ENDPOINT, False, status.remaining)
+        return StepCheck(False, Refusal.OWN_ENDPOINT, False, status.remaining or 0)
+    if status.pool is None:
+        # Fail closed: a step that cannot be placed in or above the pool is
+        # neither served nor billed.
+        return StepCheck(False, Refusal.POOL_UNKNOWN, False, 0)
     if status.hard_cap and status.used >= status.pool:
         return StepCheck(False, Refusal.POOL_USED, False, 0)
     verdict = decide(
