@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.ai_cost_record import AICostRecord, CostProvider, CostSubjectKind
 from app.models.integration import Integration, IntegrationStatus
+from app.safe_errors import safe_error_text
 
 # ``registry`` for connector lookup; the per-vendor adapters are imported for
 # their import-time side effect of registering themselves. Every cost provider
@@ -145,7 +146,7 @@ async def sync_integration(
             error=None,
         )
     except Exception as exc:  # noqa: BLE001 — fault isolation is the contract.
-        error = str(exc)[:500]
+        error = safe_error_text(exc)[:500]
         # Discard any partial rows staged before the failure so a failed sync
         # never persists half its data; then record ERROR as its own commit.
         await db.rollback()

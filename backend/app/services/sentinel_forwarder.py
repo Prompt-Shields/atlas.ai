@@ -49,6 +49,7 @@ from app.models.sentinel_forward import (
     SentinelForwardCursor,
 )
 from app.models.use_case import UseCase, UseCaseStatus
+from app.safe_errors import safe_error_text
 from app.services import sentinel_schema
 from app.services.crypto import TokenEncryptionError, decrypt_token, encrypt_token
 from app.services.sentinel_mapping import (
@@ -822,7 +823,7 @@ async def forward_integration(
 
     except Exception as exc:  # noqa: BLE001 — fault isolation, see docstring
         await db.rollback()
-        message = f"{type(exc).__name__}: {exc}"
+        message = safe_error_text(exc, with_type=True)
         logger.error(
             "sentinel_forward_failed",
             integration_id=str(integration.id),
