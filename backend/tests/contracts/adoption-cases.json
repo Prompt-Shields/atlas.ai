@@ -1,0 +1,289 @@
+{
+  "about": [
+    "The adoption gate's rules as cases both clients run: the Mac (Tests/GuideAdoptionTests/AdoptionCasesTests.swift) and Windows (windows/Promptly.Guide.Core.Tests/AdoptionCasesTests.cs), so the two cannot drift apart without a test failing on one side.",
+    "A category is written as the Mac stores it (AdoptionCategory.stored): \"<kind>:<id>\". Kinds and ids are the ones contracts/atlas-guide.json uses.",
+    "bands: count out of total, and the band's text; null where the pair is not a share.",
+    "categories: whether a stored category reads back (AdoptionCategory.restored). Only what a factory could have made does.",
+    "reports: tallies through AdoptionGate.report with the kinds turned on. figures are sorted by team, then category. teams_too_small is for the gate's own checks and is never shown.",
+    "refusals: AdoptionGate.refusal for one category of one tally; null when it is shown.",
+    "contributions: what AdoptionConsent.contribution makes for an offer and an answer; null when nothing may be sent.",
+    "tallies: contributions (each one person's month) combined into a team's tally for one month.",
+    "last_finished: the latest month a contribution can be for, at a moment (UTC).",
+    "intake: whether a month's contribution may be sent at a moment: from the end of the month until 00:00 UTC on the 7th of the month after (Atlas's INTAKE_CLOSES_ON_DAY). Both clients run these."
+  ],
+  "bands": [
+    {"count": 0, "total": 10, "text": "under 20%"},
+    {"count": 1, "total": 10, "text": "under 20%"},
+    {"count": 2, "total": 10, "text": "20–29%"},
+    {"count": 7, "total": 10, "text": "70–79%"},
+    {"count": 9, "total": 10, "text": "80% or more"},
+    {"count": 10, "total": 10, "text": "80% or more"},
+    {"count": 3, "total": 20, "text": "under 20%"},
+    {"count": 4, "total": 20, "text": "20–29%"},
+    {"count": 11, "total": 20, "text": "50–59%"},
+    {"count": 16, "total": 20, "text": "80% or more"},
+    {"count": 10, "total": 12, "text": "80% or more"},
+    {"count": 19, "total": 30, "text": "60–69%"},
+    {"count": 1, "total": 0, "text": null},
+    {"count": 11, "total": 10, "text": null},
+    {"count": -1, "total": 10, "text": null}
+  ],
+  "categories": [
+    {"stored": "app:Claude", "valid": true},
+    {"stored": "app:ChatGPT", "valid": true},
+    {"stored": "app:Le Chat", "valid": true},
+    {"stored": "completion:finished", "valid": true},
+    {"stored": "completion:timedOut", "valid": true},
+    {"stored": "topic:chatgpt/model", "valid": true},
+    {"stored": "friction:nordlys-expenses/new-claim/step-3", "valid": true},
+    {"stored": "friction:nordlys-expenses/new-claim/finished", "valid": true},
+    {"stored": "friction:nordlys-expenses/new-claim/step-10", "valid": true},
+    {"stored": "app:Kari Nordmann", "valid": false},
+    {"stored": "app:claude", "valid": false},
+    {"stored": "completion:whatever", "valid": false},
+    {"stored": "topic:how do I resign", "valid": false},
+    {"stored": "topic:a/b/c", "valid": false},
+    {"stored": "topic:-a/b", "valid": false},
+    {"stored": "topic:Chatgpt/model", "valid": false},
+    {"stored": "friction:a/b/step-0", "valid": false},
+    {"stored": "friction:a/b/step-11", "valid": false},
+    {"stored": "friction:a/b/step-03", "valid": false},
+    {"stored": "friction:a/b/stopped", "valid": false},
+    {"stored": "mood:happy", "valid": false},
+    {"stored": "Claude", "valid": false},
+    {"stored": "", "valid": false}
+  ],
+  "reports": [
+    {
+      "name": "a team too small to report says nothing about what it did",
+      "kinds": ["topic", "app", "completion", "friction"],
+      "tallies": [{"team": "sales", "contributors": 9, "people": {"app:Claude": 9}}],
+      "figures": [],
+      "teams_too_small": ["sales"],
+      "suppressed": {},
+      "unusable": 0
+    },
+    {
+      "name": "a figure from too few people is left out, not rounded down",
+      "kinds": ["topic", "app", "completion", "friction"],
+      "tallies": [{"team": "sales", "contributors": 10, "people": {"app:Claude": 9, "app:ChatGPT": 10}}],
+      "figures": [{"team": "sales", "category": "app:ChatGPT", "band": "80% or more"}],
+      "teams_too_small": [],
+      "suppressed": {"sales": 1},
+      "unusable": 0
+    },
+    {
+      "name": "ten people in the team and ten for the thing counted",
+      "kinds": ["topic", "app", "completion", "friction"],
+      "tallies": [{"team": "sales", "contributors": 10, "people": {"app:Claude": 10}}],
+      "figures": [{"team": "sales", "category": "app:Claude", "band": "80% or more"}],
+      "teams_too_small": [],
+      "suppressed": {},
+      "unusable": 0
+    },
+    {
+      "name": "a team of one",
+      "kinds": ["topic", "app", "completion", "friction"],
+      "tallies": [{"team": "sales", "contributors": 1, "people": {"app:Claude": 1}}],
+      "figures": [],
+      "teams_too_small": ["sales"],
+      "suppressed": {},
+      "unusable": 0
+    },
+    {
+      "name": "a band, not a count",
+      "kinds": ["topic", "app", "completion", "friction"],
+      "tallies": [{"team": "support", "contributors": 30, "people": {"app:Claude": 19, "completion:finished": 12}}],
+      "figures": [
+        {"team": "support", "category": "app:Claude", "band": "60–69%"},
+        {"team": "support", "category": "completion:finished", "band": "40–49%"}
+      ],
+      "teams_too_small": [],
+      "suppressed": {},
+      "unusable": 0
+    },
+    {
+      "name": "only the kinds the organisation turned on, and an off kind is not suppressed",
+      "kinds": ["app"],
+      "tallies": [{"team": "sales", "contributors": 10, "people": {"topic:chatgpt/model": 10, "app:Claude": 10}}],
+      "figures": [{"team": "sales", "category": "app:Claude", "band": "80% or more"}],
+      "teams_too_small": [],
+      "suppressed": {},
+      "unusable": 0
+    },
+    {
+      "name": "nothing turned on, nothing counted",
+      "kinds": [],
+      "tallies": [{"team": "sales", "contributors": 10, "people": {"topic:chatgpt/model": 10, "app:Claude": 10}}],
+      "figures": [],
+      "teams_too_small": [],
+      "suppressed": {},
+      "unusable": 0
+    },
+    {
+      "name": "two reports for one team are both dropped",
+      "kinds": ["topic", "app", "completion", "friction"],
+      "tallies": [
+        {"team": "sales", "contributors": 10, "people": {"app:Claude": 10}},
+        {"team": " sales ", "contributors": 20, "people": {"app:Claude": 20}}
+      ],
+      "figures": [],
+      "teams_too_small": [],
+      "suppressed": {},
+      "unusable": 2
+    },
+    {
+      "name": "more people in a category than in the team",
+      "kinds": ["topic", "app", "completion", "friction"],
+      "tallies": [{"team": "sales", "contributors": 10, "people": {"app:Claude": 11}}],
+      "figures": [],
+      "teams_too_small": [],
+      "suppressed": {},
+      "unusable": 1
+    },
+    {
+      "name": "no team name",
+      "kinds": ["topic", "app", "completion", "friction"],
+      "tallies": [{"team": "   ", "contributors": 10, "people": {"app:Claude": 10}}],
+      "figures": [],
+      "teams_too_small": [],
+      "suppressed": {},
+      "unusable": 1
+    },
+    {
+      "name": "fewer than no people",
+      "kinds": ["topic", "app", "completion", "friction"],
+      "tallies": [{"team": "sales", "contributors": -1, "people": {}}],
+      "figures": [],
+      "teams_too_small": [],
+      "suppressed": {},
+      "unusable": 1
+    },
+    {
+      "name": "the same tallies always give the same report",
+      "kinds": ["topic", "app", "completion", "friction"],
+      "tallies": [
+        {"team": "support", "contributors": 10, "people": {"app:Claude": 10}},
+        {"team": "sales", "contributors": 10, "people": {"topic:chatgpt/model": 10, "app:Claude": 10, "completion:finished": 10}},
+        {"team": "finance", "contributors": 12, "people": {"friction:nordlys-expenses/new-claim/step-3": 10, "friction:nordlys-expenses/new-claim/finished": 2}},
+        {"team": "legal", "contributors": 3, "people": {}},
+        {"team": "", "contributors": 10, "people": {}}
+      ],
+      "figures": [
+        {"team": "finance", "category": "friction:nordlys-expenses/new-claim/step-3", "band": "80% or more"},
+        {"team": "sales", "category": "app:Claude", "band": "80% or more"},
+        {"team": "sales", "category": "completion:finished", "band": "80% or more"},
+        {"team": "sales", "category": "topic:chatgpt/model", "band": "80% or more"},
+        {"team": "support", "category": "app:Claude", "band": "80% or more"}
+      ],
+      "teams_too_small": ["legal"],
+      "suppressed": {"finance": 1},
+      "unusable": 1
+    }
+  ],
+  "refusals": [
+    {"category": "app:Claude", "tally": {"team": "", "contributors": 10, "people": {"app:Claude": 10}}, "kinds": ["topic", "app", "completion", "friction"], "refusal": "notATally"},
+    {"category": "app:Claude", "tally": {"team": "s", "contributors": 10, "people": {"app:Claude": 11}}, "kinds": ["topic", "app", "completion", "friction"], "refusal": "notATally"},
+    {"category": "app:Claude", "tally": {"team": "s", "contributors": 9, "people": {"app:Claude": 9}}, "kinds": ["topic", "app", "completion", "friction"], "refusal": "teamTooSmall"},
+    {"category": "app:Claude", "tally": {"team": "s", "contributors": 10, "people": {"app:Claude": 10}}, "kinds": [], "refusal": "kindNotOn"},
+    {"category": "app:Claude", "tally": {"team": "s", "contributors": 10, "people": {"app:Claude": 9}}, "kinds": ["topic", "app", "completion", "friction"], "refusal": "tooFewPeople"},
+    {"category": "app:Claude", "tally": {"team": "s", "contributors": 10, "people": {}}, "kinds": ["app"], "refusal": "tooFewPeople"},
+    {"category": "app:Claude", "tally": {"team": "s", "contributors": 10, "people": {"app:Claude": 10}}, "kinds": ["topic", "app", "completion", "friction"], "refusal": null}
+  ],
+  "contributions": [
+    {
+      "name": "nothing until the person agrees",
+      "offered": ["topic", "app", "completion", "friction"], "opted_in": false,
+      "team": "sales", "period": "2026-09", "reached": ["app:Claude", "completion:finished"],
+      "sent": null
+    },
+    {
+      "name": "an agreement counts only what the organisation offered",
+      "offered": ["app"], "opted_in": true,
+      "team": " sales ", "period": "2026-09", "reached": ["app:Claude", "completion:finished"],
+      "sent": {"team": "sales", "period": {"year": 2026, "month": 9}, "reached": [{"kind": "app", "id": "Claude"}]}
+    },
+    {
+      "name": "an organisation that offers nothing is not asking",
+      "offered": [], "opted_in": true,
+      "team": "sales", "period": "2026-09", "reached": ["app:Claude"],
+      "sent": null
+    },
+    {
+      "name": "no team, no contribution",
+      "offered": ["topic", "app", "completion", "friction"], "opted_in": true,
+      "team": "  ", "period": "2026-09", "reached": ["app:Claude"],
+      "sent": null
+    },
+    {
+      "name": "a month with nothing reached is still a contribution",
+      "offered": ["completion"], "opted_in": true,
+      "team": "sales", "period": "2026-09", "reached": ["app:Claude"],
+      "sent": {"team": "sales", "period": {"year": 2026, "month": 9}, "reached": []}
+    },
+    {
+      "name": "sorted by kind, then id",
+      "offered": ["topic", "app", "completion", "friction"], "opted_in": true,
+      "team": "Sales", "period": "2026-09",
+      "reached": ["topic:chatgpt/model", "friction:nordlys-expenses/new-claim/step-3", "completion:finished", "app:Claude", "app:ChatGPT"],
+      "sent": {"team": "Sales", "period": {"year": 2026, "month": 9}, "reached": [
+        {"kind": "app", "id": "ChatGPT"},
+        {"kind": "app", "id": "Claude"},
+        {"kind": "completion", "id": "finished"},
+        {"kind": "friction", "id": "nordlys-expenses/new-claim/step-3"},
+        {"kind": "topic", "id": "chatgpt/model"}
+      ]}
+    }
+  ],
+  "tallies": [
+    {
+      "name": "ten people who agreed",
+      "period": "2026-09",
+      "contributions": [
+        {"team": "sales", "period": "2026-09", "reached": ["app:Claude"], "people": 10}
+      ],
+      "tallies": [{"team": "sales", "contributors": 10, "people": {"app:Claude": 10}}]
+    },
+    {
+      "name": "another month's contributions are not this month's",
+      "period": "2026-09",
+      "contributions": [
+        {"team": "sales", "period": "2026-09", "reached": ["app:Claude"], "people": 9},
+        {"team": "sales", "period": "2026-08", "reached": ["app:Claude"], "people": 1}
+      ],
+      "tallies": [{"team": "sales", "contributors": 9, "people": {"app:Claude": 9}}]
+    },
+    {
+      "name": "people, not events, team by team",
+      "period": "2026-09",
+      "contributions": [
+        {"team": "support", "period": "2026-09", "reached": [], "people": 4},
+        {"team": "sales", "period": "2026-09", "reached": ["app:Claude", "completion:finished"], "people": 3},
+        {"team": "sales", "period": "2026-09", "reached": ["app:Claude"], "people": 2}
+      ],
+      "tallies": [
+        {"team": "sales", "contributors": 5, "people": {"app:Claude": 5, "completion:finished": 3}},
+        {"team": "support", "contributors": 4, "people": {}}
+      ]
+    }
+  ],
+  "last_finished": [
+    {"now": "2026-10-05T00:00:00Z", "period": "2026-09"},
+    {"now": "2027-01-01T00:00:00Z", "period": "2026-12"},
+    {"now": "2026-12-31T23:59:59Z", "period": "2026-11"},
+    {"now": "2026-10-01T00:30:00+02:00", "period": "2026-08"}
+  ],
+  "intake": [
+    {"period": "2026-09", "now": "2026-09-30T23:59:59Z", "open": false},
+    {"period": "2026-09", "now": "2026-10-01T00:00:00Z", "open": true},
+    {"period": "2026-09", "now": "2026-10-03T12:00:00Z", "open": true},
+    {"period": "2026-09", "now": "2026-10-06T23:59:59Z", "open": true},
+    {"period": "2026-09", "now": "2026-10-07T00:00:00Z", "open": false},
+    {"period": "2026-09", "now": "2026-10-20T12:00:00Z", "open": false},
+    {"period": "2026-09", "now": "2026-10-07T01:30:00+02:00", "open": true},
+    {"period": "2026-12", "now": "2027-01-01T00:00:00Z", "open": true},
+    {"period": "2026-12", "now": "2027-01-06T23:59:59Z", "open": true},
+    {"period": "2026-12", "now": "2027-01-07T00:00:00Z", "open": false},
+    {"period": "2026-08", "now": "2026-10-03T12:00:00Z", "open": false}
+  ]
+}
