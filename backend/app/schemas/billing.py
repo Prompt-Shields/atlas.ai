@@ -72,7 +72,9 @@ class GuidedStepsResponse(BaseModel):
     """
 
     period: str  # the open UTC calendar month, "YYYY-MM"; its count is not shown
-    pool: int  # steps the Work client includes each month, at today's seats
+    # Steps the Work client includes each month, at today's seats; None while
+    # the pool's steps per user are not configured (no hosted step is served).
+    pool: int | None
     hard_cap: bool  # hosted steps stop at the pool until the month turns
     own_endpoint: bool  # Guide answers from the organisation's own model endpoint
     work_client: bool  # the tenant has a Work client

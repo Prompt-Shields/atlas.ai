@@ -176,7 +176,7 @@ def validate_amounts(raw: object) -> dict[str, int]:
     a whole number of minor units (euro cents), zero or more, as Stripe's
     ``unit_amount`` requires. Floats, strings and booleans are refused rather
     than rounded, so a euro amount typed by mistake (``60`` for €0.60, or
-    ``0.04``) is caught here and not billed.
+    ``0.5``) is caught here and not billed.
     """
     if not isinstance(raw, Mapping):
         raise AmountsError("amounts must be a JSON object of lookup_key -> cents")

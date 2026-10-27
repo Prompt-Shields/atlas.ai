@@ -118,6 +118,7 @@ const nb: Dictionary = {
       ownEndpoint:
         'Guide svarer fra organisasjonens eget modellendepunkt, så ingen veiledede steg telles her.',
       pool: 'Potten er {pool} steg i måneden.',
+      poolUnknown: 'Størrelsen på potten er ikke satt opp ennå, så ingen hostede steg blir levert.',
       openMonth: '{month}: tellingen er tilgjengelig når måneden er slutt, {date}. Den vises bare for hele måneder, slik at den ikke kan vise én persons bruk.',
       closedHeading: 'Måneder som er avsluttet',
       closedUsed: '{used} steg',
@@ -182,6 +183,7 @@ const nb: Dictionary = {
       cloudModelDisabled: 'Slå av skymodellen (svar bare fra Mac-en)',
       requireEUProcessing: 'Bruk bare en skymodell der forespørsler behandles i EU',
       memoryOff: 'Slå av minnet',
+      workClientNotices: 'Vis 90-dagersvarslene på Mac-ene i denne gruppen (bare administratorer)',
       skillPacksOff: 'Ferdighetspakker som skal slås av',
       excludedApps: 'Apper Guide aldri ser på (Mac)',
       excludedWindowsApps: 'Apper Guide aldri ser på (Windows)',
@@ -224,6 +226,7 @@ const nb: Dictionary = {
       heading: 'Bruksstatistikk',
       url: 'Atlas.AI-adressen deres',
       hint: 'Hvor bruksstatistikken sendes. Ingenting sendes for noen som ikke selv har valgt å dele den på sin egen Mac.',
+      scimGroups: 'Gruppene kommer fra denne Atlas.AI via SCIM, så Mac-er med pålogging spør den om dem',
     },
     cannot: {
       heading: 'Det disse innstillingene ikke kan',
