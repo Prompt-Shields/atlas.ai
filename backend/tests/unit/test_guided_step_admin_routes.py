@@ -5,7 +5,8 @@ counts only, and never the open month's count (promptly-guide decision P9);
 `PUT /billing/guided-steps/hard-cap` turns the hard cap on or off. Both are for
 tenant admins, scoped to the admin's own tenant, and a change is audited.
 
-Pool sizes are worked out with `enterprise_pool()`, never written here.
+Pool sizes are worked out with `enterprise_pool()` from a made-up steps-per-user
+figure (`STEPS_PER_USER`), configured by a fixture, never the plan's.
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from httpx import AsyncClient
 from sqlalchemy import func, select
 
 from app.auth.jwt import create_access_token
+from app.config import get_settings
 from app.models.audit_log import AuditLog
 from app.models.guided_step import GuidedStepCount
 from app.models.tenant import Tenant
@@ -44,6 +46,15 @@ EVENT = "billing.guided_step_hard_cap.updated"
 FIELDS = {"period", "pool", "hard_cap", "own_endpoint", "work_client", "closed_months"}
 # A count no pool, period or other figure in the reply could equal by chance.
 OPEN_MONTH_STEPS = 7919
+
+
+# Made up: the real allowance is a commercial term, set per deployment.
+STEPS_PER_USER = 7
+
+
+@pytest.fixture(autouse=True)
+def _pool_configured(monkeypatch):
+    monkeypatch.setattr(get_settings(), "guided_steps_pool_per_user", STEPS_PER_USER)
 
 
 def _subs(seats: int = SEATS) -> dict:
@@ -141,6 +152,16 @@ async def test_admin_sees_the_pool_and_not_the_open_months_count(client: AsyncCl
     assert body["own_endpoint"] is False
     assert body["period"] == await _open_period()
     assert body["closed_months"] == []
+
+
+async def test_an_unconfigured_pool_is_shown_as_not_set(client: AsyncClient, monkeypatch) -> None:
+    monkeypatch.setattr(get_settings(), "guided_steps_pool_per_user", None)
+    _, token = await _seed()
+    resp = await client.get(STATUS, headers=auth_header(token))
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert set(body) == FIELDS
+    assert body["pool"] is None and body["work_client"] is True
 
 
 async def test_the_open_months_count_never_appears_in_the_reply(client: AsyncClient) -> None:
