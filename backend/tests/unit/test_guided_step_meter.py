@@ -1,7 +1,8 @@
 """The Work client's guided-step meter and pool cap (promptly-guide #62).
 
-Pool sizes are worked out with `enterprise_pool()`, never written here, so the
-plan's figures stay in one place.
+Pool sizes are worked out with `enterprise_pool()` from a made-up steps-per-user
+figure (`STEPS_PER_USER`), configured by a fixture: the plan's figure is a
+commercial term and is never written here.
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ import pytest_asyncio
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import get_settings
 from app.models.guided_step import GuidedStepCount, GuidedStepReceipt
 from app.models.tenant import Tenant
 from app.services.entitlements import WORK_CLIENT_LOOKUP_KEY, work_client_seats
@@ -35,6 +37,15 @@ pytestmark = [pytest.mark.unit]
 
 NOW = datetime(2026, 10, 22, 12, 0, tzinfo=UTC)
 SEATS = 3
+
+
+# Made up: the real allowance is a commercial term, set per deployment.
+STEPS_PER_USER = 7
+
+
+@pytest.fixture(autouse=True)
+def _pool_configured(monkeypatch):
+    monkeypatch.setattr(get_settings(), "guided_steps_pool_per_user", STEPS_PER_USER)
 
 
 def _subs(seats: int = SEATS, status: str = "active", **extra: dict) -> dict:
@@ -167,6 +178,45 @@ def test_own_endpoint_is_not_served_hosted_steps_nor_metered() -> None:
     verdict = admit(status)
     assert not verdict.allowed and verdict.refusal is Refusal.OWN_ENDPOINT
     assert not verdict.meter_step
+
+
+# ── The pool not configured: fail closed ───────────────────────────────────
+
+
+def _unconfigured(monkeypatch) -> None:
+    monkeypatch.setattr(get_settings(), "guided_steps_pool_per_user", None)
+
+
+def test_an_unconfigured_pool_is_unknown_not_zero(monkeypatch) -> None:
+    _unconfigured(monkeypatch)
+    status = month_status(_tenant(), "2026-10", 5)
+    assert status.pool is None and status.remaining is None and status.overage is None
+    assert status.used == 5 and status.seats == SEATS
+
+
+def test_an_unconfigured_pool_serves_no_hosted_step(monkeypatch) -> None:
+    _unconfigured(monkeypatch)
+    verdict = admit(month_status(_tenant(), "2026-10", 0))
+    assert not verdict.allowed and verdict.refusal is Refusal.POOL_UNKNOWN
+    assert not verdict.meter_step and verdict.remaining == 0
+
+
+def test_an_unconfigured_pool_still_has_no_overage_for_an_own_endpoint(monkeypatch) -> None:
+    _unconfigured(monkeypatch)
+    status = month_status(_tenant(own_endpoint_declared_at=NOW), "2026-10", 5)
+    assert status.overage == 0
+    assert admit(status).refusal is Refusal.OWN_ENDPOINT
+
+
+@pytest.mark.asyncio
+async def test_an_unconfigured_pool_still_counts_steps_already_served(
+    db: AsyncSession, monkeypatch
+) -> None:
+    _unconfigured(monkeypatch)
+    tenant = await _work_tenant(db)
+    recorded = await record(db, tenant, report_id="r1", served_at=NOW, steps=3)
+    assert recorded.counted and recorded.status.used == 3
+    assert (await check(db, tenant, now=NOW)).refusal is Refusal.POOL_UNKNOWN
 
 
 # ── Recording ──────────────────────────────────────────────────────────────

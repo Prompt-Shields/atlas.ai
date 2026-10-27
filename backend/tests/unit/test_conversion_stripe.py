@@ -47,10 +47,19 @@ def item(key: str | None, created: int, quantity: int = 1, product: str | None =
     }
 
 
-def sub(*items, start: int, ended: int | None = None, pilot: str | None = None, **kw) -> dict:
+def sub(
+    *items,
+    start: int,
+    ended: int | None = None,
+    pilot: str | None = None,
+    pilot_ended: str | None = None,
+    **kw,
+) -> dict:
     meta = {"tenant_id": "t"}
     if pilot is not None:
         meta["promptly_pilot"] = pilot
+    if pilot_ended is not None:
+        meta["promptly_pilot_ended"] = pilot_ended
     return {
         "id": kw.get("id", f"sub_{start}"),
         "start_date": start,
@@ -144,6 +153,7 @@ def test_free_client_only_has_day0_and_no_sale(fake) -> None:
     facts = cs.read_customer("cus_a")
     assert facts.stripe_day0 == JUL_3
     assert facts.pilot_now is True
+    assert facts.was_pilot is True and facts.pilot_ended_on is None
     assert facts.first_sale is None and facts.quoted_at is None and facts.paid_at is None
     assert facts.work_client_ended_at is None
 
@@ -167,6 +177,40 @@ def test_first_sale_is_the_earliest_module_item_across_subscriptions(fake) -> No
     )
     assert facts.first_suite_sold_at == datetime(2026, 9, 14, tzinfo=UTC)
     assert facts.pilot_now is False
+    assert facts.was_pilot is False and facts.pilot_ended_on is None
+
+
+def test_a_converted_pilot_still_counts_as_one(fake) -> None:
+    """end_pilot clears the flag but records the day, so "was a pilot" survives."""
+    fake.subscriptions["cus_a"] = [
+        sub(
+            item("promptly_work_client", ts(2026, 7, 3)),
+            item("promptly_atlas_annual", ts(2026, 9, 1), 200),
+            start=ts(2026, 7, 3),
+            pilot="false",
+            pilot_ended="2026-09-01",
+        )
+    ]
+    facts = cs.read_customer("cus_a")
+    assert facts.pilot_now is False
+    assert facts.was_pilot is True
+    assert facts.pilot_ended_on == "2026-09-01"
+
+
+def test_was_a_pilot_on_any_work_client_subscription(fake) -> None:
+    """The flag now is the first subscription's; "was a pilot" looks at every one."""
+    fake.subscriptions["cus_a"] = [
+        sub(item("promptly_work_client", ts(2026, 7, 3)), start=ts(2026, 7, 3), pilot="false"),
+        sub(
+            item("promptly_work_client", ts(2026, 8, 3)),
+            start=ts(2026, 8, 3),
+            pilot="false",
+            pilot_ended="2026-09-20",
+        ),
+    ]
+    facts = cs.read_customer("cus_a")
+    assert facts.pilot_now is False
+    assert (facts.was_pilot, facts.pilot_ended_on) == (True, "2026-09-20")
 
 
 def test_an_old_price_without_lookup_key_is_known_by_its_product(fake) -> None:
@@ -338,6 +382,7 @@ def test_csv_has_one_row_per_company_with_dates_and_flags(fake) -> None:
     assert record["name"] == "Pilot Oy"
     assert record["cohort"] == "2026-07" and record["day0"] == "2026-07-03"
     assert record["pilot_now"] == "yes"
+    assert (record["was_pilot"], record["pilot_ended_on"]) == ("yes", "")
     assert record["guide_connected_at"] == "2026-07-10"
     assert record["quoted_at"] == "2026-08-20"
     assert record["first_module_sold_at"] == "2026-09-14"
@@ -347,6 +392,184 @@ def test_csv_has_one_row_per_company_with_dates_and_flags(fake) -> None:
     assert record["converted_within_window"] == "yes"
     assert record["paid_module_now"] == "yes" and record["seats_now"] == "400"
     assert record["stripe"] == "read"
+
+
+# ---------------------------------------------------------------------------
+# The cohort table
+# ---------------------------------------------------------------------------
+
+
+def _work_client(customer: str, fake, *, pilot: str = "true", ended=None, extra=()) -> None:
+    fake.subscriptions[customer] = [
+        sub(
+            item("promptly_work_client", ts(2026, 7, 3)),
+            start=ts(2026, 7, 3),
+            pilot=pilot,
+            ended=ended,
+        ),
+        *extra,
+    ]
+
+
+def _first_pilot(fake) -> list[cs.JoinedRow]:
+    """The first pilot: three pilots in July, an existing customer, one unread in August."""
+    connected = datetime(2026, 7, 10, tzinfo=UTC)
+    # Converted: quoted, Suite sold within six months, paid. No longer a pilot.
+    _work_client(
+        "cus_a",
+        fake,
+        pilot="false",
+        extra=[sub(item("promptly_suite_annual", ts(2026, 9, 14), 400), start=ts(2026, 9, 14))],
+    )
+    fake.quotes["cus_a"] = [quote(ts(2026, 8, 20))]
+    fake.invoices["cus_a"] = [
+        invoice(
+            {"price": price("promptly_suite_annual"), "quantity": 400},
+            created=ts(2026, 9, 14),
+            paid=ts(2026, 10, 1),
+        )
+    ]
+    suite_now = {
+        "sub_s": {"kind": "enterprise", "status": "active", "items": {"promptly_suite_annual": 400}}
+    }
+    # Still a free pilot, past day 90 without its own endpoint.
+    _work_client("cus_b", fake)
+    # Lost: the Work client ended and no module was ever sold.
+    _work_client("cus_c", fake, ended=ts(2026, 9, 30))
+    # An Atlas.AI customer since March who added the client in July.
+    _work_client(
+        "cus_d",
+        fake,
+        pilot="false",
+        extra=[sub(item("promptly_atlas_annual", ts(2026, 3, 1), 50), start=ts(2026, 3, 1))],
+    )
+    rows = [
+        company("cus_a", name="A", connected=connected, subs=suite_now),
+        company("cus_b", name="B", connected=connected),
+        company("cus_c", name="C"),
+        company("cus_d", name="D", connected=connected),
+        company(None, started=datetime(2026, 8, 5, tzinfo=UTC), name="E"),
+    ]
+    return cs.join(rows, cs.read_all(rows))
+
+
+def test_cohort_table_for_the_first_pilot(fake) -> None:
+    july, august, total = cs.cohorts(_first_pilot(fake))
+    assert july == cs.CohortFunnel(
+        cohort="2026-07",
+        started=3,
+        pilots_now=2,
+        connected=2,
+        quoted=1,
+        converted_any_module=1,
+        converted_suite=1,
+        paid=1,
+        lost=1,
+        # B, and C whose Work client ended: past day 90, no module, no endpoint.
+        endpoint_required=2,
+        not_measured=0,
+        # Three companies: counts, no rate.
+        rate_any_module=None,
+        rate_suite=None,
+        median_seats_converted=400,
+        median_days_to_convert=73,
+        median_days_connected_to_quoted=41,
+        existing_customers=1,
+        window="so far",
+    )
+    assert (august.cohort, august.started, august.not_measured) == ("2026-08", 1, 1)
+    assert august.converted_any_module == 0 and august.lost == 0
+    assert total.cohort == cs.ALL_COHORTS
+    assert (total.started, total.converted_any_module, total.existing_customers) == (4, 1, 1)
+    assert total.not_measured == 1
+
+
+def test_cohort_rate_needs_ten_companies_all_measured(fake) -> None:
+    rows = []
+    for n in range(10):
+        customer = f"cus_{n}"
+        sold = (
+            [sub(item("promptly_learn_annual", ts(2026, 8, 1), 100), start=ts(2026, 8, 1))]
+            if n < 4
+            else []
+        )
+        _work_client(customer, fake, extra=sold)
+        rows.append(company(customer, name=str(n)))
+    (july, _) = cs.cohorts(cs.join(rows, cs.read_all(rows)))
+    assert (july.started, july.converted_any_module) == (10, 4)
+    assert (july.rate_any_module, july.rate_suite) == (0.4, 0.0)
+    assert july.median_seats_converted == 100
+
+    rows.append(company(None, name="unread"))
+    (july, _) = cs.cohorts(cs.join(rows, cs.read_all(rows)))
+    assert july.not_measured == 1
+    assert july.rate_any_module is None and july.rate_suite is None
+
+
+def test_suite_after_another_module_counts_within_window_only(fake) -> None:
+    _work_client(
+        "cus_a",
+        fake,
+        extra=[
+            sub(item("promptly_atlas_annual", ts(2026, 8, 1), 50), start=ts(2026, 8, 1)),
+            sub(item("promptly_suite_annual", ts(2027, 2, 1), 400), start=ts(2027, 2, 1)),
+        ],
+    )
+    (row,) = cs.join([company()], cs.read_all([company()]))
+    assert row.converted_within_window is True
+    assert row.suite_within_window is False
+    july = cs.cohorts([row])[0]
+    assert (july.converted_any_module, july.converted_suite) == (1, 0)
+    assert july.median_seats_converted == 50
+
+
+def test_cohort_window_closes_six_months_after_every_day0(fake) -> None:
+    _work_client("cus_a", fake)
+    row = company(started=datetime(2026, 1, 15, tzinfo=UTC))
+    (january, _) = cs.cohorts(cs.join([row], cs.read_all([row])))
+    assert (january.cohort, january.window) == ("2026-01", "closed")
+
+
+def test_cohort_from_stripe_day0_when_atlas_has_none(fake) -> None:
+    _work_client("cus_a", fake)
+    rows = [company(started=None), company(None, started=None, name="nothing")]
+    july, unknown, _ = cs.cohorts(cs.join(rows, cs.read_all(rows)))
+    assert (july.cohort, july.started) == ("2026-07", 1)
+    assert (unknown.cohort, unknown.started, unknown.not_measured) == ("", 1, 1)
+
+
+def test_lost_reads_stripe_and_sees_a_removed_module(fake) -> None:
+    # Atlas sees an ended Work client with no module, but an invoice billed one.
+    _work_client("cus_a", fake, ended=ts(2026, 9, 30))
+    fake.invoices["cus_a"] = [
+        invoice(
+            {"price": price("promptly_adopt_annual"), "quantity": 80},
+            created=ts(2026, 8, 1),
+            paid=ts(2026, 8, 20),
+        )
+    ]
+    subs = {"sub_w": {"status": "canceled", "items": {"promptly_work_client": 50}}}
+    row = company(subs=subs)
+    assert row.lost is True
+    (joined,) = cs.join([row], cs.read_all([row]))
+    assert joined.lost is False
+    assert joined.as_csv()["lost"] == "no"
+    # Not read: Atlas's view stands.
+    assert cs.JoinedRow(row, None).lost is True
+
+
+def test_cohort_csv_has_the_columns_in_order(fake) -> None:
+    out = cs.cohorts_to_csv(cs.cohorts(_first_pilot(fake)))
+    records = list(csv.DictReader(io.StringIO(out)))
+    assert list(records[0]) == list(cs.COHORT_COLUMNS)
+    assert [r["cohort"] for r in records] == ["2026-07", "2026-08", "all"]
+    july = records[0]
+    assert (july["started"], july["converted_any_module"], july["rate_any_module"]) == (
+        "3",
+        "1",
+        "",
+    )
+    assert july["window"] == "so far"
 
 
 # ---------------------------------------------------------------------------
@@ -404,6 +627,31 @@ def test_script_refuses_live_key_without_flag(monkeypatch, key) -> None:
 
     monkeypatch.setattr(stripe_conversion.get_settings(), "stripe_secret_key", key)
     assert stripe_conversion.main([]) == 2
+
+
+def test_script_dry_run_names_the_cohort_columns(monkeypatch, capsys) -> None:
+    from scripts import stripe_conversion
+
+    monkeypatch.setattr(stripe_conversion.get_settings(), "stripe_secret_key", "")
+    assert stripe_conversion.main(["--dry-run", "--cohorts"]) == 0
+    assert "print    CSV: " + ",".join(cs.COHORT_COLUMNS) in capsys.readouterr().out
+
+
+def test_script_prints_cohorts(fake, monkeypatch, capsys) -> None:
+    from scripts import stripe_conversion
+
+    _sold(fake, "cus_a", datetime(2026, 9, 14, tzinfo=UTC))
+    monkeypatch.setattr(stripe_conversion.get_settings(), "stripe_secret_key", "rk_live_x")
+
+    async def rows():
+        return [company(name="Pilot Oy"), company(customer=None, name="Free AB")]
+
+    monkeypatch.setattr(stripe_conversion, "load_companies", rows)
+    assert stripe_conversion.main(["--live", "--cohorts"]) == 0
+    records = list(csv.DictReader(io.StringIO(capsys.readouterr().out)))
+    assert [r["cohort"] for r in records] == ["2026-07", "all"]
+    assert (records[0]["started"], records[0]["converted_suite"]) == ("2", "1")
+    assert records[0]["not_measured"] == "1"
 
 
 def test_script_prints_csv(fake, monkeypatch, capsys) -> None:

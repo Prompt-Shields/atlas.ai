@@ -15,15 +15,23 @@ Stripe, per company, and joins them to the report's rows:
     with ``metadata.billing_kind = enterprise_modules`` (atlas.ai#14).
   * **Paid**: the earliest ``status_transitions.paid_at`` of a paid invoice
     that carries a module.
-  * **Pilot**: ``metadata.promptly_pilot`` on the Work client subscription.
-    ``enterprise.end_pilot`` sets it to ``"false"`` when a pilot converts, so
-    this is the flag now, not "was a pilot"; the column says so.
+  * **Pilot**: ``metadata.promptly_pilot`` on the Work client subscription,
+    the flag now (``pilot_now``). ``enterprise.end_pilot`` sets it to
+    ``"false"`` when a pilot converts and records the day in
+    ``metadata.promptly_pilot_ended``, so ``was_pilot`` is either one
+    (``enterprise.was_pilot``) and ``pilot_ended_on`` is that day. A pilot
+    ended before that key existed reads as never a pilot.
   * **Day 0 in Stripe**: the Work client subscription's ``start_date``, a
     cross-check of ``tenants.work_client_started_at``, and its ``ended_at``.
 
 Then, per company: days from day 0 to the first sale, whether that sale fell
 within six calendar months of day 0, and whether it came before day 0 (an
 existing customer, reported apart and left out of the rate).
+
+And per cohort month, the note's one table (``cohorts``): started, pilots,
+connected, quoted, converted (any module and Suite), paid, lost, the 90-day
+rule, seats per converted company, the median days to convert and from
+connected to quoted, and counts without a rate below ten companies.
 
 Read-only by construction: the only Stripe calls are ``list_subscriptions``,
 ``list_invoices`` and ``list_all_quotes`` in ``stripe_client``. Nothing is
@@ -43,12 +51,19 @@ from __future__ import annotations
 
 import csv
 import io
+import statistics
+from collections import defaultdict
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from app.services.billing import catalog, enterprise, quotes, stripe_client
-from app.services.conversion_report import WINDOW_MONTHS, CompanyRow, add_months
+from app.services.conversion_report import (
+    MIN_COMPANIES_FOR_RATE,
+    WINDOW_MONTHS,
+    CompanyRow,
+    add_months,
+)
 
 # Lookup key -> product id, for the paid modules and the Work client.
 _PRODUCT_FOR_KEY = {p.lookup_key: p.product_id for p in catalog.PRICES}
@@ -123,6 +138,8 @@ class StripeFacts:
     stripe_day0: datetime | None = None
     work_client_ended_at: datetime | None = None
     pilot_now: bool | None = None
+    was_pilot: bool | None = None
+    pilot_ended_on: str | None = None  # YYYY-MM-DD, as end_pilot wrote it
     quoted_at: datetime | None = None
     first_sale: Sale | None = None
     first_suite_sold_at: datetime | None = None
@@ -157,6 +174,9 @@ def _read_subscriptions(facts: StripeFacts, subscriptions: Iterable) -> None:
         first = min(work_client, key=lambda s: _get(s, "start_date", 0))
         facts.stripe_day0 = _when(_get(first, "start_date"))
         facts.pilot_now = enterprise.is_pilot(first)
+        facts.was_pilot = any(enterprise.was_pilot(s) for s in work_client)
+        ended = [d for s in work_client if (d := enterprise.pilot_ended_on(s))]
+        facts.pilot_ended_on = min(ended) if ended else None
         ends = [_get(s, "ended_at") for s in work_client]
         if all(ends):
             facts.work_client_ended_at = _when(max(ends))
@@ -214,6 +234,8 @@ COLUMNS: tuple[str, ...] = (
     "day0",
     "stripe_day0",
     "pilot_now",
+    "was_pilot",
+    "pilot_ended_on",
     "guide_connected_at",
     "quoted_at",
     "first_module_sold_at",
@@ -249,8 +271,27 @@ class JoinedRow:
         return self.facts.stripe_day0 if self.facts else None
 
     @property
+    def cohort(self) -> str | None:
+        """The month of day 0 (UTC): Atlas's, or Stripe's when Atlas has none."""
+        if self.company.cohort is not None:
+            return self.company.cohort
+        day0 = self.day0
+        return day0.astimezone(UTC).strftime("%Y-%m") if day0 else None
+
+    @property
     def first_sale(self) -> Sale | None:
         return self.facts.first_sale if self.facts else None
+
+    @property
+    def lost(self) -> bool:
+        """The Work client ended with no module ever sold.
+
+        From Stripe when it was read, since it also sees a module item that
+        was removed before the end; from Atlas's current state otherwise.
+        """
+        if self.facts is None:
+            return self.company.lost
+        return self.facts.work_client_ended_at is not None and self.facts.first_sale is None
 
     @property
     def existing_customer(self) -> bool | None:
@@ -275,15 +316,34 @@ class JoinedRow:
             return False
         return sale.when < add_months(self.day0, WINDOW_MONTHS)
 
+    @property
+    def suite_within_window(self) -> bool | None:
+        """The Suite sold on or after day 0 and within six calendar months of it."""
+        within = self.converted_within_window
+        if not within:
+            return within
+        suite = self.facts.first_suite_sold_at
+        return suite is not None and self.day0 <= suite < add_months(self.day0, WINDOW_MONTHS)
+
+    @property
+    def days_connected_to_quoted(self) -> int | None:
+        """Days from Guide connected to the first module quote, when it came after."""
+        connected, quoted = self.company.guide_connected_at, self.facts and self.facts.quoted_at
+        if connected is None or not quoted or quoted < connected:
+            return None
+        return (quoted - connected).days
+
     def as_csv(self) -> dict[str, str]:
         c, f, sale = self.company, self.facts, self.first_sale
         values = {
             "tenant_id": c.tenant_id,
             "name": c.name,
-            "cohort": c.cohort,
+            "cohort": self.cohort,
             "day0": self.day0,
             "stripe_day0": f and f.stripe_day0,
             "pilot_now": f and f.pilot_now,
+            "was_pilot": f and f.was_pilot,
+            "pilot_ended_on": f and f.pilot_ended_on,
             "guide_connected_at": c.guide_connected_at,
             "quoted_at": f and f.quoted_at,
             "first_module_sold_at": sale and sale.when,
@@ -297,7 +357,7 @@ class JoinedRow:
             "paid_module_now": c.paid_module_now,
             "suite_now": c.suite_now,
             "seats_now": c.seats_now,
-            "lost": c.lost,
+            "lost": self.lost,
             "work_client_ended_at": f and f.work_client_ended_at,
             "window_open": c.window_open,
             "stripe": _stripe_status(c, f),
@@ -345,4 +405,131 @@ def to_csv(rows: Iterable[JoinedRow]) -> str:
     writer.writeheader()
     for row in rows:
         writer.writerow(row.as_csv())
+    return out.getvalue()
+
+
+# ---------------------------------------------------------------------------
+# The cohort table
+# ---------------------------------------------------------------------------
+
+# The note's one table ("The monthly report"), one row per cohort month and a
+# last row for all of them. Every figure is a count of companies, a median of
+# their dates or seats, or a share of companies.
+COHORT_COLUMNS: tuple[str, ...] = (
+    "cohort",
+    "started",
+    "pilots_now",
+    "connected",
+    "quoted",
+    "converted_any_module",
+    "converted_suite",
+    "paid",
+    "lost",
+    "endpoint_required",
+    "not_measured",
+    "rate_any_module",
+    "rate_suite",
+    "median_seats_converted",
+    "median_days_to_convert",
+    "median_days_connected_to_quoted",
+    "existing_customers",
+    "window",
+)
+
+ALL_COHORTS = "all"
+
+
+@dataclass(frozen=True)
+class CohortFunnel:
+    """One cohort's funnel. Existing customers are counted apart, in no stage.
+
+    ``started`` is the denominator: the cohort's companies less the existing
+    customers. ``converted_*`` count a first sale within six calendar months
+    of day 0. ``not_measured`` are in ``started`` but could not be measured
+    against Stripe (no customer, not read, or no day 0 anywhere), so they are
+    in no Stripe stage. The rates stay empty below ``MIN_COMPANIES_FOR_RATE``
+    companies, or while any company is not measured: read the counts.
+    """
+
+    cohort: str
+    started: int
+    pilots_now: int
+    connected: int
+    quoted: int
+    converted_any_module: int
+    converted_suite: int
+    paid: int
+    lost: int
+    endpoint_required: int
+    not_measured: int
+    rate_any_module: float | None
+    rate_suite: float | None
+    median_seats_converted: float | None
+    median_days_to_convert: float | None
+    median_days_connected_to_quoted: float | None
+    existing_customers: int
+    window: str  # "so far" while any company's six months are open, else "closed"
+
+    def as_csv(self) -> dict[str, str]:
+        return {name: _cell(getattr(self, name)) for name in COHORT_COLUMNS}
+
+
+def _median(values: Iterable[int | None]) -> float | None:
+    present = [v for v in values if v is not None]
+    return statistics.median(present) if present else None
+
+
+def _share(count: int, total: int, not_measured: int) -> float | None:
+    if total < MIN_COMPANIES_FOR_RATE or not_measured:
+        return None
+    return round(count / total, 3)
+
+
+def _funnel(cohort: str, rows: list[JoinedRow]) -> CohortFunnel:
+    existing = [r for r in rows if r.existing_customer]
+    counted = [r for r in rows if not r.existing_customer]
+    converted = [r for r in counted if r.converted_within_window]
+    not_measured = sum(r.converted_within_window is None for r in counted)
+    suite = sum(bool(r.suite_within_window) for r in counted)
+    return CohortFunnel(
+        cohort=cohort,
+        started=len(counted),
+        pilots_now=sum(bool(r.facts and r.facts.pilot_now) for r in counted),
+        connected=sum(r.company.guide_connected_at is not None for r in counted),
+        quoted=sum(bool(r.facts and r.facts.quoted_at) for r in counted),
+        converted_any_module=len(converted),
+        converted_suite=suite,
+        paid=sum(bool(r.facts and r.facts.paid_at) for r in counted),
+        lost=sum(r.lost for r in counted),
+        endpoint_required=sum(r.company.free_client_status == "endpoint_required" for r in counted),
+        not_measured=not_measured,
+        rate_any_module=_share(len(converted), len(counted), not_measured),
+        rate_suite=_share(suite, len(counted), not_measured),
+        median_seats_converted=_median(r.first_sale.seats for r in converted),
+        median_days_to_convert=_median(r.days_to_convert for r in converted),
+        median_days_connected_to_quoted=_median(r.days_connected_to_quoted for r in counted),
+        existing_customers=len(existing),
+        window="so far" if any(r.company.window_open for r in rows) else "closed",
+    )
+
+
+def cohorts(rows: Iterable[JoinedRow]) -> list[CohortFunnel]:
+    """The funnel per cohort month, in order, then one row for all cohorts.
+
+    Companies with no day 0 anywhere come last before the total, as cohort "".
+    """
+    rows = list(rows)
+    by_cohort: dict[str, list[JoinedRow]] = defaultdict(list)
+    for row in rows:
+        by_cohort[row.cohort or ""].append(row)
+    ordered = sorted(by_cohort, key=lambda c: (c == "", c))
+    return [_funnel(c, by_cohort[c]) for c in ordered] + [_funnel(ALL_COHORTS, rows)]
+
+
+def cohorts_to_csv(funnels: Iterable[CohortFunnel]) -> str:
+    out = io.StringIO()
+    writer = csv.DictWriter(out, fieldnames=COHORT_COLUMNS, lineterminator="\n")
+    writer.writeheader()
+    for funnel in funnels:
+        writer.writerow(funnel.as_csv())
     return out.getvalue()

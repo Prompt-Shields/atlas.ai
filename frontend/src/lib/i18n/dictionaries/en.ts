@@ -123,6 +123,7 @@ const en = {
       ownEndpoint:
         'Guide answers from your organisation’s own model endpoint, so no guided steps are counted here.',
       pool: 'The pool is {pool} steps a month.',
+      poolUnknown: 'The pool’s size has not been set up yet, so no hosted steps are served.',
       openMonth: '{month}: the count is available after the month ends, on {date}. It is shown only for whole months, so that it cannot show one person’s use.',
       closedHeading: 'Months that have ended',
       closedUsed: '{used} steps',
