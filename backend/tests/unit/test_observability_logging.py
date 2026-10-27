@@ -12,8 +12,10 @@ import logging
 
 import pytest
 import structlog
+from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 
-from app import observability
+from app import database, observability
 from app.config import Environment, get_settings
 
 pytestmark = [pytest.mark.unit]
@@ -42,10 +44,14 @@ def _json_lines(caplog: pytest.LogCaptureFixture) -> list[dict]:
     return [json.loads(record.getMessage()) for record in caplog.records]
 
 
-def test_json_logging_writes_the_traceback(restore_logging, caplog):
-    settings = get_settings().model_copy(
-        update={"app_env": Environment.PRODUCTION, "log_level": "INFO"}
+def _production_settings(**update):
+    return get_settings().model_copy(
+        update={"app_env": Environment.PRODUCTION, "log_level": "INFO", **update}
     )
+
+
+def test_json_logging_writes_the_traceback(restore_logging, caplog):
+    settings = _production_settings()
     observability.setup_logging(settings)
     caplog.set_level(logging.INFO)
 
@@ -62,3 +68,39 @@ def test_json_logging_writes_the_traceback(restore_logging, caplog):
     assert "Traceback (most recent call last)" in line["exception"]
     # Frame locals stay out of the log; only the exception message is written.
     assert "sk-local-secret" not in json.dumps(line)
+
+
+async def test_production_database_errors_log_no_bound_values(
+    restore_logging, caplog, monkeypatch, tmp_path
+):
+    # A database error's message lists the statement's bound values, and its
+    # traceback is now logged. The production engine must hide them.
+    settings = _production_settings(database_url=f"sqlite+aiosqlite:///{tmp_path / 'p.db'}")
+    monkeypatch.setattr(database, "get_settings", lambda: settings)
+    monkeypatch.setattr(database, "_engine", None)
+    observability.setup_logging(settings)
+    caplog.set_level(logging.INFO)
+
+    engine = database.get_engine()
+    log = structlog.get_logger("test.observability")
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(text("CREATE TABLE people (email TEXT UNIQUE)"))
+        insert = text("INSERT INTO people (email) VALUES (:email)")
+        # Passed by name: a traceback quotes the failing source line, so a
+        # literal there would show up whatever the engine hides.
+        row = {"email": "alice@example.com"}
+        async with engine.begin() as conn:
+            await conn.execute(insert, row)
+        try:
+            async with engine.begin() as conn:
+                await conn.execute(insert, row)
+        except IntegrityError:
+            log.exception("seat_sync_failed")
+    finally:
+        await engine.dispose()
+
+    (line,) = _json_lines(caplog)
+    assert "IntegrityError" in line["exception"]
+    assert "parameters hidden" in line["exception"]
+    assert "alice@example.com" not in json.dumps(line)
