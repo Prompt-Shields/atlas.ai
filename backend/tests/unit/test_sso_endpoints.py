@@ -139,7 +139,7 @@ async def test_callback_bad_signature_redirects_with_invalid(
     client: AsyncClient, ms_settings, monkeypatch
 ) -> None:
     state = sso_login.encode_login_state(signing_secret="sign-secret", nonce="nn")
-    forged = entra_keys.id_token(
+    unsigned = entra_keys.id_token(
         {
             "iss": "https://login.microsoftonline.com/tid/v2.0",
             "aud": CLIENT_ID,
@@ -152,7 +152,7 @@ async def test_callback_bad_signature_redirects_with_invalid(
     )
 
     async def fake_exchange(**_kwargs):
-        return {"id_token": forged, "access_token": "a", "expires_in": 3600}
+        return {"id_token": unsigned, "access_token": "a", "expires_in": 3600}
 
     monkeypatch.setattr("app.services.microsoft_oauth.exchange_code", fake_exchange)
 

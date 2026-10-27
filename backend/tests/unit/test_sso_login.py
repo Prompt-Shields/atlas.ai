@@ -231,6 +231,25 @@ async def test_fetch_microsoft_keys_reads_jwks_and_max_age() -> None:
     assert max_age == 86400
 
 
+@pytest.mark.parametrize(
+    ("header", "expected"),
+    [
+        ("max-age=99999999", 86400),
+        ("max-age=0", 60),
+        ("public, max-age=7200", 7200),
+        (None, 3600),
+    ],
+)
+async def test_fetch_microsoft_keys_clamps_max_age(header: str | None, expected: int) -> None:
+    headers = {"cache-control": header} if header else {}
+    document = {"keys": [entra_keys.jwk_for(entra_keys.KID)]}
+    transport = httpx.MockTransport(
+        lambda _request: httpx.Response(200, json=document, headers=headers)
+    )
+    _keys, max_age = await sso_login.fetch_microsoft_keys(transport)
+    assert max_age == expected
+
+
 async def test_fetch_microsoft_keys_raises_on_http_error() -> None:
     transport = httpx.MockTransport(lambda _request: httpx.Response(503))
     with pytest.raises(httpx.HTTPStatusError):
@@ -399,10 +418,10 @@ async def test_complete_sso_login_unknown_user_raises(monkeypatch) -> None:
 
 
 async def test_complete_sso_login_rejects_unsigned_token_before_linking(monkeypatch) -> None:
-    await _seed_user(email="forged@corp.example", oid="oid-forged")
+    await _seed_user(email="unsigned@corp.example", oid="oid-unsigned")
     monkeypatch.setattr("app.services.auth_service.store_refresh_token", _async_noop)
     state = sso_login.encode_login_state(signing_secret="s3cret", nonce="n-3")
-    claims = _claims(oid="oid-forged", email="forged@corp.example", nonce="n-3")
+    claims = _claims(oid="oid-unsigned", email="unsigned@corp.example", nonce="n-3")
     unsigned = f"{_seg({'alg': 'RS256', 'kid': entra_keys.KID})}.{_seg(claims)}.sig"
 
     async with TestSessionLocal() as session:

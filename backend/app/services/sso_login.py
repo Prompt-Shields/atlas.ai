@@ -65,9 +65,13 @@ class SSOAccountNotProvisionedError(Exception):
 # the common document lists the keys every tenant's tokens are signed with.
 JWKS_URL = "https://login.microsoftonline.com/common/discovery/v2.0/keys"
 _DEFAULT_MAX_AGE = 3600
+# The cache lifetime is kept within these bounds whatever Microsoft's header says.
+_MIN_MAX_AGE = 60
+_MAX_MAX_AGE = 86400
 # A token naming a key Atlas has not seen makes it fetch Microsoft's keys early,
-# in case Microsoft rotated one in. Such tokens can come from anyone, so that
-# early fetch happens at most once in this many seconds.
+# in case Microsoft rotated one in. That early fetch happens at most once in this
+# many seconds. The token's signature is checked against Microsoft's published
+# keys before its claims are used.
 FORCED_REFRESH_INTERVAL = 60.0
 _MAX_AGE_RE = re.compile(r"max-age=(\d+)")
 
@@ -97,7 +101,7 @@ async def fetch_microsoft_keys(
         response.raise_for_status()
     match = _MAX_AGE_RE.search(response.headers.get("cache-control", ""))
     max_age = int(match.group(1)) if match else _DEFAULT_MAX_AGE
-    return _signing_keys(response.json()), max_age
+    return _signing_keys(response.json()), max(_MIN_MAX_AGE, min(max_age, _MAX_MAX_AGE))
 
 
 class EntraKeySet:

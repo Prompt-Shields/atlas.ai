@@ -13,9 +13,9 @@ Atlas supports three ways to get an account:
 Entry point: `GET /api/v1/auth/sso/microsoft/login` → Microsoft authorize →
 `GET /api/v1/auth/sso/microsoft/callback`. The callback exchanges the code over
 the back-channel, verifies the id-token's signature, validates its claims
-(issuer, audience, nonce, expiry), reads `oid` (Entra object id), `email`, and `tid` (Azure directory id),
-then hands off to the SPA via a one-time code (no tokens in the URL). See
-`app/services/sso_login.py`.
+(issuer, audience, nonce, expiry), reads `oid` (Entra object id), `email`, and
+`tid` (Azure directory id), then hands off to the SPA via a one-time code (no
+tokens in the URL). See `app/services/sso_login.py`.
 
 Trust model: Atlas does not take the id-token on trust because it came over
 TLS. Before reading any claim, it verifies the token's RS256 signature against
