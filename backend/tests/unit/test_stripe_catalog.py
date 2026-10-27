@@ -417,7 +417,7 @@ def test_script_refuses_invalid_amounts(monkeypatch, fake, capsys, tmp_path):
     from scripts import stripe_catalog
 
     bad = tmp_path / "amounts.json"
-    bad.write_text(json.dumps({**AMOUNTS, catalog.STEP_OVERAGE: 0.04}))
+    bad.write_text(json.dumps({**AMOUNTS, catalog.STEP_OVERAGE: 0.5}))
     monkeypatch.setattr(stripe_catalog.get_settings(), "stripe_secret_key", "sk_test_x")
     assert stripe_catalog.main(["--amounts", str(bad)]) == 2
     assert catalog.STEP_OVERAGE in capsys.readouterr().err

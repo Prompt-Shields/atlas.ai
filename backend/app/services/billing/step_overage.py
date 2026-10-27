@@ -22,7 +22,9 @@ same one: two runs that queue it twice, or a retry after a lost response,
 send Stripe the same identifier, which it counts once.
 
 Only hosted steps are ever counted (`guided_step_meter`), and organisations
-with their own endpoint have no overage, so they never reach Stripe.
+with their own endpoint have no overage, so they never reach Stripe. While the
+pool's steps per user are not configured (``GUIDED_STEPS_POOL_PER_USER``) the
+overage is unknown and nothing is posted.
 
 What leaves Atlas: the organisation's Stripe customer id and a number of
 steps. Nothing per person (E4).
@@ -108,6 +110,16 @@ async def enqueue_overage(db: AsyncSession, tenant: Tenant, *, at: datetime) -> 
     posted stays posted, and only a rise above the highest total is new.
     """
     status = await guided_step_meter.pool_status(db, tenant, now=at)
+    if status.overage is None:
+        # The pool's steps per user are not configured, so the overage is
+        # unknown: post nothing. Totals are cumulative, so the first run after
+        # they are set posts the month in full.
+        log.warning(
+            "guided_step_overage_pool_unknown",
+            tenant_id=str(tenant.id),
+            period=status.period,
+        )
+        return None
     posted = await posted_through(db, tenant.id, status.period)
     if status.overage <= posted:
         return None

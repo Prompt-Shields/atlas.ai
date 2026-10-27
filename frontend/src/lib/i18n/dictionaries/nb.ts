@@ -118,6 +118,7 @@ const nb: Dictionary = {
       ownEndpoint:
         'Guide svarer fra organisasjonens eget modellendepunkt, så ingen veiledede steg telles her.',
       pool: 'Potten er {pool} steg i måneden.',
+      poolUnknown: 'Størrelsen på potten er ikke satt opp ennå, så ingen hostede steg blir levert.',
       openMonth: '{month}: tellingen er tilgjengelig når måneden er slutt, {date}. Den vises bare for hele måneder, slik at den ikke kan vise én persons bruk.',
       closedHeading: 'Måneder som er avsluttet',
       closedUsed: '{used} steg',

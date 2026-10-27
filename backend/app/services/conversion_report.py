@@ -66,7 +66,8 @@ NOT_FROM_ATLAS: dict[str, str] = {
     "time_to_convert": "Days from Started to Converted. Needs converted_at.",
     "quoted": "A finalised module quote: Stripe Quote `finalized_at`.",
     "paid": "The first module invoice paid: Stripe invoice `paid_at`.",
-    "pilot": "The pilot flag: Stripe subscription metadata `promptly_pilot`.",
+    "pilot": "The pilot flag: Stripe subscription metadata `promptly_pilot`, and "
+    "`promptly_pilot_ended` (the day a pilot ended) for one that has converted.",
     "existing_customer": "A module sold before day 0. Needs converted_at.",
 }
 

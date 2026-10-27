@@ -2,7 +2,8 @@
 
 Stripe is replaced by an in-memory fake patched over the ``stripe_client``
 wrappers. Every other wrapper raises, so any other Stripe call fails the test.
-Pool sizes are worked out with ``enterprise_pool()``, never written here, and
+Pool sizes come from a made-up steps-per-user figure (``STEPS_PER_USER``),
+configured by a fixture, never the plan's, and
 no amount appears: the meter counts steps, and Stripe prices them.
 """
 
@@ -18,6 +19,7 @@ import stripe
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import get_settings
 from app.models.billing import BillingOutbox
 from app.models.tenant import Tenant
 from app.services.billing import step_overage, stripe_client
@@ -31,7 +33,14 @@ pytestmark = [pytest.mark.unit]
 
 NOW = datetime(2026, 10, 22, 12, 0, tzinfo=UTC)
 SEATS = 3
-POOL = enterprise_pool(SEATS)
+# Made up: the real allowance is a commercial term, set per deployment.
+STEPS_PER_USER = 7
+POOL = SEATS * STEPS_PER_USER
+
+
+@pytest.fixture(autouse=True)
+def _pool_configured(monkeypatch):
+    monkeypatch.setattr(get_settings(), "guided_steps_pool_per_user", STEPS_PER_USER)
 
 
 class FakeStripe:
@@ -119,6 +128,24 @@ async def test_nothing_is_posted_within_the_pool(db, fake) -> None:
     await step_overage.run(db, now=NOW)
     assert _ours(fake, tenant) == []
     assert await _rows(db, tenant) == []
+
+
+@pytest.mark.asyncio
+async def test_nothing_is_posted_while_the_pool_is_not_configured(db, fake, monkeypatch) -> None:
+    settings = get_settings()
+    monkeypatch.setattr(settings, "guided_steps_pool_per_user", None)
+    tenant = await _org(db)
+    await _serve(db, tenant, POOL + 7)
+    report = await step_overage.run(db, now=NOW)
+    assert _ours(fake, tenant) == []
+    assert await _rows(db, tenant) == []
+    assert not any(inc.tenant_id == tenant.id for inc in report.queued)
+    assert tenant.id not in report.failed_tenants
+
+    # Once it is configured, the next run posts the month's overage in full.
+    monkeypatch.setattr(settings, "guided_steps_pool_per_user", STEPS_PER_USER)
+    await step_overage.run(db, now=NOW + timedelta(hours=1))
+    assert [e["payload"]["value"] for e in _ours(fake, tenant)] == ["7"]
 
 
 @pytest.mark.asyncio
