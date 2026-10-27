@@ -193,9 +193,11 @@ would post to the job's logs, and posts nothing. To post to Stripe:
 
 1. Create a Stripe restricted key that may write meter events and nothing else.
 2. Store it in the environment's Key Vault as the secret `stripe-step-meter-key`.
-3. Set `param stripeStepMeterLive = true` in `infra/environments/<env>.bicepparam`
-   and deploy. The job then runs with `--live` and reads the key as
-   `STRIPE_SECRET_KEY`.
+3. Store the Work client's steps per provisioned user in the same Key Vault as the
+   secret `guided-steps-pool-per-user` (see "Guided-step allowances" below).
+4. Set `param stripeStepMeterLive = true` in `infra/environments/<env>.bicepparam`
+   and deploy. The job then runs with `--live` and reads them as
+   `STRIPE_SECRET_KEY` and `GUIDED_STEPS_POOL_PER_USER`.
 
 Setting it back to `false` returns the job to a dry run. Each increment carries its
 own idempotency key, so a retry or an extra run never bills a step twice. A run
@@ -219,6 +221,24 @@ carries its own idempotency key, and only the newest row per organisation is sen
 retry or an extra run never changes a subscription twice. As with the step meter, a run
 exits non-zero when a row was dead-lettered or an organisation failed.
 
+### Guided-step allowances
+
+How many hosted guided steps each plan includes a month is a commercial term, so it is
+set per deployment and never committed (promptly-guide#62). Atlas reads three
+settings, all whole numbers, unset by default:
+
+| Setting | What it is |
+|---|---|
+| `GUIDED_STEPS_POOL_PER_USER` | The Work client's pool: steps per provisioned user, pooled across the organisation |
+| `GUIDED_STEPS_FREE_MONTHLY` | Personal Free's monthly cap |
+| `GUIDED_STEPS_PLUS_MONTHLY` | Personal Plus's monthly allowance, after which steps are slowed |
+
+While a plan's setting is unset, Atlas serves that plan no hosted step, the
+administrators' Work client page says the pool is not set up, and the step meter
+posts no overage (it logs `guided_step_overage_pool_unknown`). Overage is worked out
+from cumulative totals, so the first run after the pool is set posts the open month's
+and the month before's in full; older months are not posted. The price of a step above the pool is its Stripe Price, not a setting.
+
 **Monthly conversion report (manual).** Not scheduled: it needs a restricted,
 read-only Stripe key (subscriptions, invoices, quotes and prices, nothing else) that
 has not been created yet, and its CSV belongs in the finance folder, not in job logs.
@@ -228,10 +248,13 @@ Once a month, whoever holds that key runs, from `backend/` with `DATABASE_URL` a
 ```bash
 python -m scripts.stripe_conversion --dry-run   # what it would read; no calls
 STRIPE_SECRET_KEY=<read-only key> python -m scripts.stripe_conversion --live > conversion-YYYY-MM.csv
+STRIPE_SECRET_KEY=<read-only key> python -m scripts.stripe_conversion --live --cohorts > conversion-cohorts-YYYY-MM.csv
 ```
 
-It changes nothing in Stripe and reads the database in a read-only transaction. Keep
-the CSV in the finance folder and nothing else.
+The first prints one row per company; `--cohorts` prints the funnel per cohort month
+(started, connected, quoted, converted, paid, lost), with counts and no rate until a
+cohort has ten companies. Either changes nothing in Stripe and reads the database in a
+read-only transaction. Keep the CSVs in the finance folder and nothing else.
 
 ### Promptly Plus prices
 

@@ -79,6 +79,13 @@ function SectionFields({
           checked={section.memoryOff === true}
           onChange={(on) => set('memoryOff', on)}
         />
+        {!everyone && (
+          <Switch
+            label={t('guideConsole.fields.workClientNotices')}
+            checked={section.workClientNotices === true}
+            onChange={(on) => set('workClientNotices', on)}
+          />
+        )}
       </div>
 
       <fieldset>
@@ -458,10 +465,17 @@ export default function GuideSettingsPage() {
                 className={INPUT}
                 value={doc.atlas?.url ?? ''}
                 placeholder="https://atlas.example.com"
-                onChange={(e) => edit({ ...doc, atlas: { url: e.target.value.trim() } })}
+                onChange={(e) => edit({ ...doc, atlas: { ...doc.atlas, url: e.target.value.trim() } })}
               />
               <span className="text-xs font-normal text-gray-500">{t('guideConsole.atlas.hint')}</span>
             </label>
+            <div className="mt-3">
+              <Switch
+                label={t('guideConsole.atlas.scimGroups')}
+                checked={doc.atlas?.scimGroups === true}
+                onChange={(on) => edit({ ...doc, atlas: withField(doc.atlas ?? { url: '' }, 'scimGroups', on) })}
+              />
+            </div>
           </section>
 
           <section className="mt-6 rounded-lg border border-gray-200 bg-white p-6">
