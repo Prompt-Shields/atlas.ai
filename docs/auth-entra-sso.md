@@ -12,14 +12,21 @@ Atlas supports three ways to get an account:
 
 Entry point: `GET /api/v1/auth/sso/microsoft/login` → Microsoft authorize →
 `GET /api/v1/auth/sso/microsoft/callback`. The callback exchanges the code over
-the back-channel, validates the id-token claims (issuer, audience, nonce,
-expiry), reads `oid` (Entra object id), `email`, and `tid` (Azure directory id),
+the back-channel, verifies the id-token's signature, validates its claims
+(issuer, audience, nonce, expiry), reads `oid` (Entra object id), `email`, and `tid` (Azure directory id),
 then hands off to the SPA via a one-time code (no tokens in the URL). See
 `app/services/sso_login.py`.
 
-Trust model: the id-token is obtained over TLS from Microsoft, so claims are
-validated but the RS256 signature is not (yet) re-verified against JWKS — a
-documented hardening follow-up.
+Trust model: Atlas does not take the id-token on trust because it came over
+TLS. Before reading any claim, it verifies the token's RS256 signature against
+Microsoft's published v2.0 signing keys
+(`https://login.microsoftonline.com/common/discovery/v2.0/keys`), choosing the
+key by the token's `kid`. Only RS256 is accepted. The keys are cached for as
+long as Microsoft's `Cache-Control` allows; a token naming a key Atlas has not
+seen makes it fetch the keys early, at most once a minute, in case Microsoft
+rotated a key in. A bad signature, an unknown key, any other algorithm, or a
+failed key fetch rejects the login (`sso_error=invalid`). The claims are then
+validated as above.
 
 ### Provision policy — two modes
 
@@ -55,7 +62,8 @@ See `.env.example`:
 
 ## Code map
 
-- `app/services/sso_login.py` — claims validation, link-only resolution,
+- `app/services/sso_login.py` — signature verification (`EntraKeySet`),
+  claims validation, link-only resolution,
   `complete_sso_login` (self-serve branch).
 - `app/services/signup_service.py` — `provision_tenant()` (shared by password
   signup and SSO), `provision_or_join_sso_user()` (JIT).
