@@ -142,6 +142,43 @@ class TestCorrelationId:
         assert _is_uuid4(echoed)
         assert response.json()["correlation_id"] == echoed
 
+    async def test_trailing_newline_is_replaced(self) -> None:
+        # HTTP clients refuse a newline in a header, so drive the ASGI app directly.
+        sent = str(uuid.uuid4()) + "\n"
+        app = Starlette(
+            routes=[Route("/x", _echo_state)], middleware=[Middleware(CorrelationIdMiddleware)]
+        )
+        scope = {
+            "type": "http",
+            "asgi": {"version": "3.0"},
+            "http_version": "1.1",
+            "method": "GET",
+            "scheme": "http",
+            "path": "/x",
+            "raw_path": b"/x",
+            "root_path": "",
+            "query_string": b"",
+            "headers": [(CORRELATION_HEADER.lower().encode(), sent.encode())],
+            "client": ("testclient", 50000),
+            "server": ("testserver", 80),
+        }
+        messages: list[dict[str, Any]] = []
+
+        async def receive() -> dict[str, Any]:
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        async def send(message: dict[str, Any]) -> None:
+            messages.append(message)
+
+        await app(scope, receive, send)
+
+        start = next(m for m in messages if m["type"] == "http.response.start")
+        headers = {k.decode(): v.decode() for k, v in start["headers"]}
+        echoed = headers[CORRELATION_HEADER.lower()]
+        assert echoed != sent
+        assert echoed != sent.strip()
+        assert _is_uuid4(echoed)
+
     def test_each_request_gets_its_own_id(self) -> None:
         client = _client(Middleware(CorrelationIdMiddleware))
 
@@ -334,6 +371,20 @@ class TestAudit:
         assert len(events) == 1
         assert events[0]["path"] == prefix + "anything"
 
+    @pytest.mark.parametrize("prefix", sorted(AUDIT_PATHS))
+    def test_logs_the_bare_collection_path(
+        self, prefix: str, audit_logs: list[dict[str, Any]]
+    ) -> None:
+        # Create and list routes live at the prefix without its slash.
+        client = _client(Middleware(AuditMiddleware))
+        bare = prefix.rstrip("/")
+
+        client.post(bare)
+
+        (event,) = _audit_events(audit_logs)
+        assert event["path"] == bare
+        assert event["method"] == "POST"
+
     @pytest.mark.parametrize(
         "path",
         [
@@ -345,16 +396,11 @@ class TestAudit:
             "/api/v2/users/1",
             # Not a prefix of the path.
             "/x/api/v1/users/1",
-            # The trailing slash in AUDIT_PATHS means the bare collection path
-            # is not audited. See the PR that added this file: create and list
-            # routes for users, invites and tenants live at these paths.
-            "/api/v1/users",
-            "/api/v1/invites",
-            "/api/v1/tenants",
-            "/api/v1/auth",
-            # Lookalike prefixes are not matched.
+            # Lookalike prefixes are not matched, with or without a slash.
+            "/api/v1/usersX",
             "/api/v1/usersettings/1",
             "/api/v1/authz/check",
+            "/api/v1/tenants-archive",
         ],
     )
     def test_does_not_log_elsewhere(self, path: str, audit_logs: list[dict[str, Any]]) -> None:
@@ -456,9 +502,7 @@ class TestAudit:
         assert event["user_id"] is None
         assert event["tenant_id"] is None
 
-    def test_unhandled_error_is_not_logged(self, audit_logs: list[dict[str, Any]]) -> None:
-        # The log call comes after call_next with no try/finally, so a request
-        # that raises leaves no audit event. See the PR that added this file.
+    def test_unhandled_error_is_logged_as_500(self, audit_logs: list[dict[str, Any]]) -> None:
         async def crash(request: Request) -> PlainTextResponse:
             raise RuntimeError("boom")
 
@@ -473,6 +517,34 @@ class TestAudit:
         response = client.get("/api/v1/admin/x")
 
         assert response.status_code == 500
+        (event,) = _audit_events(audit_logs)
+        assert set(event) == _AUDIT_FIELDS
+        assert event["path"] == "/api/v1/admin/x"
+        assert event["status_code"] == 500
+
+    def test_unhandled_error_still_raises(self, audit_logs: list[dict[str, Any]]) -> None:
+        # Logging must not swallow the error.
+        async def crash(request: Request) -> PlainTextResponse:
+            raise RuntimeError("boom")
+
+        client = _client(
+            Middleware(AuditMiddleware), routes=[Route("/api/v1/admin/{rest:path}", crash)]
+        )
+
+        with pytest.raises(RuntimeError, match="boom"):
+            client.get("/api/v1/admin/x")
+        assert len(_audit_events(audit_logs)) == 1
+
+    def test_unaudited_error_is_not_logged(self, audit_logs: list[dict[str, Any]]) -> None:
+        async def crash(request: Request) -> PlainTextResponse:
+            raise RuntimeError("boom")
+
+        client = TestClient(
+            Starlette(routes=[Route("/health", crash)], middleware=[Middleware(AuditMiddleware)]),
+            raise_server_exceptions=False,
+        )
+
+        assert client.get("/health").status_code == 500
         assert _audit_events(audit_logs) == []
 
     def test_passes_the_response_through(self, audit_logs: list[dict[str, Any]]) -> None:
