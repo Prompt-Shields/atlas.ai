@@ -103,3 +103,20 @@ def test_infra_holds_no_stripe_keys():
     for path in INFRA.rglob("*"):
         if path.is_file() and path.suffix in {".bicep", ".bicepparam", ".json"}:
             assert not pattern.search(path.read_text()), path
+
+
+def test_live_step_meter_reads_the_pool_from_key_vault():
+    """Live, the job needs the pool's size to tell overage from the pool.
+
+    It is a commercial term, so it is a Key Vault reference by name, and no
+    Bicep file sets it to a value.
+    """
+    source = CONTAINER_APPS.read_text()
+    assert "{ name: 'GUIDED_STEPS_POOL_PER_USER', secretRef: 'guided-steps-pool-per-user' }" in (
+        source
+    )
+    assert "/secrets/guided-steps-pool-per-user'" in source
+    for path in INFRA.rglob("*"):
+        if path.is_file() and path.suffix in {".bicep", ".bicepparam", ".json"}:
+            text = path.read_text()
+            assert not re.search(r"GUIDED_STEPS_\w+'\s*,\s*value:", text), path

@@ -119,6 +119,7 @@ const fr: Dictionary = {
       ownEndpoint:
         'Guide répond depuis le point de terminaison propre de votre organisation : aucune étape guidée n’est comptée ici.',
       pool: 'La réserve est de {pool} étapes par mois.',
+      poolUnknown: 'La taille de la réserve n’est pas encore configurée : aucune étape hébergée n’est servie.',
       openMonth: '{month} : le décompte sera disponible à la fin du mois, le {date}. Il n’est montré que pour des mois entiers, afin de ne pas révéler l’usage d’une seule personne.',
       closedHeading: 'Mois terminés',
       closedUsed: '{used} étapes',
@@ -185,6 +186,7 @@ const fr: Dictionary = {
       cloudModelDisabled: 'Désactiver le modèle cloud (réponses du Mac seulement)',
       requireEUProcessing: 'N’utiliser un modèle cloud que si les requêtes sont traitées dans l’UE',
       memoryOff: 'Désactiver la mémoire',
+      workClientNotices: 'Afficher les avis des 90 jours sur les Mac de ce groupe (administrateurs uniquement)',
       skillPacksOff: 'Packs de compétences à désactiver',
       excludedApps: 'Apps que Guide ne regarde jamais (Mac)',
       excludedWindowsApps: 'Apps que Guide ne regarde jamais (Windows)',
@@ -227,6 +229,7 @@ const fr: Dictionary = {
       heading: 'Chiffres d’adoption',
       url: 'Votre adresse Atlas.AI',
       hint: 'Où vont les chiffres d’adoption. Rien n’est envoyé pour qui n’a pas choisi de les partager sur son propre Mac.',
+      scimGroups: 'Les groupes des personnes viennent de cet Atlas.AI par SCIM : les Mac connectés les lui demandent',
     },
     cannot: {
       heading: 'Ce que ces réglages ne peuvent pas faire',
