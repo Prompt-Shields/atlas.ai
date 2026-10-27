@@ -23,9 +23,34 @@ inline `<script>` and a friendly fallback message for when
 
 from __future__ import annotations
 
+import json
 from html import escape
 
 from fastapi.responses import HTMLResponse
+
+# Characters that let a JSON string end the inline <script> early or open an
+# HTML comment there, mapped to JS escapes that parse to the same characters.
+# U+2028 and U+2029 are line terminators in older JS engines, so a raw one
+# inside a string literal is a syntax error.
+_SCRIPT_SAFE = str.maketrans(
+    {
+        "<": "\\u003c",
+        ">": "\\u003e",
+        "&": "\\u0026",
+        "\u2028": "\\u2028",
+        "\u2029": "\\u2029",
+    }
+)
+
+
+def _script_json(payload: dict[str, str]) -> str:
+    """Serialise `payload` as a JS literal that is safe inside `<script>`.
+
+    Values such as a Slack team name or a provider error come from outside,
+    so `</script>` in one must not end the script. The escapes only appear
+    inside JSON strings, so the parsed value is unchanged.
+    """
+    return json.dumps(payload).translate(_SCRIPT_SAFE)
 
 
 def oauth_success_response(
@@ -40,8 +65,6 @@ def oauth_success_response(
     callers can include provider-specific bits (team_id for Slack,
     aad_tenant for Microsoft).
     """
-    import json
-
     payload = {
         "source": "atlas-oauth",
         "status": "connected",
@@ -51,7 +74,7 @@ def oauth_success_response(
     if extra_data:
         payload.update(extra_data)
 
-    payload_json = json.dumps(payload)
+    payload_json = _script_json(payload)
     safe_display = escape(display_name)
 
     html = f"""<!DOCTYPE html>
@@ -128,15 +151,13 @@ def oauth_success_response(
 
 def oauth_error_response(*, provider: str, error_message: str) -> HTMLResponse:
     """Same shape, error variant."""
-    import json
-
     payload = {
         "source": "atlas-oauth",
         "status": "error",
         "provider": provider,
         "error": error_message,
     }
-    payload_json = json.dumps(payload)
+    payload_json = _script_json(payload)
     safe_err = escape(error_message)
     safe_provider = escape(provider)
 
