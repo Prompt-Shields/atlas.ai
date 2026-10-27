@@ -15,10 +15,12 @@ promptly-guide's `docs/decisions-needed.md` ("what stops at day 90?"), with B5 n
 - **The status.** `app/services/entitlements.py`, `free_client_grace()`, works out one of
   three statuses for an organisation whose Work client has started
   (`tenants.work_client_started_at`):
-  - `active`: inside the 90 days, or exempt because it pays for a module or has declared its
-    own endpoint (`tenants.own_endpoint_declared_at`);
+  - `active`: inside the 90 days, or exempt because it pays for a module or an Atlas plan
+    that is not canceled (`paid_module_active()`), or has declared its own endpoint
+    (`tenants.own_endpoint_declared_at`);
   - `grace_ending`: the last days of the 90, so admins can be warned;
-  - `endpoint_required`: day 90 has passed, with no paid module and no declared endpoint.
+  - `endpoint_required`: day 90 has passed, with no paid module or Atlas plan and no
+    declared endpoint.
 
   It returns no status when the Work client has not started. The comment above it says
   that nothing there enforces the rule.
@@ -64,7 +66,8 @@ Nothing else changes:
 - An organisation with a declared endpoint is already refused hosted steps with
   `own_endpoint`, as today. The new reason never applies to it, because
   `free_client_grace()` gives it `active`.
-- An organisation that pays for a module is `active` and is served as today.
+- An organisation that pays for a module or an Atlas plan that is not canceled is `active`
+  and is served as today.
 - A pilot follows the same rules as any other customer. `free_client_grace()` does not
   treat pilots as a special case, and neither should enforcement. A pilot that should
   keep hosted steps past day 90 needs a paid module or a declared endpoint, or a
@@ -98,7 +101,7 @@ it calls `admit(await pool_status(...))`. The change:
    say the meter now enforces the status; in `guided_step_meter.py`, list the new refusal
    in the module docstring.
 6. When the gateway is built, it passes the refusal on to Guide as its own code.
-   `contracts/atlas-guide.json` gains that code, on both sides together. Guide already
+   `backend/tests/contracts/atlas-guide.json` gains that code, on both sides together. Guide already
    treats the hosted route as refused at this status, so the code only has to be
    recognised.
 
@@ -135,7 +138,7 @@ Elsewhere:
   step was already served, and `check()` is the gate.
 - In `test_step_overage.py`: the overage for the month is unchanged by the status.
 - A contract test for the new refusal code, once the gateway's response is in
-  `contracts/atlas-guide.json`.
+  `backend/tests/contracts/atlas-guide.json`.
 
 ## What the owner decides
 
