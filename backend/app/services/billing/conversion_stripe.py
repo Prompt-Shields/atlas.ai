@@ -15,9 +15,12 @@ Stripe, per company, and joins them to the report's rows:
     with ``metadata.billing_kind = enterprise_modules`` (atlas.ai#14).
   * **Paid**: the earliest ``status_transitions.paid_at`` of a paid invoice
     that carries a module.
-  * **Pilot**: ``metadata.promptly_pilot`` on the Work client subscription.
-    ``enterprise.end_pilot`` sets it to ``"false"`` when a pilot converts, so
-    this is the flag now, not "was a pilot"; the column says so.
+  * **Pilot**: ``metadata.promptly_pilot`` on the Work client subscription,
+    the flag now (``pilot_now``). ``enterprise.end_pilot`` sets it to
+    ``"false"`` when a pilot converts and records the day in
+    ``metadata.promptly_pilot_ended``, so ``was_pilot`` is either one
+    (``enterprise.was_pilot``) and ``pilot_ended_on`` is that day. A pilot
+    ended before that key existed reads as never a pilot.
   * **Day 0 in Stripe**: the Work client subscription's ``start_date``, a
     cross-check of ``tenants.work_client_started_at``, and its ``ended_at``.
 
@@ -135,6 +138,8 @@ class StripeFacts:
     stripe_day0: datetime | None = None
     work_client_ended_at: datetime | None = None
     pilot_now: bool | None = None
+    was_pilot: bool | None = None
+    pilot_ended_on: str | None = None  # YYYY-MM-DD, as end_pilot wrote it
     quoted_at: datetime | None = None
     first_sale: Sale | None = None
     first_suite_sold_at: datetime | None = None
@@ -169,6 +174,9 @@ def _read_subscriptions(facts: StripeFacts, subscriptions: Iterable) -> None:
         first = min(work_client, key=lambda s: _get(s, "start_date", 0))
         facts.stripe_day0 = _when(_get(first, "start_date"))
         facts.pilot_now = enterprise.is_pilot(first)
+        facts.was_pilot = any(enterprise.was_pilot(s) for s in work_client)
+        ended = [d for s in work_client if (d := enterprise.pilot_ended_on(s))]
+        facts.pilot_ended_on = min(ended) if ended else None
         ends = [_get(s, "ended_at") for s in work_client]
         if all(ends):
             facts.work_client_ended_at = _when(max(ends))
@@ -226,6 +234,8 @@ COLUMNS: tuple[str, ...] = (
     "day0",
     "stripe_day0",
     "pilot_now",
+    "was_pilot",
+    "pilot_ended_on",
     "guide_connected_at",
     "quoted_at",
     "first_module_sold_at",
@@ -332,6 +342,8 @@ class JoinedRow:
             "day0": self.day0,
             "stripe_day0": f and f.stripe_day0,
             "pilot_now": f and f.pilot_now,
+            "was_pilot": f and f.was_pilot,
+            "pilot_ended_on": f and f.pilot_ended_on,
             "guide_connected_at": c.guide_connected_at,
             "quoted_at": f and f.quoted_at,
             "first_module_sold_at": sale and sale.when,
