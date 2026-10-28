@@ -45,27 +45,33 @@ def test_unknown_capability_defaults_deny():
     assert all(isinstance(v, set) for v in PLAN_ENTITLEMENTS.values())
 
 
+# One fixed clock for every test that passes `now`. Reading datetime.now() once for
+# the trial end and again for `now` let the two drift apart: a run slower than the
+# 1 ms margin saw the trial as already over.
+_NOW = datetime(2026, 10, 13, 12, 0, tzinfo=UTC)
+
+
 def test_hard_locked_true_after_trial_no_subscription():
-    past = datetime.now(UTC) - timedelta(milliseconds=1)
+    past = _NOW - timedelta(milliseconds=1)
     t = _tenant(trial_ends_at=past, stripe_subscription_id=None)
-    assert hard_locked(t, now=datetime.now(UTC)) is True
+    assert hard_locked(t, now=_NOW) is True
 
 
 def test_hard_locked_false_just_before_expiry():
-    future = datetime.now(UTC) + timedelta(milliseconds=1)
+    future = _NOW + timedelta(milliseconds=1)
     t = _tenant(trial_ends_at=future, stripe_subscription_id=None)
-    assert hard_locked(t, now=datetime.now(UTC)) is False
+    assert hard_locked(t, now=_NOW) is False
 
 
 def test_hard_locked_false_when_subscription_attached():
-    past = datetime.now(UTC) - timedelta(days=1)
+    past = _NOW - timedelta(days=1)
     t = _tenant(trial_ends_at=past, stripe_subscription_id="sub_123")
-    assert hard_locked(t, now=datetime.now(UTC)) is False
+    assert hard_locked(t, now=_NOW) is False
 
 
 def test_hard_locked_false_when_no_trial_set():
     t = _tenant(trial_ends_at=None, stripe_subscription_id=None)
-    assert hard_locked(t, now=datetime.now(UTC)) is False
+    assert hard_locked(t, now=_NOW) is False
 
 
 # --- Modules -----------------------------------------------------------------
@@ -197,8 +203,6 @@ def test_tenant_without_module_subscriptions_has_no_modules():
 # ---------------------------------------------------------------------------
 # Free Work client: the 90-day rule (promptly-guide#52)
 # ---------------------------------------------------------------------------
-
-_NOW = datetime(2026, 10, 13, 12, 0, tzinfo=UTC)
 
 
 def _started(days_ago: float, **kw) -> Tenant:

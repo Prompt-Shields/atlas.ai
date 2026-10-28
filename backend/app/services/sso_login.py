@@ -2,13 +2,15 @@
 
 Authentication path for "Sign in with Microsoft". Two concerns:
 
-1. **ID-token claims** — the token is obtained over the back-channel TLS code
-   exchange (`microsoft_oauth.exchange_code`), so — consistent with the trust
-   model already used in `microsoft_oauth.parse_tenant_id_from_id_token` — we
-   trust the channel for integrity and validate the *claims* (issuer, audience,
-   nonce, expiry) rather than re-verifying the RS256 signature.
-   HARDENING FOLLOW-UP: add JWKS-based signature verification against
-   `https://login.microsoftonline.com/common/discovery/v2.0/keys`.
+1. **ID-token verification** — the token comes from the back-channel code
+   exchange (`microsoft_oauth.exchange_code`). Before any claim is read, its
+   RS256 signature is verified against Microsoft's published v2.0 signing keys
+   (`JWKS_URL`), the key chosen by the token's `kid`. Only RS256 is accepted.
+   The keys are cached for as long as Microsoft's `Cache-Control` allows; an
+   unknown `kid` fetches them early at most once a minute, in case Microsoft
+   rotated a key in. A bad signature, an unknown key or a failed fetch rejects
+   the login. The claims (issuer, audience, nonce, expiry) are then validated
+   as before.
 
 2. **Provision-or-link (LINK-ONLY for v1)** — because the app is a multi-tenant
    Entra app (`tenant=common`), auto-creating accounts would let any Microsoft
@@ -21,11 +23,20 @@ Authentication path for "Sign in with Microsoft". Two concerns:
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import hmac
 import json
+import math
+import re
+import time
+from collections.abc import Awaitable, Callable
+from typing import Any
 
+import httpx
+from jose import jwt
+from jose.exceptions import JOSEError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -37,7 +48,7 @@ _MS_ISS_SUFFIX = "/v2.0"
 
 
 class SSOIdTokenError(Exception):
-    """The id-token claims failed validation."""
+    """The id-token's signature or claims failed verification."""
 
 
 class SSOLoginStateError(Exception):
@@ -48,13 +59,160 @@ class SSOAccountNotProvisionedError(Exception):
     """No active platform user is linked to this Entra identity."""
 
 
+# ─── ID-token signature ──────────────────────────────────────────────
+
+# Microsoft's v2.0 signing keys. The app is multi-tenant (`tenant=common`), and
+# the common document lists the keys every tenant's tokens are signed with.
+JWKS_URL = "https://login.microsoftonline.com/common/discovery/v2.0/keys"
+_DEFAULT_MAX_AGE = 3600
+# The cache lifetime is kept within these bounds whatever Microsoft's header says.
+_MIN_MAX_AGE = 60
+_MAX_MAX_AGE = 86400
+# A token naming a key Atlas has not seen makes it fetch Microsoft's keys early,
+# in case Microsoft rotated one in. That early fetch happens at most once in this
+# many seconds. The token's signature is checked against Microsoft's published
+# keys before its claims are used.
+FORCED_REFRESH_INTERVAL = 60.0
+_MAX_AGE_RE = re.compile(r"max-age=(\d+)")
+
+KeyFetcher = Callable[[], Awaitable[tuple[dict[str, dict[str, Any]], int]]]
+
+
+def _signing_keys(document: Any) -> dict[str, dict[str, Any]]:
+    """The RSA signing keys of a JWKS document, by `kid`."""
+    if not isinstance(document, dict) or not isinstance(document.get("keys"), list):
+        raise ValueError("Unexpected key document")
+    keys: dict[str, dict[str, Any]] = {}
+    for key in document["keys"]:
+        if not isinstance(key, dict) or not isinstance(key.get("kid"), str):
+            continue
+        if key.get("kty") != "RSA" or key.get("use", "sig") != "sig":
+            continue
+        keys[key["kid"]] = key
+    return keys
+
+
+async def fetch_microsoft_keys(
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> tuple[dict[str, dict[str, Any]], int]:
+    """Microsoft's current signing keys, and for how long they may be kept."""
+    async with httpx.AsyncClient(timeout=10.0, transport=transport) as client:
+        response = await client.get(JWKS_URL)
+        response.raise_for_status()
+    match = _MAX_AGE_RE.search(response.headers.get("cache-control", ""))
+    max_age = int(match.group(1)) if match else _DEFAULT_MAX_AGE
+    return _signing_keys(response.json()), max(_MIN_MAX_AGE, min(max_age, _MAX_MAX_AGE))
+
+
+class EntraKeySet:
+    """Verifies id-token signatures, caching Microsoft's keys for as long as
+    Microsoft says they may be kept."""
+
+    def __init__(
+        self,
+        fetch: KeyFetcher = fetch_microsoft_keys,
+        clock: Callable[[], float] = time.time,
+        forced_refresh_interval: float = FORCED_REFRESH_INTERVAL,
+    ) -> None:
+        self._fetch = fetch
+        self._clock = clock
+        self._forced_refresh_interval = forced_refresh_interval
+        self._keys: dict[str, dict[str, Any]] = {}
+        self._expires_at = 0.0
+        self._last_forced_at = -math.inf
+        # One fetch at a time, so requests that arrive while one is under way wait
+        # for it and read its result. An asyncio lock belongs to one event loop, so
+        # a new loop (each test has its own) gets a new lock.
+        self._lock: asyncio.Lock | None = None
+        self._lock_loop: asyncio.AbstractEventLoop | None = None
+
+    def _fetch_lock(self) -> asyncio.Lock:
+        loop = asyncio.get_running_loop()
+        if self._lock is None or self._lock_loop is not loop:
+            self._lock = asyncio.Lock()
+            self._lock_loop = loop
+        return self._lock
+
+    def _cached(self, kid: str) -> dict[str, Any] | None:
+        if self._clock() >= self._expires_at:
+            return None
+        return self._keys.get(kid)
+
+    async def _key(self, kid: str) -> dict[str, Any]:
+        key = self._cached(kid)
+        if key is not None:
+            return key
+        async with self._fetch_lock():
+            # Another request may have fetched while this one waited.
+            key = self._cached(kid)
+            if key is not None:
+                return key
+            now = self._clock()
+            if now < self._expires_at:
+                # The keys are current but lack this one: fetch early only if no
+                # early fetch was made in the last interval.
+                if now - self._last_forced_at < self._forced_refresh_interval:
+                    raise SSOIdTokenError("unknown signing key")
+                self._last_forced_at = now
+            try:
+                keys, max_age = await self._fetch()
+            except (httpx.HTTPError, ValueError) as exc:
+                raise SSOIdTokenError("signing keys unavailable") from exc
+            self._keys = keys
+            self._expires_at = self._clock() + max_age
+        key = self._keys.get(kid)
+        if key is None:
+            raise SSOIdTokenError("unknown signing key")
+        return key
+
+    async def verify_signature(self, id_token: str) -> None:
+        """Raise unless the token is RS256-signed by one of Microsoft's keys.
+
+        Checks the signature only; the claims are validated by `validate_claims`.
+        """
+        try:
+            header = jwt.get_unverified_header(id_token)
+        except JOSEError as exc:
+            raise SSOIdTokenError("id_token is not a JWT") from exc
+        if header.get("alg") != "RS256" or not isinstance(header.get("kid"), str):
+            raise SSOIdTokenError("id_token is not RS256-signed with a key id")
+        key = await self._key(header["kid"])
+        try:
+            jwt.decode(
+                id_token,
+                key,
+                algorithms=["RS256"],
+                options={
+                    "verify_signature": True,
+                    "verify_aud": False,
+                    "verify_iat": False,
+                    "verify_exp": False,
+                    "verify_nbf": False,
+                    "verify_iss": False,
+                    "verify_sub": False,
+                    "verify_jti": False,
+                    "verify_at_hash": False,
+                },
+            )
+        except JOSEError as exc:
+            raise SSOIdTokenError("id_token signature did not verify") from exc
+
+
+_key_set = EntraKeySet()
+
+
+def get_entra_key_set() -> EntraKeySet:
+    """The process-wide key set; tests replace this function to use local keys."""
+    return _key_set
+
+
 # ─── ID-token claims ─────────────────────────────────────────────────
 
 
 def decode_id_token_claims(id_token: str) -> dict:
     """Base64url-decode the JWT payload segment into a claims dict.
 
-    Does not verify the signature — see module docstring trust model.
+    Reads the claims only: `complete_sso_login` verifies the signature first.
     """
     parts = id_token.split(".")
     if len(parts) < 2:
@@ -180,13 +338,12 @@ async def complete_sso_login(
     settings,
     client,
     now_ts: int | None = None,
+    key_set: EntraKeySet | None = None,
 ) -> dict:
-    """Exchange the auth code, validate the id-token, link the user, issue tokens.
+    """Exchange the auth code, verify the id-token, link the user, issue tokens.
 
     Caller (the callback endpoint) owns the httpx client and the DB commit.
     """
-    import time
-
     from app.services import auth_service
     from app.services.microsoft_oauth import exchange_code
 
@@ -205,6 +362,7 @@ async def complete_sso_login(
     if not id_token:
         raise SSOIdTokenError("token response did not include an id_token")
 
+    await (key_set or get_entra_key_set()).verify_signature(id_token)
     claims = decode_id_token_claims(id_token)
     validate_claims(
         claims,
