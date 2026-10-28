@@ -73,6 +73,8 @@ async def run_async_migrations() -> None:
         configuration,
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
+        # As in app.database: no bound values in error messages in production.
+        hide_parameters=get_settings().is_production,
     )
 
     async with connectable.connect() as connection:

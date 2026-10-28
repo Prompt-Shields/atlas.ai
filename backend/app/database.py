@@ -48,6 +48,10 @@ def get_engine() -> AsyncEngine:
             max_overflow=settings.database_max_overflow,
             pool_pre_ping=True,
             echo=settings.app_debug and not settings.is_production,
+            # Keep bound values out of SQLAlchemy error messages in production.
+            # Those messages reach the logs with their tracebacks, and the
+            # values can be customer emails or billing fields.
+            hide_parameters=settings.is_production,
         )
     return _engine
 
