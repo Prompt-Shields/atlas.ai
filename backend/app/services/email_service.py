@@ -62,4 +62,10 @@ async def send_invite_email(to: str, invite_token: str, tenant_name: str) -> Non
     <p>If you didn&#39;t expect this invitation, you can safely ignore this email.</p>
     """
 
-    await send_email(to, f"Invitation to join {safe_tenant} on AI-GRC", body)
+    # The subject is a header, not HTML, so it takes the raw name: escaping it
+    # would show "Acme &amp; Co". A line break in a header would let the name
+    # inject one, and EmailMessage refuses such a value outright, which would
+    # fail the invite. Joining on what splitlines() breaks on (the same test
+    # EmailMessage applies) keeps every name sendable and every subject one line.
+    subject_tenant = " ".join(tenant_name.splitlines())
+    await send_email(to, f"Invitation to join {subject_tenant} on AI-GRC", body)

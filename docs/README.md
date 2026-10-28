@@ -18,6 +18,7 @@ Start with the [repository README](../README.md) for setup and the tenancy rules
 | [`design/ai-spm-merge.md`](./design/ai-spm-merge.md) | AI-SPM domain model, tenancy, and auth design |
 | [`design/managed-device-unification.md`](./design/managed-device-unification.md) | Unifying managed-device records across MDM sources |
 | [`design/promptly-guide-adoption.md`](./design/promptly-guide-adoption.md) | Promptly Guide's opt-in adoption figures: Firebase token auth, no per-person rows, the team gate |
+| [`design/free-client-90-day.md`](./design/free-client-90-day.md) | Proposal: enforcing the free Work client's 90-day rule in the hosted step meter |
 
 ## Integrations
 

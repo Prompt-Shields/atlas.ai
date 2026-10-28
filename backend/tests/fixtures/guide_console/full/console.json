@@ -39,6 +39,16 @@
     "url": "https://atlas.nordlys.no",
     "scimGroups": true
   },
+  "cloudEndpoint": {
+    "provider": "azure-openai",
+    "endpoint": "https://nordlys.openai.azure.com",
+    "model": "guide-deployment",
+    "apiVersion": "2024-10-21",
+    "dataRegion": "EU (Sweden Central)",
+    "processingArea": "eu",
+    "acceptsImages": false,
+    "zeroRetentionConfirmed": true
+  },
   "knowledgeSources": [
     {
       "id": "handbook",
