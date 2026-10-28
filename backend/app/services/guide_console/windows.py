@@ -263,9 +263,12 @@ VARIANT_KEYS = [
 ]
 
 # Keys the Mac profile writes that Windows does not carry, and why. They are left out of
-# every .reg file. Empty while every key has a mapping; ExcludedApps maps, but from
-# excludedWindowsApps, not the bundle ids.
-MAC_ONLY = {}
+# every .reg file. ExcludedApps maps, but from excludedWindowsApps, not the bundle ids.
+MAC_ONLY = dict.fromkeys(
+    mp.CLOUD_ENDPOINT_KEYS.values(),
+    "The organisation's own model endpoint (#40) pins the Mac's cloud model setup "
+    "(ManagedEndpoint.swift); the Windows core has no cloud model setup to pin yet.",
+)
 # Mac keys written under another name or shape on Windows.
 RENAMED = {
     mp.KEY_GROUP_PREFIX: "PolicyGroups entry (PolicyGroups) or KnowledgeGroup.<name> (perGroup)"
@@ -426,6 +429,11 @@ def build_windows(console, combinations=()):
         notes,
         "everyone",
     )
+    if "cloudEndpoint" in console:
+        notes.append(
+            "cloudEndpoint pins the Mac's cloud model only. Windows PCs have no cloud model "
+            "setup to pin yet, so it is left out of every .reg file."
+        )
     groups = {}
     for file_name, profile in profiles.items():
         if file_name == mp.EVERYONE_FILE:
