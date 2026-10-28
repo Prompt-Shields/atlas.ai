@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import base64
-import json
 import uuid
 
 import pytest_asyncio
@@ -13,6 +11,7 @@ from app.config import get_settings
 from app.models.user import Role, User, UserRole
 from app.services import sso_login
 from tests.conftest import TestSessionLocal
+from tests.unit import entra_keys
 
 CLIENT_ID = "client-id-sso-001"
 
@@ -45,6 +44,9 @@ async def ms_settings(monkeypatch):
     monkeypatch.setattr("app.services.auth_service.store_refresh_token", _async_noop)
     monkeypatch.setattr("app.routers.auth.store_sso_code", _fake_store_code)
     monkeypatch.setattr("app.routers.auth.consume_sso_code", _fake_consume_code)
+    # Verify id-tokens against the local stand-in for Microsoft's keys.
+    keys = entra_keys.key_set()
+    monkeypatch.setattr("app.services.sso_login.get_entra_key_set", lambda: keys)
     return s
 
 
@@ -58,11 +60,7 @@ def _id_token(**claims) -> str:
         "exp": 9999999999,
     }
     base.update(claims)
-
-    def seg(o: dict) -> str:
-        return base64.urlsafe_b64encode(json.dumps(o).encode()).decode().rstrip("=")
-
-    return f"{seg({'alg': 'RS256'})}.{seg(base)}.sig"
+    return entra_keys.id_token(base)
 
 
 async def test_login_redirects_to_microsoft(client: AsyncClient, ms_settings) -> None:
@@ -135,6 +133,35 @@ async def test_callback_unknown_user_redirects_with_error(
     )
     assert resp.status_code in (302, 307)
     assert "sso_error=" in resp.headers["location"]
+
+
+async def test_callback_bad_signature_redirects_with_invalid(
+    client: AsyncClient, ms_settings, monkeypatch
+) -> None:
+    state = sso_login.encode_login_state(signing_secret="sign-secret", nonce="nn")
+    unsigned = entra_keys.id_token(
+        {
+            "iss": "https://login.microsoftonline.com/tid/v2.0",
+            "aud": CLIENT_ID,
+            "oid": "oid-http",
+            "email": "http@corp.example",
+            "nonce": "nn",
+            "exp": 9999999999,
+        },
+        key=entra_keys.OTHER_PRIVATE_PEM,
+    )
+
+    async def fake_exchange(**_kwargs):
+        return {"id_token": unsigned, "access_token": "a", "expires_in": 3600}
+
+    monkeypatch.setattr("app.services.microsoft_oauth.exchange_code", fake_exchange)
+
+    resp = await client.get(
+        "/api/v1/auth/sso/microsoft/callback", params={"code": "c", "state": state}
+    )
+    assert resp.status_code in (302, 307)
+    assert resp.headers["location"].endswith("/login?sso_error=invalid")
+    assert not _CODE_STORE
 
 
 async def test_exchange_unknown_code_is_unauthorized(client: AsyncClient, ms_settings) -> None:
