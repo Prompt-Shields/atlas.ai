@@ -11,8 +11,6 @@ Covers `signup_service.provision_tenant` / `provision_or_join_sso_user` and the
 
 from __future__ import annotations
 
-import base64
-import json
 import types
 import uuid
 
@@ -24,6 +22,7 @@ from app.models.tenant import Plan, SubscriptionStatus, Tenant
 from app.models.user import Role, User, UserRole
 from app.services import signup_service, sso_login
 from tests.conftest import TestSessionLocal
+from tests.unit import entra_keys
 
 pytestmark = pytest.mark.asyncio
 
@@ -46,10 +45,7 @@ def _settings(*, self_serve: bool) -> types.SimpleNamespace:
 
 
 def _make_id_token(claims: dict) -> str:
-    def seg(obj: dict) -> str:
-        return base64.urlsafe_b64encode(json.dumps(obj).encode()).decode().rstrip("=")
-
-    return f"{seg({'alg': 'RS256'})}.{seg(claims)}.sig"
+    return entra_keys.id_token(claims)
 
 
 def _claims(**over) -> dict:
@@ -209,6 +205,7 @@ async def test_complete_sso_login_flag_off_rejects_unknown(monkeypatch) -> None:
                     settings=_settings(self_serve=False),
                     client=client,
                     now_ts=1000,
+                    key_set=entra_keys.key_set(),
                 )
         # Nothing provisioned.
         assert await _count(session, Tenant) == 0
@@ -227,6 +224,7 @@ async def test_complete_sso_login_flag_on_jit_provisions_and_issues(monkeypatch)
                 settings=_settings(self_serve=True),
                 client=client,
                 now_ts=1000,
+                key_set=entra_keys.key_set(),
             )
         await session.commit()
 
@@ -271,6 +269,7 @@ async def test_complete_sso_login_existing_email_links_no_new_tenant(monkeypatch
                 settings=_settings(self_serve=True),
                 client=client,
                 now_ts=1000,
+                key_set=entra_keys.key_set(),
             )
         await session.commit()
 
