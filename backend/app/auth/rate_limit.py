@@ -44,8 +44,14 @@ async def check_rate_limit(
     r = _get_redis()
     redis_key = f"rate_limit:{key}"
 
-    current = await r.incr(redis_key)
-    if current == 1:
+    # INCR and TTL go in one transaction, and the expiry is set whenever the key
+    # has none, not only on the first hit. A process that died between INCR and
+    # EXPIRE used to leave a counter that never expired, locking the IP or
+    # account out for good; the next call now repairs it. TTL is used rather
+    # than EXPIRE NX so this works on any Redis server version.
+    async with r.pipeline(transaction=True) as pipe:
+        current, ttl = await pipe.incr(redis_key).ttl(redis_key).execute()
+    if ttl == -1:
         await r.expire(redis_key, window_seconds)
 
     if current > max_attempts:
