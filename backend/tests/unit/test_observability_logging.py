@@ -8,6 +8,7 @@ logs.
 from __future__ import annotations
 
 import asyncio
+import gc
 import json
 import logging
 import logging.config
@@ -23,8 +24,10 @@ import uvicorn.config
 from asyncpg import exceptions as pg
 from fastapi import FastAPI
 from sqlalchemy import exc as sa_exc
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql.asyncpg import AsyncAdapt_asyncpg_dbapi
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.pool import NullPool
 
 from app import database, observability
@@ -521,3 +524,69 @@ async def test_a_route_failing_under_uvicorn_logs_no_values(restore_logging, cap
     assert "Exception in ASGI application" in err
     assert EMAIL not in err
     assert "sqlalchemy.exc.IntegrityError: [message withheld" in err
+
+
+# ── Errors that repeat a database error's text ────────────────────────────
+
+
+class _SeatBase(DeclarativeBase):
+    pass
+
+
+class _Seat(_SeatBase):
+    __tablename__ = "seats"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    owner: Mapped[str] = mapped_column(unique=True)
+
+
+async def test_a_pending_rollback_error_logs_no_values(production_log, tmp_path):
+    # After a failed flush the session refuses further work until it is rolled
+    # back, and says why: "Original exception was: ..." with the first error's
+    # text, which quotes the statement's values.
+    log, lines = production_log
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'seats.db'}")
+    owner = EMAIL
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(_SeatBase.metadata.create_all)
+        async with AsyncSession(engine) as session:
+            session.add(_Seat(owner=owner))
+            await session.commit()
+            session.add(_Seat(owner=owner))
+            try:
+                await session.flush()
+            except sa_exc.IntegrityError:
+                pass  # handled, but the session is left without a rollback
+            try:
+                await session.execute(select(_Seat))
+            except sa_exc.PendingRollbackError as error:
+                repeated_text = str(error)
+                log.exception("seat_lookup_failed")
+            assert owner in repeated_text  # the error does repeat it, which is the point
+    finally:
+        await engine.dispose()
+
+    (line,) = lines()
+    assert owner not in json.dumps(line)
+    assert "PendingRollbackError: [message withheld" in line["exception"]
+
+
+async def test_asyncio_never_retrieved_task_logs_no_values(production_log, caplog):
+    # asyncio prints the unretrieved task, and the task's repr ends with the
+    # exception's repr, in the message as well as in exc_info.
+    async def failing() -> None:
+        _raise_as_sqlalchemy_does(_unique_violation(), "INSERT", {})
+
+    task = asyncio.create_task(failing())
+    await asyncio.sleep(0.01)
+    assert task.done()
+    del task
+    gc.collect()
+
+    records = [r for r in caplog.records if r.name == "asyncio"]
+    assert records, "asyncio did not log the unretrieved task"
+    for record in records:
+        assert EMAIL not in record.getMessage()
+        assert EMAIL not in (record.exc_text or "")
+    assert any("Task exception was never retrieved" in r.getMessage() for r in records)

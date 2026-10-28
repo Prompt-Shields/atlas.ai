@@ -15,7 +15,7 @@ from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
-from sqlalchemy.exc import StatementError
+from sqlalchemy.exc import PendingRollbackError, StatementError
 
 from app.config import Settings
 
@@ -45,7 +45,9 @@ def _linked(exc: BaseException) -> list[BaseException]:
 def _is_database_error(exc: BaseException) -> bool:
     module = type(exc).__module__
     return (
-        isinstance(exc, StatementError | sqlite3.Error)
+        # PendingRollbackError is not a StatementError, but its message embeds the
+        # original failure's text ("Original exception was: ...").
+        isinstance(exc, StatementError | PendingRollbackError | sqlite3.Error)
         or module.split(".")[0] in _DB_DRIVER_PACKAGES
         # SQLAlchemy's async dialects re-raise driver errors as their own
         # DB-API classes, which repeat the driver's message.
@@ -53,8 +55,8 @@ def _is_database_error(exc: BaseException) -> bool:
     )
 
 
-def _withheld_errors(exc: BaseException) -> set[int]:
-    """The ids of the exceptions whose message must not be logged.
+def _withheld_exceptions(exc: BaseException) -> list[BaseException]:
+    """The exceptions whose message must not be logged.
 
     That is every database error and everything beneath it, through causes,
     contexts and the members of exception groups: a driver can raise a plain
@@ -63,7 +65,7 @@ def _withheld_errors(exc: BaseException) -> set[int]:
     application raised on top of a database error, and groups that hold one,
     keep their message.
     """
-    withheld: set[int] = set()
+    withheld: dict[int, BaseException] = {}
     visited: set[tuple[int, bool]] = set()
 
     def walk(current: BaseException, below_database_error: bool) -> None:
@@ -72,12 +74,16 @@ def _withheld_errors(exc: BaseException) -> set[int]:
             return
         visited.add((id(current), below))
         if below:
-            withheld.add(id(current))
+            withheld[id(current)] = current
         for linked in _linked(current):
             walk(linked, below)
 
     walk(exc, False)
-    return withheld
+    return list(withheld.values())
+
+
+def _withheld_errors(exc: BaseException) -> set[int]:
+    return {id(withheld) for withheld in _withheld_exceptions(exc)}
 
 
 def _withheld_line(exc: BaseException) -> str:
@@ -157,6 +163,31 @@ def _render_json_line(
 _FACTORY_MARK = "_filters_database_error_text"
 
 
+# Shorter texts are left alone: replacing them would mangle unrelated words.
+_MIN_SCRUBBED_LENGTH = 6
+
+
+def _scrub_message(record: logging.LogRecord, exc: BaseException) -> None:
+    """Remove a withheld exception's text from the record's own message.
+
+    Some loggers put the exception in the message as well as in exc_info: asyncio's
+    "Task exception was never retrieved" prints the task, whose repr ends with
+    the exception's repr. The message is replaced by its formatted text, so this
+    only touches records that carry a database error.
+    """
+    withheld = _withheld_exceptions(exc)
+    if not withheld:
+        return
+    texts: set[str] = set()
+    for error in withheld:
+        texts.update({repr(error), str(error), *(a for a in error.args if isinstance(a, str))})
+    message = record.getMessage()
+    for text in sorted(texts, key=len, reverse=True):
+        if len(text) >= _MIN_SCRUBBED_LENGTH:
+            message = message.replace(text, "[message withheld]")
+    record.msg, record.args = message, None
+
+
 def _filter_logged_exceptions() -> None:
     """Give every log record the filtered traceback, whichever handler prints it.
 
@@ -175,6 +206,7 @@ def _filter_logged_exceptions() -> None:
         if isinstance(exc_info, tuple) and exc_info[1] is not None:
             try:
                 record.exc_text = format_exception_without_db_values(exc_info)
+                _scrub_message(record, exc_info[1])
             except Exception:
                 # Never let the log call fail, and never fall back to the raw text.
                 record.exc_text = f"{type(exc_info[1]).__qualname__}: [message withheld]"
