@@ -36,6 +36,7 @@ from app.models.survey import (
     SurveyResponse,
     SurveyTemplate,
 )
+from app.safe_errors import safe_error_text
 from app.services.crypto import decrypt_token
 from app.services.slack_adapter import (
     chat_post_message,
@@ -85,7 +86,7 @@ async def dispatch_pending(
             logger.warning(
                 "slack_dispatch_failed",
                 delivery_id=str(delivery.id),
-                error=str(exc),
+                error=safe_error_text(exc),
             )
             delivery.status = DeliveryStatus.FAILED
             await db.commit()

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import sqlite3
 
-from sqlalchemy.exc import StatementError
+from sqlalchemy.exc import PendingRollbackError, StatementError
 
 # Attributes of a database error that name what failed without quoting any value.
 _SAFE_FIELDS = ("sqlstate", "constraint_name", "table_name")
@@ -27,7 +27,9 @@ def is_database_error(exc: BaseException) -> bool:
     """True for SQLAlchemy statement errors and for the driver errors under them."""
     module = type(exc).__module__
     return (
-        isinstance(exc, StatementError | sqlite3.Error)
+        # PendingRollbackError is not a StatementError, but its message embeds the
+        # original failure's text ("Original exception was: ...").
+        isinstance(exc, StatementError | PendingRollbackError | sqlite3.Error)
         or module.split(".")[0] in _DRIVER_PACKAGES
         # SQLAlchemy's async dialects re-raise driver errors as their own DB-API
         # classes, which repeat the driver's message.

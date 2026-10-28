@@ -39,6 +39,7 @@ from app.models.integration import (
 from app.models.roi_assumptions import HoursSavedSource, RoiAssumptions
 from app.models.tenant import Tenant
 from app.models.user import APIKey
+from app.safe_errors import safe_error_text
 from app.schemas.cost import (
     AnomalyPayload,
     BreakdownRow,
@@ -225,14 +226,14 @@ async def cron_sync(
                         "cron_sync_integration_failed",
                         integration_id=str(integration_id),
                         tenant_id=str(tid),
-                        error=str(exc),
+                        error=safe_error_text(exc),
                     )
                     results.append(
                         CronSyncItem(
                             integration_id=str(integration_id),
                             status=IntegrationStatus.ERROR.value,
                             records_upserted=0,
-                            error=str(exc)[:500],
+                            error=safe_error_text(exc)[:500],
                         )
                     )
 
@@ -248,7 +249,7 @@ async def cron_sync(
                 logger.warning(
                     "cron_budget_alerts_failed",
                     tenant_id=str(tid),
-                    error=str(exc),
+                    error=safe_error_text(exc),
                 )
             # Anomaly detection runs in the same pass but its own try: a
             # budget-alert failure must not cost the tenant its spike
@@ -260,7 +261,7 @@ async def cron_sync(
                 logger.warning(
                     "cron_anomaly_detection_failed",
                     tenant_id=str(tid),
-                    error=str(exc),
+                    error=safe_error_text(exc),
                 )
 
     return CronSyncResponse(

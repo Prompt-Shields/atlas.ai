@@ -48,6 +48,7 @@ from app.models.cost_budget import (
     CostBudget,
 )
 from app.models.user import Role, User, UserRole
+from app.safe_errors import safe_error_text
 from app.services.email_service import send_email
 
 logger = structlog.get_logger(__name__)
@@ -394,7 +395,7 @@ async def dispatch_budget_alerts(
                     "budget_alert_send_failed",
                     tenant_id=str(tenant_id),
                     budget_id=str(budget.id),
-                    error=str(exc),
+                    error=safe_error_text(exc),
                 )
 
         if delivered:
