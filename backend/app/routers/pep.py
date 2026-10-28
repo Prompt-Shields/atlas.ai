@@ -37,6 +37,7 @@ from app.config import get_settings
 from app.database import DB_SESSION, get_standalone_session, set_tenant_guc
 from app.errors import AppException, ForbiddenError, NotFoundError
 from app.models.tenant import Tenant
+from app.safe_errors import safe_error_text
 from app.schemas.policy_enforcement import (
     PolicyApproveRequest,
     PolicyDemoteRequest,
@@ -288,7 +289,9 @@ async def watchdog_tick(
                     db, tid, now=now
                 )
             except Exception as exc:  # noqa: BLE001 — one bad tenant must not abort the sweep.
-                logger.warning("pep_watchdog_tenant_failed", tenant_id=str(tid), error=str(exc))
+                logger.warning(
+                    "pep_watchdog_tenant_failed", tenant_id=str(tid), error=safe_error_text(exc)
+                )
                 continue
 
             checked += tenant_checked

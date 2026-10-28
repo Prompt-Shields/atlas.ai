@@ -26,6 +26,7 @@ from app.models.integration import (
     IntegrationStatus,
 )
 from app.models.managed_device import ManagedDevice
+from app.safe_errors import safe_error_text
 from app.services.crypto import decrypt_token
 from app.services.jumpcloud_api import (
     JumpCloudAPIError,
@@ -114,7 +115,7 @@ async def _sync_one(
             logger.warning(
                 "jumpcloud_sync_skip_system",
                 integration_id=str(integration.id),
-                error=str(exc),
+                error=safe_error_text(exc),
             )
 
     group_count = 0
