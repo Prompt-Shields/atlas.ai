@@ -28,6 +28,7 @@ from app.models.integration import (
     IntegrationStatus,
 )
 from app.models.microsoft_sync_outputs import CloudAppDetection
+from app.safe_errors import safe_error_text
 from app.services.microsoft_graph import (
     GraphAPIError,
     graph_get,
@@ -225,7 +226,7 @@ async def _sync_one(
                 logger.warning(
                     "defender_sync_skip_detection",
                     integration_id=str(integration.id),
-                    error=str(exc),
+                    error=safe_error_text(exc),
                 )
         next_url = page.get("@odata.nextLink")
         if not next_url:

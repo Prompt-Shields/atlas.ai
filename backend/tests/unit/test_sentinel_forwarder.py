@@ -35,6 +35,7 @@ from app.services import crypto
 from app.services import sentinel_forwarder as fwd
 from app.services.sentinel_service import SentinelEventType
 from tests.conftest import TEST_TENANT_ID, TestSessionLocal, ensure_tenant
+from tests.db_errors import SECRET_VALUE, unique_violation
 
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 
@@ -717,6 +718,36 @@ class TestForwardIntegration:
 
         assert integration.status == IntegrationStatus.ERROR
         assert integration.last_error
+
+    async def test_a_failing_commit_records_no_database_row_values(
+        self, db, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        integration = make_integration()
+        await seed(db, integration, [make_event()])
+        # Detached, so the rollback in the failure path does not expire it and
+        # force a lazy load that an async session cannot do.
+        db.expunge(integration)
+        real_commit = db.commit
+        calls = {"n": 0}
+
+        async def commit_failing_once() -> None:
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise unique_violation()
+            await real_commit()
+
+        monkeypatch.setattr(db, "commit", commit_failing_once)
+
+        handler = route(httpx.Response(204))
+        async with mock_client(handler) as client:
+            result = await fwd.forward_integration(
+                db, integration, client=client, sleep=_noop_sleep
+            )
+
+        assert SECRET_VALUE not in result.error
+        assert SECRET_VALUE not in integration.last_error
+        assert result.error.startswith("IntegrityError: [message withheld")
+        assert integration.status == IntegrationStatus.ERROR
 
     async def test_a_successful_run_clears_a_previous_error(self, db) -> None:
         integration = make_integration(

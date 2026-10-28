@@ -40,6 +40,7 @@ from app.models.integration import (
     IntegrationProvider,
     IntegrationStatus,
 )
+from app.safe_errors import safe_error_text
 from app.services.microsoft_graph import (
     GraphAPIError,
     iter_group_members,
@@ -132,7 +133,7 @@ async def _sync_one(
             logger.warning(
                 "microsoft_sync_skip_user",
                 integration_id=str(integration.id),
-                error=str(exc),
+                error=safe_error_text(exc),
             )
             continue
         user_count += 1
@@ -150,7 +151,7 @@ async def _sync_one(
             logger.warning(
                 "microsoft_sync_skip_group",
                 integration_id=str(integration.id),
-                error=str(exc),
+                error=safe_error_text(exc),
             )
             continue
         group_count += 1
@@ -372,7 +373,7 @@ async def _sync_group_memberships(
                 "microsoft_sync_skip_group_members",
                 integration_id=str(integration.id),
                 group_id=str(group.id),
-                error=str(exc),
+                error=safe_error_text(exc),
             )
             continue
         total += await _replace_group_memberships(db, integration, group.id, member_ids, now)

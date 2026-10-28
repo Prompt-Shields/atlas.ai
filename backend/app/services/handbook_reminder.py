@@ -39,6 +39,7 @@ from app.routers.handbook import (
     CURRENT_HANDBOOK_VERSION,  # noqa: F401  retained for back-compat callers
     resolve_handbook_version,
 )
+from app.safe_errors import safe_error_text
 from app.services.crypto import decrypt_token
 from app.services.slack_adapter import (
     chat_post_message,
@@ -211,7 +212,7 @@ async def dispatch_handbook_reminders(
             logger.warning(
                 "handbook_reminder_tenant_failed",
                 tenant_id=str(tenant_id),
-                error=str(exc),
+                error=safe_error_text(exc),
             )
 
     if sent > 0:
@@ -320,7 +321,7 @@ async def _dispatch_one_tenant(
             logger.warning(
                 "handbook_reminder_user_failed",
                 user_id=str(user.id),
-                error=str(exc),
+                error=safe_error_text(exc),
             )
     return sent
 
@@ -344,7 +345,7 @@ async def _dm_one_user(
         logger.info(
             "handbook_reminder_skip_lookup_failed",
             email=user.email,
-            error=str(exc),
+            error=safe_error_text(exc),
         )
         return False
     if not slack_user_id:
@@ -356,7 +357,7 @@ async def _dm_one_user(
         logger.warning(
             "handbook_reminder_open_dm_failed",
             user_id=str(user.id),
-            error=str(exc),
+            error=safe_error_text(exc),
         )
         return False
     if not channel_id:
@@ -387,7 +388,7 @@ async def _dm_one_user(
         logger.warning(
             "handbook_reminder_post_failed",
             user_id=str(user.id),
-            error=str(exc),
+            error=safe_error_text(exc),
         )
         return False
 

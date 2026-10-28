@@ -14,6 +14,7 @@ from app.config import get_settings
 from app.models.blob import BlobRecord
 from app.models.llm_usage import LLMUsageRecord
 from app.models.risk import RiskMitigation
+from app.safe_errors import safe_error_text
 
 logger = structlog.get_logger()
 
@@ -232,7 +233,7 @@ async def process_batch(
                 "risk_analysis_group_error",
                 tenant_id=tenant_id,
                 org_id=org_id,
-                error=str(exc),
+                error=safe_error_text(exc),
             )
             for blob in group_blobs:
                 blob.processing_status = "failed"

@@ -15,6 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.dispatch import OutboxMessage
+from app.safe_errors import safe_error_text
 
 logger = structlog.get_logger()
 
@@ -140,14 +141,14 @@ async def process_outbox(db: AsyncSession, batch_size: int = 50) -> int:
 
         except Exception as exc:
             msg.retry_count += 1
-            msg.last_error = str(exc)
+            msg.last_error = safe_error_text(exc)
 
             if msg.retry_count >= msg.max_retries:
                 msg.status = "dead_letter"
                 logger.error(
                     "outbox_dead_letter",
                     message_id=str(msg.id),
-                    error=str(exc),
+                    error=safe_error_text(exc),
                 )
             else:
                 # Exponential backoff: 2^retry * 10 seconds

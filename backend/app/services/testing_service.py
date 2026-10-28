@@ -15,6 +15,7 @@ from app.models.correlation import CorrelationActionPlan
 from app.models.dispatch import DispatchEvent, OutboxMessage
 from app.models.risk import RiskMitigation
 from app.models.user import APIKey, User, UserRole
+from app.safe_errors import safe_error_text
 from app.services.audit import log_audit_event
 
 logger = structlog.get_logger()
@@ -120,9 +121,9 @@ async def run_e2e_test_pipeline(
         results["status"] = "success"
 
     except Exception as exc:
-        logger.error("test_pipeline_error", error=str(exc), job_id=job_id)
+        logger.error("test_pipeline_error", error=safe_error_text(exc), job_id=job_id)
         results["status"] = "failed"
-        results["error"] = str(exc)
+        results["error"] = safe_error_text(exc)
 
     # Audit: test run completed
     await log_audit_event(

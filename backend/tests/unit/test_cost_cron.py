@@ -23,6 +23,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 import pytest_asyncio
+import structlog
 
 from app.config import get_settings
 from app.models.integration import (
@@ -33,6 +34,7 @@ from app.models.integration import (
 from app.models.tenant import Tenant
 from app.services.cost.sync_service import SyncResult
 from tests.conftest import TestSessionLocal
+from tests.db_errors import SECRET_VALUE, unique_violation
 
 pytestmark = [pytest.mark.unit]
 
@@ -218,3 +220,32 @@ async def test_correct_secret_syncs_all_tenants(client, monkeypatch, cost_integr
             )
             syncs_checked += 1
     assert syncs_checked == 3
+
+
+# ── 4. A database error during a sync is reported without its row values ────
+
+
+async def test_a_database_error_is_reported_without_row_values(
+    client, monkeypatch, cost_integrations
+):
+    _patch_session(monkeypatch)
+
+    async def _guc(db, tid):
+        return None
+
+    async def _sync(db, integration, since, until):
+        raise unique_violation()
+
+    monkeypatch.setattr("app.routers.cost.sync_integration", AsyncMock(side_effect=_sync))
+    monkeypatch.setattr("app.routers.cost.set_tenant_guc", AsyncMock(side_effect=_guc))
+
+    with structlog.testing.capture_logs() as logs:
+        resp = await client.post("/api/v1/cost/sync", headers={"X-Cron-Secret": CRON_SECRET})
+
+    assert resp.status_code == 200, resp.text
+    assert SECRET_VALUE not in resp.text
+    assert SECRET_VALUE not in repr(logs)
+    failed = [log for log in logs if log["event"] == "cron_sync_integration_failed"]
+    assert len(failed) == 3
+    for item in resp.json()["results"]:
+        assert item["error"].startswith("IntegrityError: [message withheld")

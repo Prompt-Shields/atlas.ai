@@ -29,6 +29,7 @@ from app.models.integration import (
     IntegrationStatus,
 )
 from app.models.managed_device import ManagedDevice
+from app.safe_errors import safe_error_text
 from app.services.crypto import decrypt_token
 from app.services.kandji_api import (
     KandjiAPIError,
@@ -119,7 +120,7 @@ async def _sync_one(
             logger.warning(
                 "kandji_sync_skip_device",
                 integration_id=str(integration.id),
-                error=str(exc),
+                error=safe_error_text(exc),
             )
 
     # Blueprints — count only for v0.2; full upsert lands when the

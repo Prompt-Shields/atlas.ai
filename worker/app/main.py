@@ -29,6 +29,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app.config import get_settings
 from app.database import close_db, get_standalone_session, init_db
 from app.observability import setup_logging
+from app.safe_errors import safe_error_text
 
 logger = structlog.get_logger()
 
@@ -57,7 +58,7 @@ async def run_dispatcher() -> None:
                 if processed > 0:
                     logger.info("dispatcher_batch", processed=processed)
         except Exception as exc:
-            logger.error("dispatcher_error", error=str(exc))
+            logger.error("dispatcher_error", error=safe_error_text(exc))
 
         await asyncio.sleep(interval)
 
@@ -82,7 +83,7 @@ async def run_risk_analyzer() -> None:
             )
             logger.info("risk_analyzer_job_complete", job_id=job_id, risks_created=len(risks))
     except Exception as exc:
-        logger.error("risk_analyzer_job_failed", job_id=job_id, error=str(exc))
+        logger.error("risk_analyzer_job_failed", job_id=job_id, error=safe_error_text(exc))
         sys.exit(1)
 
 
@@ -125,7 +126,7 @@ async def run_correlation_engine() -> None:
                 correlations_created=total_correlations,
             )
     except Exception as exc:
-        logger.error("correlation_engine_job_failed", job_id=job_id, error=str(exc))
+        logger.error("correlation_engine_job_failed", job_id=job_id, error=safe_error_text(exc))
         sys.exit(1)
 
 
@@ -145,7 +146,7 @@ async def run_device_risk_engine() -> None:
             "device_risk_engine_tenant_failed",
             job_id=job_id,
             tenant_id=str(tenant_id),
-            error=str(exc),
+            error=safe_error_text(exc),
         )
 
     try:
@@ -155,7 +156,7 @@ async def run_device_risk_engine() -> None:
     except Exception as exc:
         # Enumeration is the one genuinely fatal step — without the tenant list
         # there is no sweep to run.
-        logger.error("device_risk_engine_job_failed", job_id=job_id, error=str(exc))
+        logger.error("device_risk_engine_job_failed", job_id=job_id, error=safe_error_text(exc))
         sys.exit(1)
 
     # One tenant's failure never aborts the sweep; see sweep_tenants().
@@ -210,7 +211,7 @@ async def run_sentinel_forwarder() -> None:
                 async with get_standalone_session() as admin_db:
                     tenant_ids = (await admin_db.execute(select(Tenant.id))).scalars().all()
             except Exception as exc:
-                logger.error("sentinel_forwarder_enumerate_failed", error=str(exc))
+                logger.error("sentinel_forwarder_enumerate_failed", error=safe_error_text(exc))
                 await asyncio.sleep(interval)
                 continue
 
@@ -227,7 +228,7 @@ async def run_sentinel_forwarder() -> None:
                     logger.warning(
                         "sentinel_forwarder_tenant_failed",
                         tenant_id=str(tenant_id),
-                        error=str(exc),
+                        error=safe_error_text(exc),
                     )
 
             if forwarded > 0:
@@ -263,7 +264,7 @@ async def run_slack_dispatcher() -> None:
                     if processed > 0:
                         logger.info("slack_dispatcher_batch", processed=processed)
             except Exception as exc:
-                logger.error("slack_dispatcher_error", error=str(exc))
+                logger.error("slack_dispatcher_error", error=safe_error_text(exc))
 
             await asyncio.sleep(interval)
 
@@ -293,7 +294,7 @@ async def run_microsoft_sync() -> None:
                     if processed > 0:
                         logger.info("microsoft_sync_batch", processed=processed)
             except Exception as exc:
-                logger.error("microsoft_sync_error", error=str(exc))
+                logger.error("microsoft_sync_error", error=safe_error_text(exc))
 
             await asyncio.sleep(interval)
 
@@ -322,7 +323,7 @@ async def _run_continuous_sync(name: str, get_sync_fn) -> None:
                     if processed > 0:
                         logger.info(f"{name}_batch", processed=processed)
             except Exception as exc:
-                logger.error(f"{name}_error", error=str(exc))
+                logger.error(f"{name}_error", error=safe_error_text(exc))
 
             await asyncio.sleep(interval)
 
@@ -454,7 +455,7 @@ async def main() -> None:
                     except Exception as exc:
                         logger.error(
                             "handbook_reminder_error",
-                            error=str(exc),
+                            error=safe_error_text(exc),
                         )
                     await asyncio.sleep(interval)
         elif mode == "reattestation_reminder_dispatcher":
@@ -501,7 +502,7 @@ async def main() -> None:
                     except Exception as exc:
                         logger.error(
                             "reattestation_reminder_error",
-                            error=str(exc),
+                            error=safe_error_text(exc),
                         )
                     await asyncio.sleep(interval)
         elif mode == "drift_signal_dispatcher":
@@ -531,7 +532,7 @@ async def main() -> None:
                     async with get_standalone_session() as db:
                         await dispatch_drift_signals(db)
                 except Exception as exc:
-                    logger.error("drift_signal_dispatcher_error", error=str(exc))
+                    logger.error("drift_signal_dispatcher_error", error=safe_error_text(exc))
                 await asyncio.sleep(interval)
         elif mode == "reattestation_enqueue":
             # Daily-ish loop that creates UseCaseReview rows for use
@@ -560,7 +561,7 @@ async def main() -> None:
                             )
                 except Exception as exc:
                     logger.error(
-                        "reattestation_enqueue_error", error=str(exc)
+                        "reattestation_enqueue_error", error=safe_error_text(exc)
                     )
                 await asyncio.sleep(interval)
         else:

@@ -34,6 +34,7 @@ from app.models.integration import (
 from app.services.cost import registry, sync_service
 from app.services.cost.base import CostRecord
 from tests.conftest import TestSessionLocal
+from tests.db_errors import SECRET_VALUE, unique_violation
 
 pytestmark = [pytest.mark.unit]
 
@@ -178,6 +179,22 @@ async def test_error_path_truncates_and_writes_nothing(integration):
         assert row.last_error is not None
         assert len(row.last_error) <= 500
         assert await _row_count(session) == 0
+
+
+async def test_error_path_stores_no_database_row_values(integration):
+    integration_id = integration
+    registry.register(_FakeConnector(exc=unique_violation()))
+
+    async with TestSessionLocal() as session:
+        row = (
+            await session.execute(select(Integration).where(Integration.id == integration_id))
+        ).scalar_one()
+        result = await sync_service.sync_integration(session, row, SINCE, UNTIL)
+
+        assert result.status == IntegrationStatus.ERROR
+        assert SECRET_VALUE not in result.error
+        assert SECRET_VALUE not in row.last_error
+        assert row.last_error.startswith("IntegrityError: [message withheld")
 
 
 # ── 3. Provider mapping ─────────────────────────────────────────────────────

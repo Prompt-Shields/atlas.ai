@@ -21,6 +21,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 import pytest_asyncio
+import structlog
 
 from app.config import get_settings
 from app.models.policy_enforcement import (
@@ -37,6 +38,7 @@ from tests.conftest import (
     TestSessionLocal,
     auth_header,
 )
+from tests.db_errors import SECRET_VALUE, unique_violation
 
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 
@@ -491,3 +493,24 @@ class TestWatchdogTick:
 
         reloaded = await _get_instance(instance.id)
         assert reloaded.enforcement_mode.value == "block"
+
+    async def test_a_database_error_for_one_tenant_is_logged_without_row_values(
+        self, client, monkeypatch, watchdog_tenant
+    ) -> None:
+        _patch_standalone_session(monkeypatch)
+
+        async def failing_tick(*_args, **_kwargs):
+            raise unique_violation()
+
+        monkeypatch.setattr("app.routers.pep.service.run_watchdog_tick_for_tenant", failing_tick)
+
+        with structlog.testing.capture_logs() as logs:
+            resp = await client.post(
+                f"{BASE}/watchdog/tick", headers={"X-Cron-Secret": WATCHDOG_SECRET}
+            )
+
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["instances_checked"] == 0
+        (failure,) = [log for log in logs if log["event"] == "pep_watchdog_tenant_failed"]
+        assert SECRET_VALUE not in repr(logs)
+        assert failure["error"].startswith("IntegrityError: [message withheld")

@@ -44,6 +44,7 @@ from app.models.slack_workspace import SlackWorkspace
 from app.models.use_case import UseCase
 from app.models.use_case_review import ReviewStatus, UseCaseReview
 from app.models.user import User
+from app.safe_errors import safe_error_text
 from app.services.crypto import decrypt_token
 from app.services.slack_adapter import (
     chat_post_message,
@@ -237,7 +238,7 @@ async def dispatch_overdue_reminders(
             logger.warning(
                 "reattestation_reminder_user_failed",
                 owner_id=_owner_id,
-                error=str(exc),
+                error=safe_error_text(exc),
             )
 
     if sent > 0:

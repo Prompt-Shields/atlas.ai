@@ -51,6 +51,7 @@ from app.models.slack_workspace import SlackWorkspace
 from app.models.use_case import UseCase
 from app.models.use_case_review import ReviewStatus, UseCaseReview
 from app.models.user import Role, User
+from app.safe_errors import safe_error_text
 from app.services.crypto import decrypt_token
 from app.services.slack_adapter import users_info_email
 
@@ -104,7 +105,7 @@ async def handle_reminder_action(
         logger.warning(
             "reminder_action_users_info_failed",
             slack_user_id=slack_user_id,
-            error=str(exc),
+            error=safe_error_text(exc),
         )
         return _confirm_failure("Couldn't verify your atlas account.")
     if not email:
