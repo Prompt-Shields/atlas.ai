@@ -22,30 +22,45 @@ AUDIT_PATHS = {
 }
 
 
+def _is_audited(path: str) -> bool:
+    # Each prefix also covers its bare collection path ("/api/v1/users"), but
+    # not a longer name that merely starts the same ("/api/v1/usersX").
+    return any(path.startswith(p) or path == p.rstrip("/") for p in AUDIT_PATHS)
+
+
 class AuditMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         path = request.url.path
-        should_audit = any(path.startswith(p) for p in AUDIT_PATHS)
+        should_audit = _is_audited(path)
 
         start = time.perf_counter()
-        response = await call_next(request)
-        duration_ms = (time.perf_counter() - start) * 1000
-
-        if should_audit:
-            user_id = getattr(request.state, "user_id", None)
-            tenant_id = getattr(request.state, "tenant_id", None)
-            correlation_id = getattr(request.state, "correlation_id", None)
-
-            logger.info(
-                "audit_event",
-                method=request.method,
-                path=path,
-                status_code=response.status_code,
-                duration_ms=round(duration_ms, 2),
-                user_id=str(user_id) if user_id else None,
-                tenant_id=str(tenant_id) if tenant_id else None,
-                correlation_id=correlation_id,
-                client_ip=request.client.host if request.client else None,
-            )
+        # A request that raises is still audited, as a 500, before the error
+        # carries on to the server error handler.
+        status_code = 500
+        try:
+            response = await call_next(request)
+            status_code = response.status_code
+        finally:
+            if should_audit:
+                self._log(request, path, status_code, start)
 
         return response
+
+    @staticmethod
+    def _log(request: Request, path: str, status_code: int, start: float) -> None:
+        duration_ms = (time.perf_counter() - start) * 1000
+        user_id = getattr(request.state, "user_id", None)
+        tenant_id = getattr(request.state, "tenant_id", None)
+        correlation_id = getattr(request.state, "correlation_id", None)
+
+        logger.info(
+            "audit_event",
+            method=request.method,
+            path=path,
+            status_code=status_code,
+            duration_ms=round(duration_ms, 2),
+            user_id=str(user_id) if user_id else None,
+            tenant_id=str(tenant_id) if tenant_id else None,
+            correlation_id=correlation_id,
+            client_ip=request.client.host if request.client else None,
+        )
