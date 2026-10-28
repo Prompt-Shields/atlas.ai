@@ -122,7 +122,10 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
-    # ── Middleware (order matters: outermost first) ────────────────────
+    # ── Middleware ─────────────────────────────────────────────────────
+    # Each add_middleware call wraps the stack so far, so the last one added
+    # runs outermost: Audit, then TenantContext, then CorrelationId, then
+    # CORS. They share request.state, so Audit still sees the correlation id.
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
