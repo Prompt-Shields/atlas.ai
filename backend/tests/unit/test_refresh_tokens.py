@@ -58,9 +58,10 @@ class _FakePipeline:
 class _FakeRedis:
     """The subset of `redis.asyncio.Redis` the token store calls.
 
-    `get` reads the value when the command is sent and replies after
-    yielding to the event loop, as a network round trip does, so two
-    concurrent callers can both read a key before either deletes it.
+    Commands apply to the data when they are sent and reply after yielding
+    to the event loop, as a network round trip does. `get` followed by
+    `delete` is therefore two steps that other callers can slip between,
+    while `getdel` reads and deletes in one step, as the server does.
     """
 
     def __init__(self) -> None:
@@ -102,6 +103,7 @@ class _FakeRedis:
         return value
 
     async def getdel(self, key: str) -> str | None:
+        # No await between the read and the delete: atomic, like the server.
         value = self.values.pop(key, None)
         self.ttls.pop(key, None)
         await asyncio.sleep(0)
@@ -339,15 +341,6 @@ async def test_refresh_endpoint_refuses_reuse_with_401(two_tenants, client: Asyn
     assert again.status_code == 401
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Known open item waiting on the owner: atomic consumption of a refresh "
-        "token under concurrent use. consume_refresh_token reads the jti with "
-        "GET and deletes it in a second command, so two concurrent uses of one "
-        "token can both succeed."
-    ),
-)
 async def test_concurrent_use_of_one_token_lets_only_one_through() -> None:
     jti = str(uuid.uuid4())
     await token_store.store_refresh_token(USER_A, jti, 60)

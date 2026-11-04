@@ -59,15 +59,14 @@ async def consume_refresh_token(jti: str, user_id: uuid.UUID) -> bool:
     r = _get_redis()
     jti_key = f"{_JTI_PREFIX}{jti}"
 
-    value = await r.get(jti_key)
+    # GETDEL is atomic, so only one concurrent caller can consume a token.
+    value = await r.getdel(jti_key)
     if value is None:
         # Token not found or already consumed — possible replay attack.
         # Revoke ALL refresh tokens for this user as a precaution.
         await revoke_all_for_user(user_id)
         return False
 
-    # Revoke this specific token
-    await r.delete(jti_key)
     return True
 
 
