@@ -28,7 +28,7 @@ dependencies = [
     "opentelemetry-instrumentation-sqlalchemy==0.66b2",
     "opentelemetry-instrumentation-httpx==0.66b2",
     "opentelemetry-exporter-otlp~=1.45.1",
-    "azure-monitor-opentelemetry-exporter==1.0.0b58",
+    "azure-monitor-opentelemetry-exporter==1.0.0b59",
     "redis>=7.2,<8.2",
     "sse-starlette>=3.2,<3.6",
     "structlog>=25.5,<26.2",
